@@ -5,7 +5,7 @@
 // accent), drawn with PathBuilder + window.paint_path in one absolute layer under the nodes.
 // Modes: Local (Obsidian's local graph: the inspected / focused session and what is within `depth`
 // links of it) and Global (everything). Layout: a deterministic radial tree relaxed by a small force
-// simulation; positions are cached per node so nothing jumps, moves animate (transition left/top).
+// simulation; positions are cached per node so nothing jumps.
 // Hover highlights a node's neighbours; click selects and goes there; right-click: menu. Drag the
 // background to pan, wheel to zoom (0.4..2.5).
 // Commands (ob-graph.<cmd>): fit, zoom-in, zoom-out, select:<key>, open:<key>, menu:<key>,
@@ -43,6 +43,7 @@ export default class Graph extends View {
     this.hover = null;
     this.selected = null;
     this.drag = null;
+    this.nodeDrag = null;
     this.W = 0; this.H = 0;
     cx.spawn(async (cx) => {
       for (;;) {
@@ -408,19 +409,24 @@ export default class Graph extends View {
       const dim = dimmed(n.key);
       if (st === "working" && (n.kind === "p" || n.kind === "r" || n.kind === "c" || n.kind === "h")) {
         nodes.push(div().id(`${id}-halo`).absolute().left(x - r - 4).top(y - r - 4).size(r * 2 + 8).rounded_full().bg(alpha(t.working, 0.28))
-          .transition("left", 400).transition("top", 400).loop("opacity", { from: 0.2, to: 1, period: 1200 }));
+          .loop("opacity", { from: 0.2, to: 1, period: 1200 }));
       }
       if (st === "blocked" && n.kind === "p") {
         nodes.push(div().id(`${id}-halo`).absolute().left(x - r - 4).top(y - r - 4).size(r * 2 + 8).rounded_full().bg(alpha(t.blocked, 0.3))
-          .transition("left", 400).transition("top", 400).loop("opacity", { from: 0.3, to: 1, period: 1100 }));
+          .loop("opacity", { from: 0.3, to: 1, period: 1100 }));
       }
       const tip = [n.label, n.kind === "p" ? n.program?.name : null, n.status ? `${n.status}` : null, n.address ?? null].filter(Boolean).join(" · ");
       let el = div().id(id).absolute().left(x - r).top(y - r).size(r * 2).rounded_full().cursor_pointer()
-        .transition("left", 400).transition("top", 400)
         .tooltip(tip)
         .on_hover((h, cx) => { if (h) this.hover = n.key; else if (this.hover === n.key) this.hover = null; cx.notify(); })
-        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click((_e, cx) => { this.open(n.key); cx.notify(); })
+        .on_mouse_down("left", (e, cx) => {
+          cx.stop_propagation();
+          const pt = e.position ?? e.local_position ?? { x: 0, y: 0 };
+          const cur = this.pos.get(n.key) ?? { x: 0, y: 0 };
+          this.nodeDrag = { key: n.key, sx: pt.x / zoom, sy: pt.y / zoom, nx: cur.x, ny: cur.y, moved: false };
+          this.hover = n.key;
+          cx.notify();
+        })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.selected = n.key; this.menu(n.key); cx.notify(); });
       if (n.kind === "m") el = el.bg(t.chrome).border(1.5 * ns).border_color(color);
       else el = el.bg(color).when(n.kind === "p" && !n.status, (e) => e.border(1).border_color(t.muted));
@@ -432,7 +438,6 @@ export default class Graph extends View {
       if (always || sel || isFocus || near.has(n.key)) {
         const lw = n.kind === "m" ? 140 : 120;
         labels.push(div().id(`${id}-l`).absolute().left(x - lw / 2).top(y + r + 2).w(lw).h(14).text_center().truncate()
-          .transition("left", 400).transition("top", 400)
           .text_size(n.kind === "m" ? 11 : 10).when(n.kind === "m" || n.kind === "s", (e) => e.font_medium())
           .text_color(this.hover === n.key || sel ? t.foreground : n.kind === "m" ? t.muted : t.dim).when(Boolean(dim), (e) => e.opacity(0.35))
           .child(n.label));
@@ -444,6 +449,20 @@ export default class Graph extends View {
     return root
       .on_mouse_down("left", (e, cx) => { const p = e.local_position ?? e.position; this.drag = { x: p.x / zoom, y: p.y / zoom, vx: this.view.x, vy: this.view.y, moved: false }; cx.notify(); })
       .on_mouse_move((e, cx) => {
+        if (this.nodeDrag) {
+          const pt = e.position ?? e.local_position ?? { x: 0, y: 0 };
+          const dxScreen = pt.x / zoom - this.nodeDrag.sx;
+          const dyScreen = pt.y / zoom - this.nodeDrag.sy;
+          if (!this.nodeDrag.moved && Math.hypot(dxScreen, dyScreen) < 3) return;
+          this.nodeDrag.moved = true;
+          const scale = this.view.scale || 1;
+          this.pos.set(this.nodeDrag.key, {
+            x: this.nodeDrag.nx + dxScreen / scale,
+            y: this.nodeDrag.ny + dyScreen / scale,
+          });
+          cx.notify();
+          return;
+        }
         if (!this.drag) return;
         const p = e.local_position ?? e.position;
         const dx = p.x / zoom - this.drag.x, dy = p.y / zoom - this.drag.y;
@@ -453,8 +472,22 @@ export default class Graph extends View {
         this.manual = true;
         cx.notify();
       })
-      .on_mouse_up("left", (_e, cx) => { if (this.drag?.moved) this.persist(); else if (this.drag) this.selected = null; this.drag = null; cx.notify(); })
-      .on_hover((h, cx) => { if (!h && this.drag) { this.drag = null; this.persist(); cx.notify(); } })
+      .on_mouse_up("left", (_e, cx) => {
+        if (this.nodeDrag) {
+          const nd = this.nodeDrag;
+          this.nodeDrag = null;
+          if (!nd.moved) this.open(nd.key);
+          cx.notify();
+          return;
+        }
+        if (this.drag?.moved) this.persist(); else if (this.drag) this.selected = null; this.drag = null; cx.notify();
+      })
+      .on_hover((h, cx) => {
+        if (!h) {
+          if (this.nodeDrag) { this.nodeDrag = null; cx.notify(); }
+          if (this.drag) { this.drag = null; this.persist(); cx.notify(); }
+        }
+      })
       .on_scroll_wheel((e, cx) => {
         const dy = e.delta?.y ?? 0;
         if (!dy) return;
