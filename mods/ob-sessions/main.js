@@ -23,7 +23,6 @@ import {
   chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneName, place, openView,
 } from "./kit.js";
 import { Git } from "./git.js";
-import { subItems, counts } from "./sub.js";
 
 const SORTS = [
   ["manual", "Manual (drag to reorder)"],
@@ -33,7 +32,6 @@ const SORTS = [
   ["status", "Needs attention first"],
 ];
 const PALETTE = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
-const MAX_DONE = 3; // finished sub-agents shown under a session before "n earlier"
 const SUB_KINDS = new Set(["run", "claude", "child"]);
 const mkey = (m) => `m:${m ?? "local"}`;
 
@@ -50,6 +48,43 @@ function matchQ(q, text) {
   if (!f.hits.length) return f;
   const span = f.hits[f.hits.length - 1] - f.hits[0] + 1;
   return span <= n * 3 + 2 ? f : null;
+}
+
+function machineColor(m, t) {
+  if (!m) return t.accent ?? t.ansi4 ?? "#8b7cf6";
+  const palette = [t.ansi5, t.ansi6, t.ansi3, t.ansi2, t.ansi4].filter(Boolean);
+  if (!palette.length) return t.accent ?? "#8b7cf6";
+  let hash = 0;
+  for (let i = 0; i < m.length; i++) {
+    hash = ((hash << 5) - hash) + m.charCodeAt(i);
+    hash |= 0;
+  }
+  const idx = Math.abs(hash) % palette.length;
+  return palette[idx];
+}
+
+function leadProgram(w, tab, pane, ps) {
+  if (pane?.program) return pane.program;
+  if (tab) {
+    const lead = ps.find((p) => p.tab === tab.id && p.focused && p.program?.icon)
+      ?? ps.find((p) => p.tab === tab.id && p.program?.agent)
+      ?? ps.find((p) => p.tab === tab.id);
+    return lead?.program ?? null;
+  }
+  if (w) {
+    const actTab = w.tabs?.find((x) => x.active) ?? w.tabs?.[0];
+    if (actTab) {
+      const lead = ps.find((p) => p.tab === actTab.id && p.focused && p.program?.icon)
+        ?? ps.find((p) => p.tab === actTab.id && p.program?.agent)
+        ?? ps.find((p) => p.tab === actTab.id);
+      if (lead?.program) return lead.program;
+    }
+    const anyLead = ps.find((p) => (w.tabs ?? []).some((x) => x.id === p.tab) && p.program?.agent)
+      ?? ps.find((p) => (w.tabs ?? []).some((x) => x.id === p.tab && p.focused && p.program?.icon))
+      ?? ps.find((p) => (w.tabs ?? []).some((x) => x.id === p.tab));
+    return anyLead?.program ?? null;
+  }
+  return null;
 }
 
 export default class Sessions extends View {
@@ -187,52 +222,46 @@ export default class Sessions extends View {
 
   model() {
     const now = Date.now();
-    const sp = spaces(), ps = panes(), ts = terminals();
+    const sp = spaces(), ps = panes();
     const byKey = new Map();
     const add = (n, parent) => { n.parent = parent ?? null; n.children ??= []; byKey.set(n.key, n); if (parent) parent.children.push(n); return n; };
-    const subs = (addr, parent) => {
-      const items = subItems(addr, ts, now);
-      parent.subs = items;
-      for (const it of items) add({ key: it.key, kind: it.kind, label: it.label, text: it.text, sub: it, reps: { terminal: addr, machine: parent.reps.machine } }, parent);
-      parent.liveSubs = items.some((i) => i.live);
-    };
     const paneNode = (w, tab, p, parent) => {
       const n = add({ key: `p:${p.pane}`, kind: "pane", label: paneName(p), text: paneName(p), space: w, tab, pane: p,
-        reps: { machine: w.machine ?? null, space: w.id, tab: tab.id, pane: p.pane, terminal: p.terminal ?? null } }, parent);
-      if (p.terminal) subs(p.terminal, n);
-      n.defaultOpen = Boolean(n.liveSubs);
+        reps: { machine: w.machine ?? null, space: w.id, tab: tab?.id ?? null, pane: p.pane, terminal: p.terminal ?? null } }, parent);
+      n.defaultOpen = false;
       return n;
     };
     const tabNode = (w, tab, parent) => {
       const mine = ps.filter((p) => p.tab === tab.id);
       const label = tabLabel(tab, ps);
       const n = add({ key: `t:${tab.id}`, kind: "tab", label, text: label, space: w, tab, reps: { machine: w.machine ?? null, space: w.id, tab: tab.id } }, parent);
-      if (mine.length > 1) for (const p of mine) paneNode(w, tab, p, n);
-      else if (mine.length === 1) {
+      if (mine.length > 1) {
+        for (const p of mine) paneNode(w, tab, p, n);
+      } else if (mine.length === 1) {
         Object.assign(n.reps, { pane: mine[0].pane, terminal: mine[0].terminal ?? null });
         n.pane = mine[0];
-        if (mine[0].terminal) subs(mine[0].terminal, n);
       }
-      n.defaultOpen = (w.active && tab.active) || Boolean(n.liveSubs);
+      n.defaultOpen = Boolean(w.active && tab.active);
       return n;
     };
     const spaceNode = (w, parent, worktree) => {
       const n = add({ key: `s:${w.id}`, kind: "space", label: w.name, text: w.name, space: w, worktree, git: this.git.of(w, ps),
         reps: { machine: w.machine ?? null, space: w.id } }, parent);
       const tabs = this.sortTabs(w.tabs, ps);
-      if (tabs.length > 1) for (const tab of tabs) tabNode(w, tab, n);
-      else if (tabs.length === 1) {
+      if (tabs.length > 1) {
+        for (const tab of tabs) tabNode(w, tab, n);
+      } else if (tabs.length === 1) {
         const tab = tabs[0];
         n.tab = tab; n.reps.tab = tab.id;
         const mine = ps.filter((p) => p.tab === tab.id);
-        if (mine.length > 1) for (const p of mine) paneNode(w, tab, p, n);
-        else if (mine.length === 1) {
+        if (mine.length > 1) {
+          for (const p of mine) paneNode(w, tab, p, n);
+        } else if (mine.length === 1) {
           Object.assign(n.reps, { pane: mine[0].pane, terminal: mine[0].terminal ?? null });
           n.pane = mine[0];
-          if (mine[0].terminal) subs(mine[0].terminal, n);
         }
       }
-      n.defaultOpen = w.active || Boolean(n.liveSubs);
+      n.defaultOpen = Boolean(w.active);
       return n;
     };
     // Spaces of one machine, worktree checkouts under their repo's main checkout (display only).
@@ -275,15 +304,6 @@ export default class Sessions extends View {
         if (!n.rebuilt) placeSpaces(sp.filter((s) => (s.machine ?? null) === m), n);
       }
     }
-    // Sub-agent totals under each node (badges on folded rows).
-    const agg = (n) => {
-      let live = 0, total = 0;
-      for (const it of n.subs ?? []) { total++; if (it.live) live++; }
-      for (const c of n.children) if (!SUB_KINDS.has(c.kind)) { const a = agg(c); live += a.live; total += a.total; }
-      n.agg = { live, total };
-      return n.agg;
-    };
-    roots.forEach(agg);
     return { roots, byKey, meta, now };
   }
 
@@ -301,27 +321,15 @@ export default class Sessions extends View {
     roots.forEach(walk);
   }
 
-  // Rows in display order: { key, node?, depth, open, kind } (kinds of pseudo rows: more, new, loading, login, shelf).
+  // Rows in display order: { key, node?, depth, open, kind } (kinds of pseudo rows: new, loading, login, shelf).
   flatten(model) {
     const out = [];
     const q = this.filter.trim();
     const filtering = Boolean(q);
     if (filtering) this.markFilter(model.roots, q);
     const visit = (nodes, depth, mode) => {
-      const isSub = (n) => SUB_KINDS.has(n.kind);
       let list = nodes;
       if (mode === "filter") list = nodes.filter((n) => n.kept);
-      // Finished sub-agents beyond the newest few fold into an "n earlier" row.
-      let more = null;
-      if (mode === "normal") {
-        const subsHere = list.filter(isSub);
-        const done = subsHere.filter((n) => !n.sub.live);
-        if (done.length > MAX_DONE) {
-          const drop = new Set(done.slice(MAX_DONE).map((n) => n.key));
-          list = list.filter((n) => !drop.has(n.key));
-          more = { count: drop.size, addr: subsHere[0].reps.terminal, after: list.filter(isSub).at(-1)?.key };
-        }
-      }
       for (const n of list) {
         let open, childMode = mode;
         if (n.kind === "machine") open = mode === "filter" ? true : this.isOpen(n);
@@ -337,7 +345,6 @@ export default class Sessions extends View {
             else if (mode === "normal") out.push(n.loading ? { key: `loading:${n.key}`, kind: "loading", depth } : { key: `n:${n.key}`, kind: "new", depth, machine: n });
           }
         } else if (open) visit(n.children, depth + 1, childMode);
-        if (more && n.key === more.after) out.push({ key: `x:${more.addr}`, kind: "more", depth, count: more.count, addr: more.addr });
       }
     };
     visit(model.roots, 0, filtering ? "filter" : "normal");
@@ -706,23 +713,25 @@ export default class Sessions extends View {
     const m = n.machineName;
     const hovered = this.hover === r.key || (this.kbd && this.cursor === r.key);
     const cur = this.kbd && this.cursor === r.key;
-    const dotColor = n.connected ? t.ansi2 : n.machine?.state === "needs_login" ? t.blocked : t.dim;
+    const mColor = machineColor(m, t);
+    const dotColor = n.connected ? t.ansi2 : n.login ? t.blocked : t.dim;
     const stateWord = !m ? null : n.rebuilt ? null : n.connected ? null : n.login ? "needs login" : (n.machine?.state ?? "asleep").replace(/_/g, " ");
     const spacesN = n.children.filter((c) => c.kind === "space").length + n.children.reduce((a, c) => a + c.children.filter((x) => x.worktree).length, 0);
-    return h_flex().id(`row-${r.key}`).relative().h(S.header).flex_none().mt(r === this.rows[0] ? 0 : 6).pl(S.pad).pr(6).gap(6).items_center()
-      .rounded(S.radius).text_size(S.textXs).font_semibold().text_color(t.dim).cursor_pointer()
+
+    return h_flex().id(`row-${r.key}`).relative().h(28).flex_none().mt(r === this.rows[0] ? 2 : 8).mb(2).px(6).gap(6).items_center()
+      .rounded(5).cursor_pointer()
       .when(cur, (e) => e.bg(t.hover).border_1().border_color(alpha(t.accent, 0.55)))
-      .hover((s) => s.text_color(t.muted))
+      .hover((s) => s.bg(t.hover))
       .on_hover((on, cx) => { const v = on ? r.key : this.hover === r.key ? null : this.hover; if (v !== this.hover) { this.hover = v; cx.notify(); } })
       .on_click((_e, cx) => { this.kbd = false; this.cursor = r.key; if (!this.filter.trim()) this.setOpen(n, !this.isOpen(n)); cx.notify(); })
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.cursor = r.key; this.menu(r.key); })
-      .child(icon(r.open ? "chevron-down" : "chevron-right", S.iconXs))
-      .child(h_flex().relative().flex_none().child(icon(m ? "server" : "monitor", S.iconXs))
-        .when(Boolean(m), (e) => e.child(div().absolute().right(-3).bottom(-2).size(6).rounded_full().border_1().border_color(t.chrome).bg(dotColor))))
-      .child(div().min_w(0).truncate().child(n.label.toUpperCase()))
-      .when(spacesN > 0, (e) => e.child(div().flex_none().font_normal().child(String(spacesN))))
-      .when(Boolean(stateWord) && this.w >= 180, (e) => e.child(div().flex_none().font_normal().text_color(n.login ? t.blocked : t.dim).child(stateWord)))
-      .when(n.rebuilt, (e) => e.child(h_flex().flex_none().gap(4).font_normal().items_center()
+      .child(icon(r.open ? "chevron-down" : "chevron-right", S.iconXs, t.muted))
+      .child(h_flex().relative().size(20).flex_none().rounded(5).bg(alpha(mColor, 0.16)).items_center().justify_center()
+        .child(icon(m ? "server" : "monitor", 12, mColor))
+        .child(div().absolute().right(-1).bottom(-1).size(6).rounded_full().border_1().border_color(t.chrome).bg(dotColor)))
+      .child(div().min_w(0).truncate().text_size(S.textSm).font_semibold().text_color(n.connected ? t.foreground : t.muted).child(n.label))
+      .when(Boolean(stateWord) && this.w >= 180, (e) => e.child(div().flex_none().text_size(11).font_normal().text_color(n.login ? t.blocked : t.dim).child(stateWord)))
+      .when(n.rebuilt, (e) => e.child(h_flex().flex_none().gap(4).text_size(11).font_normal().items_center()
         .child(div().max_w(120).truncate().child(n.repair?.error || "rebuilt"))
         .child(div().id(`connect-${r.key}`).px(5).rounded(4).text_color(n.repair?.error ? t.blocked : t.foreground).bg(t.raised).cursor_pointer()
           .hover((s) => s.bg(t.hover)).tooltip(n.repair?.error || "This machine was rebuilt or replaced. Connect to the new one.")
@@ -730,11 +739,11 @@ export default class Sessions extends View {
           .on_click((_e, cx) => { cx.stop_propagation(); this.reconnect(m, cx); cx.notify(); })
           .child(n.repair?.busy ? "Connecting…" : "Connect"))))
       .child(div().flex_1())
+      .when(spacesN > 0, (e) => e.child(div().px(5).h(16).rounded(4).bg(alpha(t.border, 0.55)).text_size(10.5).font_medium().text_color(t.muted).flex().items_center().child(String(spacesN))))
       .when(hovered && n.connected, (e) => e.child(iconButton({ id: `add-${r.key}`, icon: "plus", size: 20, iconSize: S.iconXs, tip: `New space on ${m ?? "this computer"}`,
         onClick: () => run("space.new", { machine: m ?? "" }) })))
       .when(hovered && Boolean(m), (e) => e.child(iconButton({ id: `hide-${r.key}`, icon: "eye-off", size: 20, iconSize: S.iconXs, tip: `Hide ${m}`,
-        onClick: (_e, cx) => { this.setHidden(m, true); cx.notify(); } })))
-      .when(!hovered && Boolean(m) && this.w >= 200, (e) => e.child(div().size(6).flex_none().rounded_full().bg(dotColor)));
+        onClick: (_e, cx) => { this.setHidden(m, true); cx.notify(); } })));
   }
 
   nodeRow(r, t, sel, now) {
@@ -743,7 +752,6 @@ export default class Sessions extends View {
     const cur = this.kbd && this.cursor === r.key;
     const q = this.filter.trim();
     const label = q && n.hits?.length ? highlight(n.label, n.hits) : n.label;
-    const isSub = SUB_KINDS.has(n.kind);
     const o = {
       id: `row-${r.key}`, depth: r.depth, selected: sel === r.key, cursor: cur,
       chevron: r.foldable ? r.open : undefined,
@@ -753,35 +761,32 @@ export default class Sessions extends View {
     };
     const selected = sel === r.key;
     const bmMark = (kind, id) => (isBookmarked(kind, id) ? icon("bookmark", 11, t.dim) : null);
-    const termCounts = n.subs ? counts(n.subs) : null;
-    const foldBadge = !r.open && !n.subs && n.agg?.total ? this.subBadge(n.agg, compact, r.key) : null;
+    const ps = panes();
     if (n.kind === "space") {
       const w = n.space;
-      o.lead = n.worktree ? icon("git-branch", S.iconSm, t.dim) : avatar(w, 16);
+      o.lead = n.worktree
+        ? icon("git-branch", S.iconSm, t.ansi5 ?? t.accent)
+        : programIcon(leadProgram(w, n.tab, n.pane, ps), S.iconSm, selected ? t.foreground : t.muted);
       o.bold = true;
       o.labelColor = t.foreground;
       if (!compact) o.after.push(this.gitTail(n.git, n, t));
       o.after.push(bmMark("space", w.id));
-      if (n.reps.terminal) o.right.push(this.subBadge(termCounts, compact, r.key));
-      else o.right.push(foldBadge);
       const st = n.pane ? n.pane.status : w.status;
       o.right.push(this.status(st, Boolean(n.pane?.program?.agent), t));
     } else if (n.kind === "tab") {
       const tab = n.tab;
-      o.lead = n.pane ? programIcon(n.pane.program, S.iconSm, t.muted) : icon("tab", S.iconSm, t.dim);
+      o.lead = programIcon(leadProgram(n.space, n.tab, n.pane, ps), S.iconSm, selected ? t.foreground : t.muted);
       o.labelColor = selected ? t.foreground : t.muted;
       o.after.push(bmMark("tab", tab.id));
       if (tab.settled && !compact) o.right.push(this.tag("settled", t));
       if (tab.status === "working" && tab.working_since && now - tab.working_since > 60000 && !compact) o.right.push(this.tag(ago(tab.working_since, now), t));
-      if (n.reps.terminal) o.right.push(this.subBadge(termCounts, compact, r.key)); else o.right.push(foldBadge);
       o.right.push(this.status(n.pane ? n.pane.status : tab.status, Boolean(n.pane?.program?.agent), t));
     } else if (n.kind === "pane") {
       const p = n.pane;
-      o.lead = p.mod ? icon("layers", S.iconSm, t.dim) : programIcon(p.program, S.iconSm, t.muted);
+      o.lead = p.mod ? icon("layers", S.iconSm, t.dim) : programIcon(p.program, S.iconSm, selected ? t.foreground : t.muted);
       o.labelColor = selected ? t.foreground : t.muted;
       if (p.terminal) o.after.push(bmMark("terminal", p.terminal));
       if (p.zoomed && !compact) o.right.push(this.tag("zoomed", t));
-      o.right.push(this.subBadge(termCounts, compact, r.key));
       o.right.push(this.status(p.status, Boolean(p.program?.agent), t));
     } else if (isSub) {
       const it = n.sub;
@@ -899,6 +904,7 @@ export default class Sessions extends View {
 
   rail(model, t, sel) {
     const cells = [];
+    const ps = panes();
     for (const root of model.roots) {
       const list = root.kind === "machine" ? root.children : [root];
       if (root.kind === "machine") cells.push(h_flex().id(`rail-${root.key}`).h(22).w_full().flex_none().justify_center().items_center().tooltip(root.label)
@@ -909,7 +915,7 @@ export default class Sessions extends View {
         cells.push(h_flex().id(`rail-${n.key}`).relative().h(28).w_full().flex_none().justify_center().items_center().rounded(S.radius)
           .when(on, (e) => e.bg(t.selected)).when(!on, (e) => e.hover((s) => s.bg(t.hover))).cursor_pointer()
           .tooltip(n.label).on_click(() => run("space.select", { id: n.reps.space }))
-          .child(avatar(n.space, 18))
+          .child(programIcon(leadProgram(n.space, n.tab, n.pane, ps), 16, on ? t.foreground : t.muted))
           .when(["blocked", "done", "working"].includes(n.space.status), (e) => e.child(div().absolute().right(6).bottom(3).child(statusMark(n.space.status, 8)))));
       }
     }

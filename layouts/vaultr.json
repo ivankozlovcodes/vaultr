@@ -20,13 +20,10 @@
         {
           "id": "ob-left-body",
           "type": "column",
-          "divider": { "width": 1, "color": "border" },
           "children": [
             {
               "id": "ob-lt",
               "type": "column",
-              "size": { "weight": 3 },
-              "min": 140,
               "resizable": false,
               "children": [
                 {
@@ -43,21 +40,11 @@
                   "children": [
                     { "id": "ob-sessions", "type": "block", "content": { "mod": "ob-sessions", "props": { "slot": "ob-sessions" } } },
                     { "id": "ob-search", "type": "block", "content": { "mod": "ob-search", "props": { "slot": "ob-search" } } },
-                    { "id": "ob-bookmarks", "type": "block", "content": { "mod": "ob-bookmarks", "props": { "slot": "ob-bookmarks" } } }
+                    { "id": "ob-bookmarks", "type": "block", "content": { "mod": "ob-bookmarks", "props": { "slot": "ob-bookmarks" } } },
+                    { "id": "ob-agents", "type": "block", "content": { "mod": "ob-agents", "props": { "slot": "ob-agents" } } },
+                    { "id": "ob-recent", "type": "block", "content": { "mod": "ob-recent", "props": { "slot": "ob-recent" } } }
                   ]
                 }
-              ]
-            },
-            {
-              "id": "ob-lb-stack",
-              "type": "stack",
-              "size": { "weight": 2 },
-              "min": 90,
-              "active": "ob-agents",
-              "header": { "content": { "mod": "ob-strip", "props": { "stack": "ob-lb-stack", "side": "left", "place": "bottom" } }, "height": 34 },
-              "children": [
-                { "id": "ob-agents", "type": "block", "content": { "mod": "ob-agents", "props": { "slot": "ob-agents" } } },
-                { "id": "ob-recent", "type": "block", "content": { "mod": "ob-recent", "props": { "slot": "ob-recent" } } }
               ]
             }
           ]
