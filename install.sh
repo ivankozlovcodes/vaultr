@@ -81,7 +81,7 @@ PY
   fi
 
   # 3. Switch layout back to iv
-  herdr-app cmd layout.switch '{"name":"iv"}' >/dev/null 2>&1 || herdr-app do layout.switch '{"name":"iv"}' >/dev/null 2>&1 || true
+  herdr-app do layout.switch --name iv >/dev/null 2>&1 || true
   echo "switched layout -> iv"
   echo "Vaultr uninstalled."
   exit 0
@@ -156,8 +156,7 @@ fi
 
 # 5. Activate if requested
 if [[ "$ACTIVATE" -eq 1 ]]; then
-  herdr-app reload >/dev/null 2>&1 || true
-  herdr-app cmd layout.switch '{"name":"obsidian"}' >/dev/null 2>&1 || herdr-app do layout.switch '{"name":"obsidian"}' >/dev/null 2>&1 || true
+  herdr-app do layout.switch --name obsidian >/dev/null 2>&1 || true
   echo "activated layout -> obsidian"
 fi
 

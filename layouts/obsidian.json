@@ -1,379 +1,167 @@
 {
   "id": "root",
   "type": "row",
+  "titlebar": "none",
+  "traffic_lights": [12, 14],
+  "preview": "layouts/obsidian.svg",
+  "background": "canvas",
+  "terminal_padding": [14, 12],
+  "divider": { "width": 1, "color": "border" },
   "children": [
     {
       "id": "ob-left",
       "type": "column",
+      "size": { "px": 300 },
+      "min": 200,
+      "max": 640,
+      "background": "chrome",
+      "resizable": false,
       "children": [
         {
           "id": "ob-left-body",
           "type": "column",
+          "divider": { "width": 1, "color": "border" },
           "children": [
             {
               "id": "ob-lt",
               "type": "column",
+              "size": { "weight": 3 },
+              "min": 140,
+              "resizable": false,
               "children": [
                 {
                   "id": "ob-lt-strip",
                   "type": "block",
-                  "content": {
-                    "mod": "ob-strip",
-                    "props": {
-                      "stack": "ob-lt-stack",
-                      "side": "left",
-                      "place": "top"
-                    }
-                  },
-                  "size": {
-                    "px": 40
-                  },
-                  "window_drag": true
+                  "size": { "px": 40 },
+                  "window_drag": true,
+                  "content": { "mod": "ob-strip", "props": { "stack": "ob-lt-stack", "side": "left", "place": "top" } }
                 },
                 {
                   "id": "ob-lt-stack",
                   "type": "stack",
+                  "active": "ob-sessions",
                   "children": [
-                    {
-                      "id": "ob-sessions",
-                      "type": "block",
-                      "content": {
-                        "mod": "ob-sessions",
-                        "props": {
-                          "slot": "ob-sessions"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ob-search",
-                      "type": "block",
-                      "content": {
-                        "mod": "ob-search",
-                        "props": {
-                          "slot": "ob-search"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ob-bookmarks",
-                      "type": "block",
-                      "content": {
-                        "mod": "ob-bookmarks",
-                        "props": {
-                          "slot": "ob-bookmarks"
-                        }
-                      }
-                    }
-                  ],
-                  "active": "ob-search"
+                    { "id": "ob-sessions", "type": "block", "content": { "mod": "ob-sessions", "props": { "slot": "ob-sessions" } } },
+                    { "id": "ob-search", "type": "block", "content": { "mod": "ob-search", "props": { "slot": "ob-search" } } },
+                    { "id": "ob-bookmarks", "type": "block", "content": { "mod": "ob-bookmarks", "props": { "slot": "ob-bookmarks" } } }
+                  ]
                 }
-              ],
-              "size": {
-                "weight": 3
-              },
-              "min": 140,
-              "resizable": false
+              ]
             },
             {
               "id": "ob-lb-stack",
               "type": "stack",
-              "children": [
-                {
-                  "id": "ob-agents",
-                  "type": "block",
-                  "content": {
-                    "mod": "ob-agents",
-                    "props": {
-                      "slot": "ob-agents"
-                    }
-                  }
-                },
-                {
-                  "id": "ob-recent",
-                  "type": "block",
-                  "content": {
-                    "mod": "ob-recent",
-                    "props": {
-                      "slot": "ob-recent"
-                    }
-                  }
-                }
-              ],
+              "size": { "weight": 2 },
+              "min": 90,
               "active": "ob-agents",
-              "header": {
-                "content": {
-                  "mod": "ob-strip",
-                  "props": {
-                    "stack": "ob-lb-stack",
-                    "side": "left",
-                    "place": "bottom"
-                  }
-                },
-                "height": 34
-              },
-              "size": {
-                "weight": 2
-              },
-              "min": 90
+              "header": { "content": { "mod": "ob-strip", "props": { "stack": "ob-lb-stack", "side": "left", "place": "bottom" } }, "height": 34 },
+              "children": [
+                { "id": "ob-agents", "type": "block", "content": { "mod": "ob-agents", "props": { "slot": "ob-agents" } } },
+                { "id": "ob-recent", "type": "block", "content": { "mod": "ob-recent", "props": { "slot": "ob-recent" } } }
+              ]
             }
-          ],
-          "divider": {
-            "width": 1,
-            "color": "border"
-          }
+          ]
         },
         {
           "id": "ob-footer",
           "type": "block",
-          "content": {
-            "mod": "ob-footer"
-          },
-          "size": {
-            "px": 40
-          }
+          "size": { "px": 40 },
+          "content": { "mod": "ob-footer" }
         }
-      ],
-      "size": {
-        "px": 300
-      },
-      "min": 200,
-      "max": 640,
-      "background": "chrome",
-      "resizable": false
+      ]
     },
     {
       "id": "ob-center",
       "type": "column",
+      "resizable": false,
       "children": [
         {
           "id": "ob-tabbar",
           "type": "block",
-          "content": {
-            "mod": "ob-tabs"
-          },
-          "size": {
-            "px": 40
-          },
-          "window_drag": true
+          "size": { "px": 40 },
+          "window_drag": true,
+          "content": { "mod": "ob-tabs" }
         },
         {
           "id": "ob-main",
           "type": "block",
+          "padding": 6,
           "content": {
             "tab": "active",
             "pane": {
-              "header": {
-                "content": {
-                  "mod": "ob-pane"
-                },
-                "reveal": "always",
-                "height": 32,
-                "position": "top"
-              },
-              "background": "background",
-              "border": {
-                "width": 1,
-                "color": "border"
-              },
-              "focus": {
-                "width": 1,
-                "color": "accent"
-              },
-              "radius": 6,
               "gap": 6,
+              "radius": 6,
+              "background": "background",
+              "border": { "width": 1, "color": "border" },
+              "focus": { "width": 1, "color": "accent" },
+              "header": { "content": { "mod": "ob-pane" }, "height": 32, "position": "top", "reveal": "always" },
               "lone": true
             }
-          },
-          "padding": 6
+          }
         },
         {
           "id": "ob-statusrow",
           "type": "row",
+          "size": { "px": 26 },
+          "resizable": false,
           "children": [
-            {
-              "id": "ob-status",
-              "type": "block",
-              "content": {
-                "mod": "ob-status"
-              }
-            },
-            {
-              "id": "ob-feed",
-              "type": "block",
-              "content": {
-                "mod": "ob-feed"
-              },
-              "size": {
-                "px": 210
-              }
-            }
-          ],
-          "size": {
-            "px": 26
-          },
-          "resizable": false
+            { "id": "ob-status", "type": "block", "content": { "mod": "ob-status" } },
+            { "id": "ob-feed", "type": "block", "size": { "px": 210 }, "content": { "mod": "ob-feed" } }
+          ]
         }
-      ],
-      "resizable": false
+      ]
     },
     {
       "id": "ob-right",
       "type": "column",
+      "size": { "px": 368 },
+      "min": 240,
+      "max": 960,
+      "background": "chrome",
+      "divider": { "width": 1, "color": "border" },
       "children": [
         {
           "id": "ob-rt",
           "type": "column",
+          "size": { "weight": 3 },
+          "min": 140,
+          "resizable": false,
           "children": [
             {
               "id": "ob-rt-strip",
               "type": "block",
-              "content": {
-                "mod": "ob-strip",
-                "props": {
-                  "stack": "ob-rt-stack",
-                  "side": "right",
-                  "place": "top",
-                  "windowButtons": true
-                }
-              },
-              "size": {
-                "px": 40
-              },
-              "window_drag": true
+              "size": { "px": 40 },
+              "window_drag": true,
+              "content": { "mod": "ob-strip", "props": { "stack": "ob-rt-stack", "side": "right", "place": "top", "windowButtons": true } }
             },
             {
               "id": "ob-rt-stack",
               "type": "stack",
+              "active": "ob-props",
               "children": [
-                {
-                  "id": "ob-props",
-                  "type": "block",
-                  "content": {
-                    "mod": "ob-props",
-                    "props": {
-                      "slot": "ob-props"
-                    }
-                  }
-                },
-                {
-                  "id": "ob-files",
-                  "type": "block",
-                  "content": {
-                    "mod": "files"
-                  }
-                },
-                {
-                  "id": "ob-changes",
-                  "type": "block",
-                  "content": {
-                    "mod": "changes"
-                  }
-                },
-                {
-                  "id": "ob-insights",
-                  "type": "block",
-                  "content": {
-                    "mod": "insights"
-                  }
-                },
-                {
-                  "id": "ob-notes",
-                  "type": "block",
-                  "content": {
-                    "mod": "obsidian",
-                    "props": {
-                      "view": "panel"
-                    }
-                  }
-                }
-              ],
-              "active": "ob-props"
+                { "id": "ob-props", "type": "block", "content": { "mod": "ob-props", "props": { "slot": "ob-props" } } },
+                { "id": "ob-files", "type": "block", "content": { "mod": "files" } },
+                { "id": "ob-changes", "type": "block", "content": { "mod": "changes" } },
+                { "id": "ob-insights", "type": "block", "content": { "mod": "insights" } },
+                { "id": "ob-notes", "type": "block", "content": { "mod": "obsidian", "props": { "view": "panel" } } }
+              ]
             }
-          ],
-          "size": {
-            "weight": 3
-          },
-          "min": 140,
-          "resizable": false
+          ]
         },
         {
           "id": "ob-rb-stack",
           "type": "stack",
+          "size": { "weight": 2 },
+          "min": 90,
+          "active": "ob-subagents",
+          "header": { "content": { "mod": "ob-strip", "props": { "stack": "ob-rb-stack", "side": "right", "place": "bottom" } }, "height": 34 },
           "children": [
-            {
-              "id": "ob-subagents",
-              "type": "block",
-              "content": {
-                "mod": "ob-subagents",
-                "props": {
-                  "slot": "ob-subagents"
-                }
-              }
-            },
-            {
-              "id": "ob-graph",
-              "type": "block",
-              "content": {
-                "mod": "ob-graph",
-                "props": {
-                  "slot": "ob-graph"
-                }
-              }
-            },
-            {
-              "id": "ob-outline",
-              "type": "block",
-              "content": {
-                "mod": "ob-outline",
-                "props": {
-                  "slot": "ob-outline"
-                }
-              }
-            }
-          ],
-          "active": "ob-outline",
-          "header": {
-            "content": {
-              "mod": "ob-strip",
-              "props": {
-                "stack": "ob-rb-stack",
-                "side": "right",
-                "place": "bottom"
-              }
-            },
-            "height": 34
-          },
-          "size": {
-            "weight": 2
-          },
-          "min": 90
+            { "id": "ob-subagents", "type": "block", "content": { "mod": "ob-subagents", "props": { "slot": "ob-subagents" } } },
+            { "id": "ob-graph", "type": "block", "content": { "mod": "ob-graph", "props": { "slot": "ob-graph" } } },
+            { "id": "ob-outline", "type": "block", "content": { "mod": "ob-outline", "props": { "slot": "ob-outline" } } }
+          ]
         }
-      ],
-      "size": {
-        "px": 368
-      },
-      "min": 240,
-      "max": 960,
-      "background": "chrome",
-      "divider": {
-        "width": 1,
-        "color": "border"
-      }
+      ]
     }
-  ],
-  "background": "canvas",
-  "terminal_padding": [
-    14,
-    12
-  ],
-  "divider": {
-    "width": 1,
-    "color": "border"
-  },
-  "titlebar": "none",
-  "traffic_lights": [
-    12,
-    14
-  ],
-  "preview": "layouts/obsidian.svg"
+  ]
 }
