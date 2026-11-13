@@ -73,6 +73,7 @@ Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [
 | `Ctrl+9` | `ob-tabs.last` | Focus Last Tab |
 | `Ctrl+Alt+K` | `mod.open:ob-hotkeys` | Open Hotkey Manager |
 | `Ctrl+Alt+T` | `ob-tabs.tab-list` | Open Tab List Menu |
+| `Ctrl+Shift+Z` / `Ctrl+Alt+Z` | `ob-tabs.zen` | Toggle Zen Mode |
 
 ### `mod:ob-sessions`
 

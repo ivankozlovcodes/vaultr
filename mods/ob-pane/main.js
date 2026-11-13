@@ -11,12 +11,14 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, spaces, agents, terminals, props, run, nextCommand, shared, settings, notify } from "herdr";
+import { panes, spaces, agents, terminals, props, run, nextCommand, shared as _shared, settings, notify } from "herdr";
 import {
   S, tc, alpha, icon, iconButton, statusMark, needsYou, paneName, tabLabel, machineLabel, programIcon, openMenu,
   subagentsOf, isBookmarked, toggleBookmark, bindingFor, chordLabel, tilde, stop,
 } from "./kit.js";
 import { follow, DELAY } from "./follow.js"; // focus-to-hover, as in the user's iv-pane
+
+const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
 
 const tip = (title, action) => { const k = action ? bindingFor(action) : null; return k ? `${title} (${chordLabel(k)})` : title; };
 
@@ -96,9 +98,17 @@ export default class PaneHeader extends View {
 
   moreMenu(x) {
     const { p, tab, addr } = x;
+    const zenActive = Boolean(shared()?.["ob.zen"]?.active);
+    const zenItem = {
+      label: zenActive ? "Exit Zen mode" : "Enter Zen mode",
+      icon: zenActive ? "minimize" : "maximize",
+      command: "ob-tabs.zen",
+      kbd: bindingFor("ob-tabs.zen") ?? undefined,
+    };
     if (!addr) {
       openMenu([
         { label: p.zoomed ? "Unzoom" : "Zoom", icon: p.zoomed ? "minimize" : "maximize", command: "pane.zoom", args: { pane: p.pane } },
+        zenItem,
         { separator: true },
         { label: "Close pane", icon: "x", danger: true, command: "pane.close", args: { pane: p.pane } },
       ], { width: 240, title: paneName(p) });
@@ -123,17 +133,19 @@ export default class PaneHeader extends View {
       { label: "Split right", icon: "split-right", command: "pane.split", args: { direction: "right", pane: p.pane } },
       { label: "Split down", icon: "split-down", command: "pane.split", args: { direction: "down", pane: p.pane } },
       { label: p.zoomed ? "Unzoom" : "Zoom", icon: p.zoomed ? "minimize" : "maximize", command: "pane.zoom", args: { pane: p.pane } },
+      zenItem,
       { separator: true },
       { label: "Close pane", icon: "x", danger: true, command: "pane.close", args: { pane: p.pane } },
     ], { width: 260, title: paneName(p) });
   }
 
   render(cx) {
+    const zenActive = Boolean(shared()?.["ob.zen"]?.active);
     const pr = props() ?? {};
-    return follow(this, pr.pane, this.header(cx), pr.delay ?? DELAY);
+    return follow(this, pr.pane, this.header(cx, zenActive), pr.delay ?? DELAY);
   }
 
-  header() {
+  header(cx, zenActive = Boolean(shared()?.["ob.zen"]?.active)) {
     const t = tc();
     const x = this.ctx();
     if (!x) return div().size_full().bg(t.background);
@@ -150,6 +162,18 @@ export default class PaneHeader extends View {
     // Right side.
     const right = [];
     let rightW = 0;
+    if (zenActive) {
+      rightW += 52;
+      right.push(
+        h_flex().id("zen-pill").flex_none().h(20).px(6).gap(4).rounded(4).items_center().cursor_pointer()
+          .bg(alpha(t.accent, 0.14)).hover((s) => s.bg(alpha(t.accent, 0.24)))
+          .text_size(S.xs).font_medium().text_color(t.accent)
+          .tooltip(tip("Exit Zen mode", "ob-tabs.zen"))
+          .on_mouse_down(stop(() => run("ob-tabs.zen")))
+          .child(icon("minimize", 11, t.accent))
+          .child("Zen")
+      );
+    }
     if (addr) {
       const sub = subagentsOf(addr);
       const kids = terminals().filter((tm) => tm.parent === addr && tm.state === "live").length;

@@ -35,6 +35,7 @@ export const S = {
   text: 13,         // body
   textSm: 12,       // secondary
   textXs: 11,       // meta, chips, section titles
+  xs: 11,           // alias for textXs
   textLg: 15,       // titles in dialogs
 };
 
@@ -107,7 +108,28 @@ export function needsYou() {
 
 // ---------------------------------------------------------------- small parts
 // Stops the press so a window_drag strip does not start dragging the window.
-export const stop = (_e, cx) => cx.stop_propagation();
+// Supports both stop(event, cx) and stop(callback).
+export const stop = (fnOrE, maybeCx) => {
+  if (typeof fnOrE === "function") {
+    return (e, cx) => {
+      (cx || e)?.stop_propagation?.();
+      fnOrE(e, cx);
+    };
+  }
+  (maybeCx || fnOrE)?.stop_propagation?.();
+};
+
+try {
+  const proto = Object.getPrototypeOf(h_flex());
+  if (proto && !proto.__patched_mouse_down) {
+    const orig = proto.on_mouse_down;
+    proto.on_mouse_down = function(btn, handler) {
+      if (typeof btn === "function") return orig.call(this, "left", btn);
+      return orig.call(this, btn, handler);
+    };
+    proto.__patched_mouse_down = true;
+  }
+} catch {}
 
 // Square icon button. opts: { id, icon, tip, size, iconSize, active, disabled, color, onClick, onRight }
 export function iconButton(o) {
@@ -371,7 +393,7 @@ export function isShown(root, id) {
 export const NODE = {
   left: "ob-left", leftTop: "ob-lt", leftTopStrip: "ob-lt-strip", leftTopStack: "ob-lt-stack",
   leftBottomStack: "ob-lb-stack", footer: "ob-footer",
-  center: "ob-center", tabbar: "ob-tabbar", main: "ob-main", statusRow: "ob-statusrow", status: "ob-status", feed: "ob-feed",
+  center: "ob-center", tabbar: "ob-tabbar", main: "ob-main", statusRow: "ob-statusrow", statusrow: "ob-statusrow", status: "ob-status", feed: "ob-feed",
   right: "ob-right", rightTop: "ob-rt", rightTopStrip: "ob-rt-strip", rightTopStack: "ob-rt-stack", rightBottomStack: "ob-rb-stack",
 };
 // Every sidebar view (a stack child id = its slot): title and icon for ob-strip, the switcher and menus.

@@ -24,7 +24,9 @@
     "ctrl-alt-right": "ob-tabs.forward",
     "ctrl-9": "ob-tabs.last",
     "ctrl-alt-k": "mod.open:ob-hotkeys",
-    "ctrl-alt-t": "ob-tabs.tab-list"
+    "ctrl-alt-t": "ob-tabs.tab-list",
+    "ctrl-shift-z": "ob-tabs.zen",
+    "ctrl-alt-z": "ob-tabs.zen"
   },
   "mod:ob-sessions": {
     "f2": "ob-sessions.rename",

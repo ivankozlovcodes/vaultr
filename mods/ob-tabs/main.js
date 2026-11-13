@@ -21,13 +21,16 @@
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import {
-  spaces, panes, run, layout, nextCommand, setShared, shared, focused, settings, openOverlay, notify,
+  spaces, panes, run, layout, nextCommand, setShared, shared as _shared, focused, settings, openOverlay, notify,
   readTextFile, writeTextFile, exec, home, appHome, window as appWindow,
 } from "herdr";
 import {
   S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, stackOf, isShown, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
 } from "./kit.js";
+
+const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
+const N = NODE;
 
 const HISTORY_MAX = 50;
 const TAB_MIN = 90;
@@ -171,6 +174,7 @@ export default class Tabs extends View {
       return;
     }
     if (verb === "switcher") return this.switcher(arg || "go");
+    if (verb === "zen") return this.zen(arg);
     if (verb === "copy-path") {
       const c0 = current();
       const path = c0.cwd || (c0.space ? place(c0.space, panes()) : "");
@@ -199,7 +203,38 @@ export default class Tabs extends View {
     console.log(`ob-tabs: unknown command "${c}"`);
   }
 
+  zen(mode) {
+    const root = layout();
+    const prev = shared()?.["ob.zen"];
+    const currentlyZen = Boolean(prev?.active) && Boolean(findNode(root, N.left)?.hidden) && Boolean(findNode(root, N.right)?.hidden);
+    const enter = mode === "on" ? true : mode === "off" ? false : !currentlyZen;
+    if (enter) {
+      setShared("ob.zen", {
+        active: true,
+        leftHidden: Boolean(findNode(root, N.left)?.hidden),
+        rightHidden: Boolean(findNode(root, N.right)?.hidden),
+        statusHidden: Boolean(findNode(root, N.statusrow)?.hidden),
+        at: Date.now(),
+      });
+      run("layout.hide", { id: N.left });
+      run("layout.hide", { id: N.right });
+      run("layout.hide", { id: N.statusrow });
+      run("layout.resize", { id: N.tabbar, px: 0 });
+    } else {
+      setShared("ob.zen", { active: false, at: Date.now() });
+      run("layout.resize", { id: N.tabbar, px: 40 });
+      if (!prev?.statusHidden) run("layout.show", { id: N.statusrow });
+      if (!prev?.leftHidden) run("layout.show", { id: N.left });
+      if (!prev?.rightHidden) run("layout.show", { id: N.right });
+    }
+  }
+
   open(root, verb, child, intent) {
+    if (shared()?.["ob.zen"]?.active) {
+      run("layout.resize", { id: N.tabbar, px: 40 });
+      if (!shared()?.["ob.zen"]?.statusHidden) run("layout.show", { id: N.statusrow });
+      setShared("ob.zen", { active: false, at: Date.now() });
+    }
     const st = stackOf(root, child);
     if (!st) { console.log(`ob-tabs: no view "${child}" in this layout`); return; }
     if (verb === "toggle" && isShown(root, child)) { run("layout.hide", { id: SIDE(root, child) }); return; }

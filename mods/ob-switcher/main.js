@@ -199,6 +199,12 @@ export default class Switcher extends View {
       });
     }
 
+    // Commands (Zen mode, palette actions).
+    items.push({
+      key: "cmd:ob-tabs.zen", kind: "command", label: "Toggle Zen mode", context: "Zen mode: Toggle", words: "zen mode toggle focus",
+      lead: () => icon("minimize", S.icon), go: () => run("ob-tabs.zen"),
+    });
+
     // Bookmarks whose target is gone still show (dimmed) so they can be found and removed.
     const byKey = new Map(items.map((it) => [it.key, it]));
     const bmItems = [];
@@ -218,6 +224,21 @@ export default class Switcher extends View {
     const query = this.query.trim();
     const out = [];
     if (this.mode === "move") return this.moveRows(cur, query);
+    if (query.startsWith(">")) {
+      const qText = query.slice(1).trim();
+      const cmdPool = [
+        items.find((it) => it.key === "cmd:ob-tabs.zen"),
+        ...items.filter((it) => it.kind === "view"),
+      ].filter(Boolean);
+      const scored = [];
+      for (const it of cmdPool) {
+        if (!qText) { scored.push({ item: it, hits: [], score: 1 }); continue; }
+        const best = fuzzy(qText, it.label) ?? fuzzy(qText, `${it.label} ${it.context ?? ""} ${it.words ?? ""}`);
+        if (best) scored.push({ item: it, hits: best.hits, score: best.score });
+      }
+      scored.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+      return scored.length ? scored : [{ head: `No commands matching “${qText}”` }];
+    }
     const pool = this.mode === "views" ? items.filter((it) => it.kind === "view") : items;
     if (!query) {
       if (this.mode === "views") { for (const it of pool) out.push({ item: it }); return out; }
