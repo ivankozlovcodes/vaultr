@@ -44,6 +44,9 @@ export default class Graph extends View {
     this.selected = null;
     this.drag = null;
     this.nodeDrag = null;
+    this.physicsRunning = false;
+    this.settleFrames = 0;
+    this.pinnedAfterDrag = null;
     this.W = 0; this.H = 0;
     cx.spawn(async (cx) => {
       for (;;) {
@@ -226,6 +229,89 @@ export default class Graph extends View {
     if (this.pos.size > 600) for (const k of [...this.pos.keys()]) if (!g.nodes.has(k)) this.pos.delete(k);
   }
 
+  relaxDrag(g, pinnedKey, iters = 8) {
+    if (!g?.nodes?.size || !g?.edges?.length) return;
+    const nodes = [...g.nodes.values()];
+    const keys = nodes.map((n) => n.key);
+    const N = keys.length;
+    if (N < 2) return;
+    const idx = new Map(keys.map((k, i) => [k, i]));
+    const pinnedIdx = pinnedKey != null ? idx.get(pinnedKey) : null;
+    const X = new Float64Array(N), Y = new Float64Array(N), FX = new Float64Array(N), FY = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      const p = this.pos.get(keys[i]) ?? { x: 0, y: 0 };
+      X[i] = p.x;
+      Y[i] = p.y;
+    }
+    const E = [];
+    for (const [a, b] of g.edges) {
+      const ia = idx.get(a), ib = idx.get(b);
+      if (ia != null && ib != null) {
+        const kind = g.nodes.get(b)?.kind;
+        const rest = REST[kind] || 50;
+        E.push([ia, ib, rest]);
+      }
+    }
+    for (let it = 0; it < iters; it++) {
+      FX.fill(0);
+      FY.fill(0);
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          let dx = X[i] - X[j], dy = Y[i] - Y[j];
+          let d2 = dx * dx + dy * dy;
+          if (d2 > 160000) continue;
+          if (d2 < 1) {
+            dx = ((i * 7 + j * 13) % 11) / 11 - 0.5;
+            dy = ((i * 5 + j * 3) % 7) / 7 - 0.5;
+            d2 = 1;
+          }
+          const d = Math.sqrt(d2), f = 1200 / d2 / d;
+          FX[i] += dx * f; FY[i] += dy * f;
+          FX[j] -= dx * f; FY[j] -= dy * f;
+        }
+      }
+      for (const [a, b, rest] of E) {
+        const dx = X[b] - X[a], dy = Y[b] - Y[a];
+        const d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+        const f = ((d - rest) * 0.14) / d;
+        FX[a] += dx * f; FY[a] += dy * f;
+        FX[b] -= dx * f; FY[b] -= dy * f;
+      }
+      for (let i = 0; i < N; i++) {
+        if (i === pinnedIdx) continue;
+        const fx = FX[i], fy = FY[i];
+        const m = Math.sqrt(fx * fx + fy * fy);
+        const lim = 8;
+        const s = m > lim ? lim / m : 1;
+        X[i] += fx * s;
+        Y[i] += fy * s;
+      }
+    }
+    for (let i = 0; i < N; i++) {
+      if (i !== pinnedIdx) {
+        this.pos.set(keys[i], { x: X[i], y: Y[i] });
+      }
+    }
+  }
+
+  startPhysicsLoop(cx) {
+    if (this.physicsRunning) return;
+    this.physicsRunning = true;
+    cx.spawn(async (cx) => {
+      while (this.nodeDrag || this.settleFrames > 0) {
+        if (!this.g?.nodes?.size) break;
+        if (!this.nodeDrag) this.settleFrames--;
+        const pin = this.nodeDrag?.key ?? (this.settleFrames > 0 ? this.pinnedAfterDrag : null);
+        this.relaxDrag(this.g, pin, 8);
+        cx.notify();
+        await cx.sleep(16);
+      }
+      this.physicsRunning = false;
+      this.pinnedAfterDrag = null;
+      this.persist();
+    });
+  }
+
   aspect() { return this.W && this.H ? Math.max(0.6, Math.min(2.2, this.H / this.W)) : 1; }
 
   bounds(g) {
@@ -391,7 +477,7 @@ export default class Graph extends View {
         else if (e.key === "-") this.zoomAt(0.8, this.W / 2, this.H / 2);
         else if (e.key === "0" || e.key === "f") this.fit(this.g);
         else if (e.key === "enter" && this.selected) this.open(this.selected);
-        else if (e.key === "escape") this.selected = null;
+        else if (e.key === "escape") { this.selected = null; this.nodeDrag = null; this.settleFrames = 0; }
         else return;
         cx.stop_propagation(); cx.notify();
       });
@@ -502,6 +588,9 @@ export default class Graph extends View {
             y: this.nodeDrag.ny + dy / sc,
           });
           this.manual = true;
+          this.settleFrames = 15;
+          this.relaxDrag(this.g, this.nodeDrag.key, 8);
+          this.startPhysicsLoop(cx);
           cx.notify();
           return;
         }
@@ -524,8 +613,14 @@ export default class Graph extends View {
         if (this.nodeDrag) {
           const nd = this.nodeDrag;
           this.nodeDrag = null;
-          if (!nd.moved) this.open(nd.key);
-          else this.persist();
+          if (!nd.moved) {
+            this.settleFrames = 0;
+            this.open(nd.key);
+          } else {
+            this.pinnedAfterDrag = nd.key;
+            this.settleFrames = 15;
+            this.startPhysicsLoop(cx);
+          }
           cx.notify();
           return;
         }
