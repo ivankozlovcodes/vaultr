@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" width="640" height="400">
+  <!-- Obsidian layout preview: left sidebar (Sessions over Agents), tab bar + framed pane + status bar,
+       right sidebar (Properties over Subagents/graph). Neutral greys and one accent (#8b7cf6) only. -->
+  <rect width="640" height="400" fill="#16171a"/>
+
+  <!-- left sidebar -->
+  <rect x="0" y="0" width="150" height="400" fill="#1e1f23"/>
+  <rect x="150" y="0" width="1" height="400" fill="#2c2e33"/>
+  <!-- top strip: icon tabs (active = selected) -->
+  <rect x="6" y="6" width="14" height="14" rx="3" fill="#34363c"/>
+  <rect x="9" y="10" width="8" height="6" rx="1" fill="none" stroke="#d6d7db" stroke-width="1.2"/>
+  <circle cx="30" cy="13" r="3.2" fill="none" stroke="#6b6e76" stroke-width="1.2"/>
+  <path d="M44 9 h6 v8 l-3 -2 l-3 2 z" fill="none" stroke="#6b6e76" stroke-width="1.2"/>
+  <rect x="134" y="8" width="10" height="10" rx="2" fill="none" stroke="#6b6e76" stroke-width="1.2"/>
+  <rect x="0" y="26" width="150" height="1" fill="#2c2e33"/>
+  <!-- section header -->
+  <rect x="8" y="34" width="44" height="3" rx="1.5" fill="#55585f"/>
+  <!-- tree: machine > space (avatar) > tab > pane -->
+  <g>
+    <rect x="8" y="46" width="7" height="7" rx="1.5" fill="none" stroke="#8a8d94"/>
+    <rect x="20" y="48" width="52" height="3" rx="1.5" fill="#c9cace"/>
+    <rect x="16" y="60" width="8" height="8" rx="2" fill="#9a9ca3"/>
+    <rect x="28" y="62" width="40" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="74" y="62" width="26" height="3" rx="1.5" fill="#55585f"/>
+    <rect x="22" y="72" width="122" height="13" rx="3" fill="#2f3137"/>
+    <rect x="24" y="76" width="6" height="6" rx="1" fill="#8a8d94"/>
+    <rect x="36" y="77" width="56" height="3" rx="1.5" fill="#e6e7ea"/>
+    <circle cx="136" cy="78.5" r="2.6" fill="none" stroke="#8b7cf6" stroke-width="1.3"/>
+    <rect x="18" y="72" width="1" height="44" fill="#2c2e33"/>
+    <rect x="36" y="90" width="6" height="6" rx="1" fill="#8a8d94"/>
+    <rect x="46" y="91" width="44" height="3" rx="1.5" fill="#b3b5ba"/>
+    <circle cx="136" cy="92.5" r="2.4" fill="#6f727a"/>
+    <rect x="36" y="104" width="6" height="6" rx="1" fill="#8a8d94"/>
+    <rect x="46" y="105" width="36" height="3" rx="1.5" fill="#b3b5ba"/>
+    <rect x="16" y="120" width="8" height="8" rx="2" fill="#c4c6cb"/>
+    <rect x="28" y="122" width="48" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="16" y="134" width="8" height="8" rx="2" fill="#6f727a"/>
+    <rect x="28" y="136" width="36" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="8" y="152" width="7" height="7" rx="1.5" fill="none" stroke="#8a8d94"/>
+    <rect x="20" y="154" width="40" height="3" rx="1.5" fill="#c9cace"/>
+    <rect x="16" y="166" width="8" height="8" rx="2" fill="#8b7cf6"/>
+    <rect x="28" y="168" width="54" height="3" rx="1.5" fill="#e6e7ea"/>
+  </g>
+  <!-- bottom group: strip + agents -->
+  <rect x="0" y="232" width="150" height="1" fill="#2c2e33"/>
+  <rect x="6" y="238" width="14" height="14" rx="3" fill="#34363c"/>
+  <rect x="9" y="242" width="8" height="6" rx="2" fill="none" stroke="#d6d7db" stroke-width="1.2"/>
+  <circle cx="30" cy="245" r="3.2" fill="none" stroke="#6b6e76" stroke-width="1.2"/>
+  <rect x="8" y="262" width="40" height="3" rx="1.5" fill="#55585f"/>
+  <circle cx="12" cy="276" r="2.6" fill="#6f727a"/>
+  <rect x="20" y="274.5" width="62" height="3" rx="1.5" fill="#e6e7ea"/>
+  <circle cx="12" cy="290" r="2.6" fill="none" stroke="#8b7cf6" stroke-width="1.3"/>
+  <rect x="20" y="288.5" width="50" height="3" rx="1.5" fill="#e6e7ea"/>
+  <circle cx="12" cy="304" r="2.4" fill="none" stroke="#8a8d94" stroke-width="1.1"/>
+  <rect x="20" y="302.5" width="56" height="3" rx="1.5" fill="#b3b5ba"/>
+  <!-- footer (vault row) -->
+  <rect x="0" y="374" width="150" height="1" fill="#2c2e33"/>
+  <rect x="8" y="384" width="7" height="6" rx="1" fill="none" stroke="#8a8d94"/>
+  <rect x="20" y="385.5" width="46" height="3" rx="1.5" fill="#c9cace"/>
+  <circle cx="114" cy="387" r="3" fill="none" stroke="#6b6e76"/>
+  <circle cx="126" cy="387" r="3" fill="none" stroke="#6b6e76"/>
+  <circle cx="138" cy="387" r="3" fill="none" stroke="#6b6e76"/>
+
+  <!-- center: tab bar -->
+  <rect x="151" y="0" width="338" height="26" fill="#1e1f23"/>
+  <path d="M157 26 v-17 a4 4 0 0 1 4 -4 h80 a4 4 0 0 1 4 4 v17 z" fill="#111214"/>
+  <rect x="164" y="13" width="6" height="6" rx="1" fill="#6f727a"/>
+  <rect x="175" y="14.5" width="44" height="3" rx="1.5" fill="#e6e7ea"/>
+  <rect x="231" y="13" width="6" height="6" rx="1" fill="none" stroke="#8a8d94"/>
+  <rect x="254" y="14.5" width="50" height="3" rx="1.5" fill="#8a8d94"/>
+  <rect x="320" y="10" width="1" height="11" fill="#2c2e33"/>
+  <rect x="328" y="14.5" width="40" height="3" rx="1.5" fill="#8a8d94"/>
+  <path d="M384 16 h8 M388 12 v8" stroke="#8a8d94" stroke-width="1.2"/>
+  <rect x="470" y="9" width="11" height="10" rx="2" fill="none" stroke="#d6d7db" stroke-width="1.2"/>
+  <!-- pane frame -->
+  <rect x="155" y="30" width="330" height="344" rx="5" fill="#111214" stroke="#8b7cf6" stroke-width="1"/>
+  <rect x="155.5" y="50" width="329" height="1" fill="#2c2e33"/>
+  <path d="M163 40 l-3 -3 m0 0 l3 -3" stroke="#8a8d94" stroke-width="1.2" fill="none" transform="translate(0,3)"/>
+  <path d="M172 37 l3 3 l-3 3" stroke="#55585f" stroke-width="1.2" fill="none"/>
+  <rect x="262" y="38.5" width="76" height="3" rx="1.5" fill="#8a8d94"/>
+  <rect x="342" y="38.5" width="40" height="3" rx="1.5" fill="#e6e7ea"/>
+  <circle cx="470" cy="40" r="2.8" fill="none" stroke="#8b7cf6" stroke-width="1.3"/>
+  <g fill="#7d8088">
+    <rect x="166" y="62" width="150" height="3" rx="1.5"/>
+    <rect x="166" y="72" width="210" height="3" rx="1.5"/>
+    <rect x="176" y="82" width="120" height="3" rx="1.5"/>
+    <rect x="176" y="92" width="180" height="3" rx="1.5"/>
+    <rect x="166" y="108" width="90" height="3" rx="1.5" fill="#8b7cf6"/>
+    <rect x="166" y="118" width="230" height="3" rx="1.5"/>
+    <rect x="166" y="128" width="170" height="3" rx="1.5"/>
+    <rect x="176" y="138" width="140" height="3" rx="1.5"/>
+    <rect x="166" y="154" width="200" height="3" rx="1.5"/>
+    <rect x="166" y="164" width="110" height="3" rx="1.5"/>
+  </g>
+  <rect x="166" y="350" width="308" height="14" rx="3" fill="#1b1c20" stroke="#2c2e33"/>
+  <rect x="172" y="355.5" width="5" height="3" fill="#e6e7ea"/>
+  <!-- status bar -->
+  <rect x="151" y="378" width="338" height="22" fill="#1e1f23"/>
+  <rect x="151" y="378" width="338" height="1" fill="#2c2e33"/>
+  <rect x="300" y="387.5" width="40" height="3" rx="1.5" fill="#6b6e76"/>
+  <circle cx="352" cy="389" r="2.4" fill="#6f727a"/>
+  <circle cx="364" cy="389" r="2.4" fill="none" stroke="#8b7cf6" stroke-width="1.2"/>
+  <rect x="372" y="387.5" width="22" height="3" rx="1.5" fill="#6b6e76"/>
+  <circle cx="414" cy="389" r="2.6" fill="none" stroke="#8b7cf6" stroke-width="1.2"/>
+  <rect x="420" y="387.5" width="54" height="3" rx="1.5" fill="#6b6e76"/>
+
+  <!-- right sidebar -->
+  <rect x="489" y="0" width="1" height="400" fill="#2c2e33"/>
+  <rect x="490" y="0" width="150" height="400" fill="#1e1f23"/>
+  <rect x="496" y="6" width="14" height="14" rx="3" fill="#34363c"/>
+  <circle cx="503" cy="13" r="4" fill="none" stroke="#d6d7db" stroke-width="1.2"/>
+  <rect x="516" y="9" width="7" height="9" rx="1" fill="none" stroke="#6b6e76" stroke-width="1.2"/>
+  <path d="M530 9 v9 M536 9 v9 M530 13 h6" stroke="#6b6e76" stroke-width="1.2"/>
+  <rect x="542" y="9" width="2" height="9" fill="#6b6e76"/><rect x="546" y="12" width="2" height="6" fill="#6b6e76"/><rect x="550" y="10" width="2" height="8" fill="#6b6e76"/>
+  <rect x="490" y="26" width="150" height="1" fill="#2c2e33"/>
+  <!-- properties: key/value rows -->
+  <rect x="498" y="34" width="50" height="3" rx="1.5" fill="#55585f"/>
+  <g>
+    <rect x="498" y="48" width="30" height="3" rx="1.5" fill="#55585f"/><rect x="540" y="48" width="70" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="498" y="60" width="24" height="3" rx="1.5" fill="#55585f"/><rect x="540" y="60" width="54" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="498" y="72" width="34" height="3" rx="1.5" fill="#55585f"/><rect x="540" y="72" width="86" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="498" y="84" width="22" height="3" rx="1.5" fill="#55585f"/><rect x="540" y="84" width="40" height="3" rx="1.5" fill="#8b7cf6"/>
+    <rect x="498" y="102" width="44" height="3" rx="1.5" fill="#55585f"/>
+    <rect x="498" y="114" width="30" height="3" rx="1.5" fill="#55585f"/><rect x="540" y="114" width="62" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="498" y="126" width="26" height="3" rx="1.5" fill="#55585f"/><rect x="540" y="126" width="78" height="3" rx="1.5" fill="#e6e7ea"/>
+    <rect x="498" y="140" width="40" height="10" rx="5" fill="#2f3137"/><rect x="542" y="140" width="52" height="10" rx="5" fill="#2f3137"/>
+  </g>
+  <!-- bottom group: strip + graph -->
+  <rect x="490" y="232" width="150" height="1" fill="#2c2e33"/>
+  <rect x="496" y="238" width="14" height="14" rx="3" fill="#34363c"/>
+  <circle cx="500" cy="242" r="1.6" fill="#d6d7db"/><circle cx="506" cy="248" r="1.6" fill="#d6d7db"/><path d="M500 242 L506 248" stroke="#d6d7db"/>
+  <path d="M516 241 l6 7 m0 -7 l-6 7" stroke="#6b6e76" stroke-width="1.2"/>
+  <rect x="528" y="242" width="9" height="1.5" fill="#6b6e76"/><rect x="528" y="246" width="9" height="1.5" fill="#6b6e76"/>
+  <g stroke="#3a3c42" stroke-width="1">
+    <path d="M565 315 L530 290 M565 315 L600 285 M565 315 L560 360 M530 290 L512 300 M530 290 L522 268 M600 285 L622 300 M600 285 L612 266 M560 360 L540 372 M560 360 L584 374"/>
+  </g>
+  <path d="M600 285 L626 330" stroke="#8b7cf6" stroke-width="1" stroke-dasharray="3 3"/>
+  <circle cx="565" cy="315" r="6" fill="#1e1f23" stroke="#8a8d94" stroke-width="1.5"/>
+  <circle cx="530" cy="290" r="4.5" fill="#9a9ca3"/>
+  <circle cx="600" cy="285" r="4.5" fill="#c4c6cb"/>
+  <circle cx="560" cy="360" r="4.5" fill="#6f727a"/>
+  <circle cx="512" cy="300" r="3" fill="#8a8d94"/><circle cx="522" cy="268" r="3" fill="#8b7cf6"/>
+  <circle cx="622" cy="300" r="3" fill="#8a8d94"/><circle cx="612" cy="266" r="3" fill="#6f727a"/>
+  <circle cx="540" cy="372" r="3" fill="#8a8d94"/><circle cx="584" cy="374" r="3" fill="#8b7cf6"/>
+  <circle cx="626" cy="330" r="2.4" fill="#8b7cf6"/>
+</svg>
