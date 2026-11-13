@@ -165,6 +165,8 @@ fi
 
 # 5. Activate if requested
 if [[ "$ACTIVATE" -eq 1 ]]; then
+  # Bounce layout through iv to force full reload if vaultr was already active
+  herdr-app do layout.switch --name iv >/dev/null 2>&1 || true
   herdr-app do layout.switch --name vaultr >/dev/null 2>&1 || true
   echo "activated layout -> vaultr"
 fi

@@ -315,26 +315,51 @@ export default class Graph extends View {
   }
 
   toolbar(t) {
+    const stop = (_e, cx) => cx.stop_propagation();
     const seg = (id, label, on, cmd) => h_flex().id(id).h(20).px(7).items_center().rounded(S.radius).cursor_pointer()
       .text_size(S.textXs).font_medium().text_color(on ? t.foreground : t.dim).when(on, (e) => e.bg(t.selected))
       .when(!on, (e) => e.hover((s) => s.bg(t.hover).text_color(t.muted)))
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
       .on_click((_e, cx) => { this.command(cmd, cx); cx.notify(); }).child(label);
     const txt = (id, label, tip, cmd) => h_flex().id(id).size(22).items_center().justify_center().rounded(S.radius).cursor_pointer()
       .text_size(14).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip)
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
       .on_click((_e, cx) => { this.command(cmd, cx); cx.notify(); }).child(label);
     return h_flex().id("gtb").absolute().top(6).left(6).right(6).h(26).gap(4).items_center()
       .child(h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
+        .on_mouse_down("left", stop).on_mouse_down("right", stop)
         .child(seg("g-local", "Local", this.mode === "local", "mode:local"))
         .child(seg("g-global", "Global", this.mode === "global", "mode:global")))
       .child(div().flex_1())
       .child(h_flex().p(2).gap(1).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
+        .on_mouse_down("left", stop).on_mouse_down("right", stop)
         .child(iconButton({ id: "g-finished", icon: "circle-check", size: 22, iconSize: 13, active: this.finished, tip: this.finished ? "Hide finished sub-agents" : "Show finished sub-agents", onClick: (_e, cx) => { this.command(`finished:${this.finished ? "off" : "on"}`, cx); cx.notify(); } }))
         .child(iconButton({ id: "g-labels", icon: "hash", size: 22, iconSize: 13, active: this.labelsAll, tip: this.labelsAll ? "Labels: all" : "Labels: machines and spaces (hover for the rest)", onClick: (_e, cx) => { this.command(`labels:${this.labelsAll ? "off" : "on"}`, cx); cx.notify(); } }))
         .child(txt("g-out", "−", "Zoom out", "zoom-out"))
         .child(txt("g-in", "+", "Zoom in", "zoom-in"))
         .child(iconButton({ id: "g-fit", icon: "maximize", size: 22, iconSize: 13, tip: "Fit to view", onClick: (_e, cx) => { this.command("fit", cx); cx.notify(); } })));
+  }
+
+  hitNode(mx, my) {
+    if (!this.g?.nodes) return null;
+    if (my < 36 || (my > this.H - 24 && mx < 250)) return null;
+    const { scale, x: ox, y: oy } = this.view;
+    const ns = Math.max(0.75, Math.min(1.6, Math.sqrt(scale)));
+    let bestKey = null, bestDist = Infinity;
+    for (const n of this.g.nodes.values()) {
+      const p = this.pos.get(n.key);
+      if (!p) continue;
+      const x = p.x * scale + ox, y = p.y * scale + oy;
+      const hitR = Math.max(10, (R[n.kind] ?? 5) * ns + 4);
+      const dx = x - mx, dy = y - my;
+      if (Math.abs(dx) > hitR || Math.abs(dy) > hitR) continue;
+      const d = Math.hypot(dx, dy);
+      if (d <= hitR && d < bestDist) {
+        bestDist = d;
+        bestKey = n.key;
+      }
+    }
+    return bestKey;
   }
 
   render(cx) {
@@ -417,17 +442,7 @@ export default class Graph extends View {
       }
       const tip = [n.label, n.kind === "p" ? n.program?.name : null, n.status ? `${n.status}` : null, n.address ?? null].filter(Boolean).join(" · ");
       let el = div().id(id).absolute().left(x - r).top(y - r).size(r * 2).rounded_full().cursor_pointer()
-        .tooltip(tip)
-        .on_hover((h, cx) => { if (h) this.hover = n.key; else if (this.hover === n.key) this.hover = null; cx.notify(); })
-        .on_mouse_down("left", (e, cx) => {
-          cx.stop_propagation();
-          const pt = e.position ?? e.local_position ?? { x: 0, y: 0 };
-          const cur = this.pos.get(n.key) ?? { x: 0, y: 0 };
-          this.nodeDrag = { key: n.key, sx: pt.x / zoom, sy: pt.y / zoom, nx: cur.x, ny: cur.y, moved: false };
-          this.hover = n.key;
-          cx.notify();
-        })
-        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.selected = n.key; this.menu(n.key); cx.notify(); });
+        .tooltip(tip);
       if (n.kind === "m") el = el.bg(t.chrome).border(1.5 * ns).border_color(color);
       else el = el.bg(color).when(n.kind === "p" && !n.status, (e) => e.border(1).border_color(t.muted));
       if (n.orphan) el = el.opacity(0.7);
@@ -447,45 +462,86 @@ export default class Graph extends View {
     const live = [...g.nodes.values()].filter((n) => (n.kind === "r" || n.kind === "c" || n.kind === "h") && n.live).length;
     const bad = Object.entries(f?.machines ?? {}).filter(([, m]) => !m.ok).map(([k]) => machineLabel(k === "local" ? null : k));
     return root
-      .on_mouse_down("left", (e, cx) => { const p = e.local_position ?? e.position; this.drag = { x: p.x / zoom, y: p.y / zoom, vx: this.view.x, vy: this.view.y, moved: false }; cx.notify(); })
+      .when(Boolean(this.nodeDrag || this.drag?.moved), (e) => e.cursor_grabbing())
+      .when(!this.nodeDrag && !this.drag?.moved && Boolean(this.hover), (e) => e.cursor_pointer())
+      .on_mouse_down("left", (e, cx) => {
+        const p = e.local_position ?? e.position;
+        const mx = p.x / zoom, my = p.y / zoom;
+        const hit = this.hitNode(mx, my);
+        if (hit) {
+          const cur = this.pos.get(hit) ?? { x: 0, y: 0 };
+          this.nodeDrag = { key: hit, x: mx, y: my, nx: cur.x, ny: cur.y, moved: false };
+          this.drag = null;
+          this.hover = hit;
+        } else {
+          this.nodeDrag = null;
+          this.drag = { x: mx, y: my, vx: this.view.x, vy: this.view.y, moved: false };
+        }
+        cx.notify();
+      })
+      .on_mouse_down("right", (e, cx) => {
+        const p = e.local_position ?? e.position;
+        const mx = p.x / zoom, my = p.y / zoom;
+        const hit = this.hitNode(mx, my);
+        if (hit) {
+          this.selected = hit;
+          this.menu(hit);
+          cx.notify();
+        }
+      })
       .on_mouse_move((e, cx) => {
+        const p = e.local_position ?? e.position;
+        const mx = p.x / zoom, my = p.y / zoom;
         if (this.nodeDrag) {
-          const pt = e.position ?? e.local_position ?? { x: 0, y: 0 };
-          const dxScreen = pt.x / zoom - this.nodeDrag.sx;
-          const dyScreen = pt.y / zoom - this.nodeDrag.sy;
-          if (!this.nodeDrag.moved && Math.hypot(dxScreen, dyScreen) < 3) return;
+          const dx = mx - this.nodeDrag.x, dy = my - this.nodeDrag.y;
+          if (!this.nodeDrag.moved && Math.hypot(dx, dy) < 3) return;
           this.nodeDrag.moved = true;
-          const scale = this.view.scale || 1;
+          const sc = this.view.scale || 1;
           this.pos.set(this.nodeDrag.key, {
-            x: this.nodeDrag.nx + dxScreen / scale,
-            y: this.nodeDrag.ny + dyScreen / scale,
+            x: this.nodeDrag.nx + dx / sc,
+            y: this.nodeDrag.ny + dy / sc,
           });
+          this.manual = true;
           cx.notify();
           return;
         }
-        if (!this.drag) return;
-        const p = e.local_position ?? e.position;
-        const dx = p.x / zoom - this.drag.x, dy = p.y / zoom - this.drag.y;
-        if (!this.drag.moved && Math.hypot(dx, dy) < 3) return;
-        this.drag.moved = true;
-        this.view = { ...this.view, x: this.drag.vx + dx, y: this.drag.vy + dy };
-        this.manual = true;
-        cx.notify();
+        if (this.drag) {
+          const dx = mx - this.drag.x, dy = my - this.drag.y;
+          if (!this.drag.moved && Math.hypot(dx, dy) < 3) return;
+          this.drag.moved = true;
+          this.view = { ...this.view, x: this.drag.vx + dx, y: this.drag.vy + dy };
+          this.manual = true;
+          cx.notify();
+          return;
+        }
+        const nextHover = this.hitNode(mx, my);
+        if (nextHover !== this.hover) {
+          this.hover = nextHover;
+          cx.notify();
+        }
       })
       .on_mouse_up("left", (_e, cx) => {
         if (this.nodeDrag) {
           const nd = this.nodeDrag;
           this.nodeDrag = null;
           if (!nd.moved) this.open(nd.key);
+          else this.persist();
           cx.notify();
           return;
         }
-        if (this.drag?.moved) this.persist(); else if (this.drag) this.selected = null; this.drag = null; cx.notify();
+        if (this.drag) {
+          if (this.drag.moved) this.persist();
+          else this.selected = null;
+          this.drag = null;
+          cx.notify();
+        }
       })
       .on_hover((h, cx) => {
         if (!h) {
-          if (this.nodeDrag) { this.nodeDrag = null; cx.notify(); }
-          if (this.drag) { this.drag = null; this.persist(); cx.notify(); }
+          if (!this.nodeDrag && !this.drag && this.hover) {
+            this.hover = null;
+            cx.notify();
+          }
         }
       })
       .on_scroll_wheel((e, cx) => {
@@ -506,6 +562,7 @@ export default class Graph extends View {
       .children(labels)
       .child(this.toolbar(t))
       .child(h_flex().id("g-foot").absolute().left(8).bottom(6).gap(8).items_center().text_size(10.5).text_color(t.dim)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_mouse_down("right", (_e, cx) => cx.stop_propagation())
         .child(div().child(`${g.nodes.size} nodes`))
         .when(live > 0, (e) => e.child(div().text_color(t.working).child(`${live} live`)))
         .when(this.mode === "local", (e) => e.child(div().child(`depth ${this.depth}`)))
