@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./install.sh             # Sync kit, symlink layouts and mods, merge keybindings
-#   ./install.sh --activate  # Install and switch active layout to obsidian
+#   ./install.sh --activate  # Install and switch active layout to vaultr
 #   ./install.sh --uninstall # Remove vaultr layouts/mods, revert keybindings, switch layout to iv
 
 set -euo pipefail
@@ -37,15 +37,13 @@ done
 if [[ "$UNINSTALL" -eq 1 ]]; then
   echo "Uninstalling Vaultr..."
 
-  # 1. Remove obsidian layout files and ob-* mods
-  if [[ -f "$HERDR_APP_DIR/layouts/obsidian.json" || -L "$HERDR_APP_DIR/layouts/obsidian.json" ]]; then
-    rm -f "$HERDR_APP_DIR/layouts/obsidian.json"
-    echo "removed layout: $HERDR_APP_DIR/layouts/obsidian.json"
-  fi
-  if [[ -f "$HERDR_APP_DIR/layouts/obsidian.svg" || -L "$HERDR_APP_DIR/layouts/obsidian.svg" ]]; then
-    rm -f "$HERDR_APP_DIR/layouts/obsidian.svg"
-    echo "removed layout: $HERDR_APP_DIR/layouts/obsidian.svg"
-  fi
+  # 1. Remove vaultr layout files (and any legacy obsidian layout files) and ob-* mods
+  for file in "vaultr.json" "vaultr.svg" "obsidian.json" "obsidian.svg"; do
+    if [[ -f "$HERDR_APP_DIR/layouts/$file" || -L "$HERDR_APP_DIR/layouts/$file" ]]; then
+      rm -f "$HERDR_APP_DIR/layouts/$file"
+      echo "removed layout: $HERDR_APP_DIR/layouts/$file"
+    fi
+  done
 
   for mod_path in "$HERDR_APP_DIR"/mods/ob-*; do
     if [[ -L "$mod_path" || -d "$mod_path" || -e "$mod_path" ]]; then
@@ -54,7 +52,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     fi
   done
 
-  # 2. Remove obsidian keybinding sections from keys.json
+  # 2. Remove vaultr and legacy obsidian keybinding sections from keys.json
   if [[ -f "$HERDR_APP_DIR/keys.json" ]]; then
     python3 - "$HERDR_APP_DIR/keys.json" <<-'PY'
 import json, os, sys
@@ -67,7 +65,7 @@ except Exception as e:
     sys.exit(0)
 
 modified = False
-for k in ("layout:obsidian", "mod:ob-sessions"):
+for k in ("layout:vaultr", "layout:obsidian", "mod:ob-sessions"):
     if k in keys:
         del keys[k]
         modified = True
@@ -77,7 +75,7 @@ if modified:
         json.dump(keys, f, indent=2)
         f.write("\n")
 PY
-    echo "removed obsidian keybindings from $HERDR_APP_DIR/keys.json"
+    echo "removed vaultr keybindings from $HERDR_APP_DIR/keys.json"
   fi
 
   # 3. Switch layout back to iv
@@ -105,8 +103,16 @@ fi
 
 mkdir -p "$HERDR_APP_DIR/layouts" "$HERDR_APP_DIR/mods"
 
+# Clean up any leftover legacy obsidian layout files
+for legacy in "obsidian.json" "obsidian.svg"; do
+  if [[ -f "$HERDR_APP_DIR/layouts/$legacy" || -L "$HERDR_APP_DIR/layouts/$legacy" ]]; then
+    rm -f "$HERDR_APP_DIR/layouts/$legacy"
+    echo "cleaned up stale layout: $HERDR_APP_DIR/layouts/$legacy"
+  fi
+done
+
 # 2. Symlink layouts if present
-for file in "obsidian.json" "obsidian.svg"; do
+for file in "vaultr.json" "vaultr.svg"; do
   src="$REPO_DIR/layouts/$file"
   if [[ -f "$src" ]]; then
     ln -sfn "$src" "$HERDR_APP_DIR/layouts/$file"
@@ -126,9 +132,9 @@ for mod_dir in "$REPO_DIR"/mods/ob-*/; do
   echo "linked mod: $target -> $mod_dir"
 done
 
-# 4. Merge obsidian keybindings into keys.json
-if [[ -f "$REPO_DIR/keys/obsidian-keys.json" ]]; then
-  python3 - "$REPO_DIR/keys/obsidian-keys.json" "$HERDR_APP_DIR/keys.json" <<-'PY'
+# 4. Merge vaultr keybindings into keys.json and clean up stale layout:obsidian
+if [[ -f "$REPO_DIR/keys/vaultr-keys.json" ]]; then
+  python3 - "$REPO_DIR/keys/vaultr-keys.json" "$HERDR_APP_DIR/keys.json" <<-'PY'
 import json, os, sys
 
 src_file, dst_file = sys.argv[1], sys.argv[2]
@@ -140,12 +146,15 @@ if os.path.exists(dst_file):
     except Exception as e:
         print(f"Warning: could not read {dst_file}: {e}", file=sys.stderr)
 
-with open(src_file, "r") as f:
-    ob_keys = json.load(f)
+# Clean up stale layout:obsidian
+keys.pop("layout:obsidian", None)
 
-for k in ("layout:obsidian", "mod:ob-sessions"):
-    if k in ob_keys:
-        keys[k] = ob_keys[k]
+with open(src_file, "r") as f:
+    vaultr_keys = json.load(f)
+
+for k in ("layout:vaultr", "mod:ob-sessions"):
+    if k in vaultr_keys:
+        keys[k] = vaultr_keys[k]
 
 with open(dst_file, "w") as f:
     json.dump(keys, f, indent=2)
@@ -156,8 +165,8 @@ fi
 
 # 5. Activate if requested
 if [[ "$ACTIVATE" -eq 1 ]]; then
-  herdr-app do layout.switch --name obsidian >/dev/null 2>&1 || true
-  echo "activated layout -> obsidian"
+  herdr-app do layout.switch --name vaultr >/dev/null 2>&1 || true
+  echo "activated layout -> vaultr"
 fi
 
 echo "Vaultr installation complete."

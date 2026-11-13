@@ -6,11 +6,11 @@ Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [
 
 - **`kit/`**: Shared mod foundation. Contains `kit.js` (reusable GPUI components, theme tokens, shell helpers, and SVG icons), `sync.sh` (tool to propagate `kit.js` and icons into each `mods/ob-*` folder), and agent scan utilities.
 - **`layouts/`**: Herdr workspace layout specifications:
-  - `obsidian.json`: Three-column layout tree with collapsible sidebars and multi-tab stacks.
-  - `obsidian.svg`: Layout preview icon.
+  - `vaultr.json`: Three-column layout tree with collapsible sidebars and multi-tab stacks.
+  - `vaultr.svg`: Layout preview icon.
 - **`mods/`**: The complete suite of 18 Obsidian-style UI mods.
 - **`keys/`**: Keybinding configurations:
-  - `obsidian-keys.json`: Custom keybinding definitions for `layout:obsidian` and `mod:ob-sessions`.
+  - `vaultr-keys.json`: Custom keybinding definitions for `layout:vaultr` and `mod:ob-sessions`.
 - **`install.sh`**: One-step installer, activator, and uninstaller.
 
 ---
@@ -47,7 +47,7 @@ Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [
 
 ## Keybindings Reference
 
-### `layout:obsidian`
+### `layout:vaultr`
 
 | Keybinding | Action | Description |
 | :--- | :--- | :--- |
@@ -87,7 +87,7 @@ Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [
 ## Installation & Usage
 
 ### 1. Install & Activate
-To sync kit assets, link layouts and mods into `~/.config/herdr-app`, merge keybindings, and switch Herdr to the Obsidian layout:
+To sync kit assets, link layouts and mods into `~/.config/herdr-app`, merge keybindings, and switch Herdr to the Vaultr layout:
 
 ```bash
 ./install.sh --activate

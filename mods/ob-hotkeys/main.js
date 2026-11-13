@@ -30,7 +30,7 @@ import { registry, GROUPS, LAYOUT_SCOPE, SESSIONS_SCOPE, defaultsIn, chainOf, sc
 
 const FIXED_SCOPES = [LAYOUT_SCOPE, "global", "terminal", SESSIONS_SCOPE];
 const SCOPE_ABOUT = {
-  [LAYOUT_SCOPE]: "Keys set here work while the Obsidian layout shows and win over All layouts. Dim keys are inherited from All layouts.",
+  [LAYOUT_SCOPE]: "Keys set here work while the Vaultr layout shows and win over All layouts. Dim keys are inherited from All layouts.",
   global: "Herdr's keys in every layout. A layout or a terminal may use the same key for something else.",
   terminal: "Keys while a terminal has focus; they win over the layout's and Herdr's. Dim keys are inherited.",
   [SESSIONS_SCOPE]: "Keys while the Sessions panel has the keyboard. Dim keys are inherited from the layout and Herdr.",
@@ -296,7 +296,7 @@ export default class Hotkeys extends View {
   giveBack(chord, cx) {
     const pairs = effectivePairs(this.sections()[LAYOUT_SCOPE] ?? []);
     const p = pairs.find((q) => canon(q.key) === canon(chord));
-    if (!p) { this.banner = { level: "warn", text: `${label(chord)} is not bound in the Obsidian layout.` }; return; }
+    if (!p) { this.banner = { level: "warn", text: `${label(chord)} is not bound in the Vaultr layout.` }; return; }
     this.edit({ kind: "unbind", action: p.action, chord: p.key, scope: LAYOUT_SCOPE }, cx);
   }
   setWindowButtons(v) {

@@ -1,5 +1,5 @@
 {
-  "layout:obsidian": {
+  "layout:vaultr": {
     "ctrl-p": "mod.open:ob-switcher",
     "ctrl-shift-p": "app.palette",
     "ctrl-b": "layout.toggle:ob-left",

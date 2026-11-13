@@ -11,7 +11,7 @@ import {
 
 // This copy's mod folder name (sync.sh writes it).
 export const MOD = "ob-hotkeys";
-export const LAYOUT = "obsidian";
+export const LAYOUT = "vaultr";
 
 // ---------------------------------------------------------------- sizes (design px at zoom 1)
 export const S = {

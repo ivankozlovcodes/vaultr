@@ -3,7 +3,7 @@
   "type": "row",
   "titlebar": "none",
   "traffic_lights": [12, 14],
-  "preview": "layouts/obsidian.svg",
+  "preview": "layouts/vaultr.svg",
   "background": "canvas",
   "terminal_padding": [14, 12],
   "divider": { "width": 1, "color": "border" },

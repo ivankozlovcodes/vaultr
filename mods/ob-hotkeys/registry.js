@@ -6,7 +6,7 @@
 
 import { commands, keys } from "herdr";
 
-export const LAYOUT_SCOPE = "layout:obsidian";
+export const LAYOUT_SCOPE = "layout:vaultr";
 export const SESSIONS_SCOPE = "mod:ob-sessions";
 
 // The Obsidian layout's own commands (SPEC 6.1 order), with the Obsidian command each key mirrors
@@ -165,13 +165,13 @@ export function titleFor(action) {
 }
 
 // The registry: [{ action, title, group, home, defaults, obsidian, when }], groups in order.
-export const GROUPS = ["Obsidian layout", "Sessions panel", "Herdr", "In terminals", "Other"];
+export const GROUPS = ["Vaultr layout", "Sessions panel", "Herdr", "In terminals", "Other"];
 
 export function registry() {
   const out = [];
   const seen = new Set();
   const add = (e) => { if (seen.has(e.action)) return; seen.add(e.action); out.push(e); };
-  for (const [action, title, defaults, obsidian, when] of OB) add({ action, title, group: "Obsidian layout", home: LAYOUT_SCOPE, defaults, obsidian, when: when ?? null });
+  for (const [action, title, defaults, obsidian, when] of OB) add({ action, title, group: "Vaultr layout", home: LAYOUT_SCOPE, defaults, obsidian, when: when ?? null });
   for (const [action, title, defaults, obsidian] of SESSIONS) add({ action, title, group: "Sessions panel", home: SESSIONS_SCOPE, defaults, obsidian, when: "Sessions" });
   const bound = safeKeys();
   // Terminal rows are reserved first so "Copy"/"Paste" land under In terminals, not Herdr.
@@ -224,7 +224,7 @@ export function chainOf(scope) {
 
 // Scope names for the menu and chips.
 export function scopeTitle(scope) {
-  if (scope === LAYOUT_SCOPE) return "Obsidian layout";
+  if (scope === LAYOUT_SCOPE) return "Vaultr layout";
   if (scope === "global") return "All layouts";
   if (scope === "terminal") return "In terminals";
   if (scope === SESSIONS_SCOPE) return "Sessions panel";
@@ -232,9 +232,9 @@ export function scopeTitle(scope) {
   if (scope.startsWith("mod:")) return `Mod: ${scope.slice(4)}`;
   return scope;
 }
-// "in the Obsidian layout", "in terminals": for sentences.
+// "in the Vaultr layout", "in terminals": for sentences.
 export function scopeWhere(scope) {
-  if (scope === LAYOUT_SCOPE) return "in the Obsidian layout";
+  if (scope === LAYOUT_SCOPE) return "in the Vaultr layout";
   if (scope === "global") return "in all layouts";
   if (scope === "terminal") return "in terminals";
   if (scope === SESSIONS_SCOPE) return "in the Sessions panel";
