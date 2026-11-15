@@ -77,11 +77,15 @@ export default class Props extends View {
         this.usageScript ||= await readTextFile(`${appHome()}/mods/ob-props/usage.py`);
         const script = this.usageScript;
         if (!script) throw new Error("usage.py is missing");
-        const r = await exec("python3", ["-c", script, path], { ...(machine ? { on: machine } : {}), timeout: 8000 });
+        // The last run's signature for this path: an unchanged transcript is not read again (usage.py checks where it lives).
+        const last = this.usage[addr];
+        const seen = last?.path === path && last?.sig && last?.summary ? last.sig : "";
+        const r = await exec("python3", ["-c", script, path, "", seen], { ...(machine ? { on: machine } : {}), timeout: 8000 });
         const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
         if (!line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());
         const d = JSON.parse(line);
-        this.usage[addr] = { summary: summarize(d.turns), format: d.format, truncated: Boolean(d.truncated), size: d.size, error: d.error ?? null, at: Date.now() };
+        if (d.unchanged && last) this.usage[addr] = { ...last, at: Date.now() };
+        else this.usage[addr] = { summary: summarize(d.turns), format: d.format, truncated: Boolean(d.truncated), size: d.size, sig: d.sig, path, error: d.error ?? null, at: Date.now() };
       } catch (e) {
         this.usage[addr] = { summary: null, error: String(e?.message ?? e).slice(0, 200), at: Date.now() };
       }

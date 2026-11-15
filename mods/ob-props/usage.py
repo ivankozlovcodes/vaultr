@@ -1,11 +1,12 @@
 # ob-props usage reader: the per-turn token counts of one agent session transcript, as one JSON line.
-# Run by main.js through exec("python3", ["-c", <this file's text>, <path>, <cap bytes>]). Read-only: it reads only
-# the path it is given. Formats: Claude Code transcripts (type "assistant", message.usage, message.model) and pi
+# Run by main.js through exec("python3", ["-c", <this file's text>, <path>, <cap bytes>, <seen sig>]). Read-only: it
+# reads only the path it is given. <seen sig> is the "sig" of the last run for this path: when the file's size and
+# mtime still give that sig, the answer is { unchanged: true, sig } and the file is not read (main.js keeps its summary). Formats: Claude Code transcripts (type "assistant", message.usage, message.model) and pi
 # sessions (type "message", message.role "assistant", message.usage with input/output/cacheRead/cacheWrite).
 # Reads at most the last <cap> bytes (default 32 MiB; the first partial line is dropped when the file is longer).
 # A Claude turn is one API response: its content blocks are written as separate entries that repeat its usage, so
 # entries are counted once per message id. "<synthetic>" entries (no model call) are not turns.
-# Output: { format, size, truncated, turns: [{ id, model, input, output, cacheRead, cacheWrite }], error? }.
+# Output: { format, size, sig, truncated, turns: [{ id, model, input, output, cacheRead, cacheWrite }], error? }.
 # Turns are in file order; the arithmetic (sums, context, share) is in usage.js. Never raises.
 import json
 import os
@@ -13,6 +14,7 @@ import sys
 
 PATH = sys.argv[1] if len(sys.argv) > 1 else ""
 CAP = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 32 * 1024 * 1024
+SEEN = sys.argv[3] if len(sys.argv) > 3 else ""
 
 
 def num(x):
@@ -25,11 +27,15 @@ def num(x):
 def main():
     out = {"format": None, "size": 0, "truncated": False, "turns": []}
     try:
-        size = os.path.getsize(PATH)
+        st = os.stat(PATH)
     except Exception as e:
         out["error"] = f"can't read: {e.__class__.__name__}"
         return out
+    size = st.st_size
     out["size"] = size
+    out["sig"] = f"{size}:{st.st_mtime_ns}"
+    if SEEN and SEEN == out["sig"]:
+        return {"unchanged": True, "sig": out["sig"]}
     try:
         with open(PATH, "rb") as f:
             if size > CAP:

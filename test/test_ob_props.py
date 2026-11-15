@@ -30,10 +30,10 @@ def run_node(body):
     return json.loads(out.stdout)
 
 
-def run_helper(path, cap=None):
-    """Run usage.py the way ob-props does: python3 -c <text> <path> [<cap bytes>]. -> the JSON line."""
+def run_helper(path, cap=None, seen=None):
+    """Run usage.py the way ob-props does: python3 -c <text> <path> [<cap bytes> [<seen sig>]]. -> the JSON line."""
     text = HELPER.read_text(encoding="utf-8")
-    args = ["python3", "-c", text, str(path)] + ([str(cap)] if cap is not None else [])
+    args = ["python3", "-c", text, str(path)] + ([str(cap if cap is not None else "")] if cap is not None or seen else []) + ([seen] if seen else [])
     out = subprocess.run(args, capture_output=True, text=True, timeout=60)
     if out.returncode != 0:
         raise AssertionError(out.stderr.strip() or "helper failed")
@@ -207,6 +207,41 @@ class ClaudeLiveness(unittest.TestCase):
         sub = {**self.SUB, "live": False}
         out = run_obc("return O.claudeAll().map((c) => c.live);", {"claude": [sub]}, {})
         self.assertEqual(out, [False])
+
+
+class UsageUnchanged(unittest.TestCase):
+    """fetchUsage runs every 10 s: when the transcript's size and mtime are what the last run saw, usage.py answers
+    {unchanged: true} without reading it, and main.js keeps the summary it has. The check runs where the file is, so it
+    works for another machine's transcript too."""
+    FILE = CLAUDE
+
+    def test_a_first_run_reports_the_files_signature_with_its_turns(self):
+        r = run_helper(self.FILE)
+        self.assertRegex(r["sig"], r"^\d+:\d+$")
+        self.assertEqual(len(r["turns"]), 3)
+
+    def test_the_same_signature_is_unchanged_and_carries_no_turns(self):
+        sig = run_helper(self.FILE)["sig"]
+        r = run_helper(self.FILE, seen=sig)
+        self.assertEqual(r, {"unchanged": True, "sig": sig})
+
+    def test_a_different_signature_reads_the_file_again(self):
+        r = run_helper(self.FILE, seen="1:1")
+        self.assertNotIn("unchanged", r)
+        self.assertEqual(len(r["turns"]), 3)
+
+    def test_a_grown_file_is_read_again(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d, "s.jsonl"); shutil.copy(self.FILE, f)
+            sig = run_helper(f)["sig"]
+            with open(f, "ab") as h:
+                h.write(b"\n")
+            self.assertNotIn("unchanged", run_helper(f, seen=sig))
+
+    def test_main_passes_the_last_signature_and_keeps_the_summary_when_unchanged(self):
+        src = (MOD / "main.js").read_text(encoding="utf-8")
+        self.assertIn("d.unchanged", src)
+        self.assertIn("sig:", src)
 
 
 class UsageScript(unittest.TestCase):
