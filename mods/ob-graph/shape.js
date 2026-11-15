@@ -53,3 +53,14 @@ export function placeSubs(subs, paneOf) {
     return { ...s, parent: p ?? `m:${s.machine ?? "local"}`, edge: p ? "link" : "contain" };
   });
 }
+
+// The argv that opens a plain file in an editor pane. `editor` is obsidian.json's `editor` (a command and its arguments,
+// as the Notes mod reads it); anything else is not an editor. Without one: $VISUAL, then $EDITOR (often unset in a pane:
+// they live in the person's shell profile), then the first of nvim, vim, nano, vi that is installed.
+const PICK = 'e="${VISUAL:-$EDITOR}"; if [ -z "$e" ]; then for c in nvim vim nano vi; do '
+  + 'if command -v "$c" >/dev/null 2>&1; then e=$c; break; fi; done; fi; exec ${e:-vi} "$1"';
+
+export function editorArgv(editor, path) {
+  if (Array.isArray(editor) && editor.length && editor.every((x) => typeof x === "string" && x)) return [...editor, path];
+  return ["sh", "-c", PICK, "editor", path];
+}

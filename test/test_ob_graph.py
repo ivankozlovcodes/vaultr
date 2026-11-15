@@ -1149,6 +1149,34 @@ class TouchLinks(unittest.TestCase):
         self.assertTrue(all(0 < x < 1 for x in r))
 
 
+class EditorArgv(unittest.TestCase):
+    """shape.js editorArgv: the command that opens a plain-file artifact in an editor pane. The `editor` list in
+    obsidian.json (the same one the Notes mod honours: a command and its arguments) wins; without one, $VISUAL, then
+    $EDITOR, then the first of nvim, vim, nano, vi that is installed."""
+
+    def argv(self, editor, path="/work/out.txt"):
+        return run("console.log(JSON.stringify(S.editorArgv(P.editor, P.path)));", {"editor": editor, "path": path}, SHAPE)
+
+    def test_the_configured_editor_gets_the_path_last(self):
+        self.assertEqual(self.argv(["code", "--wait"]), ["code", "--wait", "/work/out.txt"])
+
+    def test_without_one_the_shell_picks_visual_editor_then_what_is_installed(self):
+        a = self.argv(None)
+        self.assertEqual(a[:2], ["sh", "-c"])
+        self.assertIn("VISUAL", a[2])
+        self.assertIn("nvim vim nano vi", a[2])
+        self.assertEqual(a[-2:], ["editor", "/work/out.txt"])
+
+    def test_an_empty_or_malformed_list_is_not_an_editor(self):
+        for bad in ([], "code", [1, 2], ["code", 3], {"a": 1}):
+            self.assertEqual(self.argv(bad)[:2], ["sh", "-c"], repr(bad))
+
+    def test_main_reads_the_editor_with_the_vault_and_uses_editorArgv(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertIn("editorArgv(this.editor, n.path)", src)
+        self.assertIn("own.editor", src)
+
+
 class ShownGraph(unittest.TestCase):
     """What a view shows (filter.js shownGraph). Global with Active only shows what is active, whichever pane has focus:
     clicking something that opens a pane moves focus, and the graph must not change with it. Local is built around the
@@ -1432,9 +1460,11 @@ class OpenArtifact(unittest.TestCase):
         self.assertNotIn("this.cx", self.body)
 
     def test_the_editor_falls_back_through_installed_editors(self):
+        shape = SHAPE.read_text(encoding="utf-8")
         for e in ("nvim", "vim", "nano", "vi"):
-            self.assertIn(e, self.body)
-        self.assertIn("command -v", self.body)
+            self.assertIn(e, shape)
+        self.assertIn("command -v", shape)
+        self.assertIn("editorArgv(", self.body)
 
 
 if __name__ == "__main__":

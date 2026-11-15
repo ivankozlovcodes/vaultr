@@ -34,7 +34,7 @@ import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, to
 import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
-import { paneShape, placeSubs } from "./shape.js";
+import { paneShape, placeSubs, editorArgv } from "./shape.js";
 import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
 import {
   QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
@@ -110,15 +110,17 @@ export default class Graph extends View {
     save("touch", this.touchOn);
   }
 
-  // The vault: obsidian.json's `vault` (read only; the obsidian mod owns that file). Unset or relative: no vault.
+  // The vault and the editor: obsidian.json's `vault` and `editor` (read only; the obsidian mod owns that file). Unset or relative: no vault.
   readVault(cx) {
     cx.spawn(async (cx) => {
       try {
         const text = await readTextFile(`${appHome()}/obsidian.json`);
         const own = JSON.parse(text || "{}") ?? {};
         this.vault = expandPath(own.vault, this.homeDir);
+        this.editor = own.editor;
       } catch {
         this.vault = null;
+        this.editor = null;
       }
       this.dirty = true;
       cx.notify();
@@ -336,8 +338,7 @@ export default class Graph extends View {
 
   // A herdr-artifact publication: `herdr-artifact open` shows it in a pane beside the focused one. A plain file: an
   // editor pane.
-  // The editor: $VISUAL, then $EDITOR (often unset in a pane: they live in the person's shell profile), then the
-  // first of nvim, vim, nano, vi that is installed.
+  // The editor: obsidian.json's `editor`, else $VISUAL, then $EDITOR, then the first of nvim, vim, nano, vi installed.
   openArtifact(n) {
     if (n.artifact?.id) {
       // exec resolves on a failed run too: its exit code and stderr say so, shown as a toast.
@@ -347,9 +348,7 @@ export default class Graph extends View {
       }, fail);
       return;
     }
-    const pick = 'e="${VISUAL:-$EDITOR}"; if [ -z "$e" ]; then for c in nvim vim nano vi; do '
-      + 'if command -v "$c" >/dev/null 2>&1; then e=$c; break; fi; done; fi; exec ${e:-vi} "$1"';
-    run("pane.split", { direction: "right", argv: ["sh", "-c", pick, "editor", n.path] });
+    run("pane.split", { direction: "right", argv: editorArgv(this.editor, n.path) });
   }
 
   // Ends a node drag or a pan without a click (the pointer left the panel): the node is let go, so alphaTarget drops
