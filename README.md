@@ -157,4 +157,7 @@ The checks run in seconds and need no Herdr window: `python3 -m unittest discove
 
 - [Quartz](https://github.com/jackyzha0/quartz) (MIT, Jacky Zhao): the graph view that `ob-graph` is ported from.
 - [d3-force](https://github.com/d3/d3-force), [d3-quadtree](https://github.com/d3/d3-quadtree) and [d3-dispatch](https://github.com/d3/d3-dispatch) (ISC, Mike Bostock), vendored in `mods/ob-graph/vendor/`.
-- Notices and licence texts: `mods/ob-graph/NOTICE.md`, `mods/ob-graph/vendor/*/LICENSE`, `mods/ORIGIN.md`.
+- [Lucide](https://github.com/lucide-icons/lucide) (ISC, Lucide Contributors; parts from [Feather](https://github.com/feathericons/feather), MIT, Cole Bemis): the icons in `mods/obsidian/`.
+- [Simple Icons](https://github.com/simple-icons/simple-icons) (CC0-1.0) and [Lobe Icons](https://github.com/lobehub/lobe-icons) (MIT, LobeHub): the provider logos in `mods/insights/logos/`. The logos are trademarks of their owners.
+- [tokscale#713](https://github.com/junhoyeo/tokscale/pull/713) and [openusage#1139](https://github.com/robinebers/openusage/pull/1139): notes on the Antigravity transcript format that `insights` reads.
+- Notices and licence texts: `mods/ob-graph/NOTICE.md`, `mods/ob-graph/vendor/*/LICENSE`, `mods/obsidian/NOTICE.md`, `mods/insights/NOTICE.md`, `mods/ORIGIN.md`.
