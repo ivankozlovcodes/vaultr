@@ -40,6 +40,37 @@ def suffix(paths, *ends):
     return [p for p in paths if p.endswith(ends)]
 
 
+# Words too common to mean a person: a machine that happens to be named after one is not flagged.
+COMMON = {"claude", "local", "localhost", "laptop", "server", "desktop", "sandbox", "machine"}
+
+
+def personal_words():
+    """The login name, this machine's host name and the Herdr machines' names and hosts, read now (never stored)."""
+    import pwd
+    words = set()
+    try:
+        entry = pwd.getpwuid(os.getuid())
+        words.add(entry.pw_name)
+        real_home = entry.pw_dir
+    except (KeyError, OSError):
+        real_home = None
+    words.add(socket.gethostname().split(".")[0])
+    hc = shutil.which("hc")
+    if hc and real_home:
+        try:
+            out = subprocess.run([hc, "machine", "ls", "--json"], capture_output=True, text=True, timeout=10,
+                                 env=dict(os.environ, HOME=real_home)).stdout
+            for m in json.loads(out).get("machines", []):
+                for k in ("name", "host"):
+                    if isinstance(m.get(k), str):
+                        words.add(m[k].split(".")[0])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    login = entry.pw_name if real_home else None
+    # 3+ letters (a short machine name is still a name); the login name at any length.
+    return sorted(w for w in words if w and w.lower() not in COMMON and (len(w) >= 3 or w == login))
+
+
 class Repo(unittest.TestCase):
     def test_every_mod_has_manifest_and_entry(self):
         for m in ALL_MODS:
@@ -128,12 +159,12 @@ class Repo(unittest.TestCase):
                     py_compile.compile(path, cfile=os.path.join(tmp, f"{i}.pyc"), doraise=True)
 
     def test_nothing_personal_is_tracked(self):
-        # Paths into a person's home, a personal e-mail-style login, and this machine's own host name (read at run time,
-        # so it is not written anywhere). Only files git tracks are checked.
-        patterns = [rb"/home/[A-Za-z][A-Za-z0-9._-]*", rb"\biv@"]
-        host = socket.gethostname().split(".")[0]
-        if len(host) >= 4 and host.lower() != "localhost":
-            patterns.append(rb"(?i)\b" + re.escape(host.encode()) + rb"\b")
+        # Paths into a person's home, and names read at run time so they are written nowhere: the login name, this
+        # machine's host name and the person's Herdr machines (`hc machine ls`, names and hosts of 3+ letters).
+        # Only files git tracks are checked.
+        patterns = [rb"/home/[A-Za-z][A-Za-z0-9._-]*", rb"/Users/[A-Za-z][A-Za-z0-9._-]*"]
+        for word in personal_words():
+            patterns.append(rb"(?i)(?<![A-Za-z0-9_-])" + re.escape(word.encode()) + rb"(?![A-Za-z0-9_-])")
         bad = []
         for path in tracked():
             if path.endswith((".png", ".jpg", ".gif", ".ico", ".woff", ".woff2", ".ttf")):

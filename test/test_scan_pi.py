@@ -176,7 +176,7 @@ class MacProcesses(ScanFixture):
         ]),
         "env": "\n".join([
             f"{PID} claude --resume PATH=/usr/bin HC_TERMINAL_ID={TERM} TERM=xterm-256color",
-            "5150 node /usr/local/lib/node_modules/pi/dist/cli.js HC_TERMINAL_ID=tpi9 HOME=/Users/someone",
+            "5150 node /usr/local/lib/node_modules/pi/dist/cli.js HC_TERMINAL_ID=tpi9 LANG=C",
             "5152 claude PATH=/usr/bin",
         ]),
         "cwd": "\n".join([f"p{PID}", "fcwd", "n/srv/example", "p5150", "fcwd", "n/srv/pi-work", ""]),

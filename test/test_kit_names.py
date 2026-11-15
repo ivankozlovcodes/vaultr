@@ -63,7 +63,7 @@ class ShellPane(unittest.TestCase):
         self.assertEqual(short("/etc/nginx"), "/etc/nginx")
 
     def test_a_long_folder_keeps_only_its_last_two_parts(self):
-        self.assertEqual(short("/fixture/user/obsidian/sb/2 Projects/vaultr"), "…/2 Projects/vaultr")
+        self.assertEqual(short("/fixture/user/vault/2 Projects/vaultr"), "…/2 Projects/vaultr")
 
     def test_a_trailing_slash_is_dropped(self):
         self.assertEqual(short("/fixture/user/git/vaultr/"), "~/git/vaultr")
