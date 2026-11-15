@@ -654,7 +654,7 @@ class OneSwitch(unittest.TestCase):
         src = MAIN.read_text(encoding="utf-8")
         code = "\n".join(line.split("//", 1)[0] for line in src.splitlines())
         self.assertNotIn("if (!live", code, "the model no longer drops subagents by liveness; filter.js does")
-        self.assertIn("filterGraph", code)
+        self.assertIn("shownGraph", code)  # which calls filterGraph
 
     def test_a_saved_show_finished_setting_migrates_to_active_only_off_in_both_views(self):
         r = run('''console.log(JSON.stringify({
@@ -1149,6 +1149,74 @@ class TouchLinks(unittest.TestCase):
         self.assertTrue(all(0 < x < 1 for x in r))
 
 
+class ShownGraph(unittest.TestCase):
+    """What a view shows (filter.js shownGraph). Global with Active only shows what is active, whichever pane has focus:
+    clicking something that opens a pane moves focus, and the graph must not change with it. Local is built around the
+    focus, so there it stays."""
+
+    def graph(self):
+        N = [
+            {"key": "m:laptop", "kind": "m"}, {"key": "s:A", "kind": "s", "parent": "m:laptop"},
+            {"key": "p:A1a", "kind": "p", "parent": "s:A", "status": "working", "foreground": True},
+            {"key": "p:A1b", "kind": "p", "parent": "s:A", "status": "idle", "foreground": True},
+            {"key": "art:x", "kind": "a", "label": "x"},
+        ]
+        E = [["m:laptop", "s:A", "contain"], ["s:A", "p:A1a", "contain"], ["s:A", "p:A1b", "contain"],
+             ["p:A1b", "art:x", "touch", "create"]]
+        return {"nodes": N, "edges": E}
+
+    def shown(self, mode, active, focus):
+        return run('const r = S.shownGraph(P.g, { mode: P.mode, focus: P.focus, depth: 1, active: P.active, now: 0 });'
+                   'console.log(JSON.stringify({n: r.nodes.map((x) => x.key), focus: r.focus}));',
+                   {"g": self.graph(), "mode": mode, "active": active, "focus": focus}, FILTER)
+
+    def test_global_active_only_ignores_an_idle_focus_and_its_artifact(self):
+        r = self.shown("global", True, "p:A1b")
+        self.assertNotIn("p:A1b", r["n"])
+        self.assertNotIn("art:x", r["n"])
+        self.assertIn("p:A1a", r["n"])
+
+    def test_global_active_only_is_the_same_whichever_pane_has_focus(self):
+        self.assertEqual(self.shown("global", True, "p:A1b")["n"], self.shown("global", True, "p:A1a")["n"])
+        self.assertEqual(self.shown("global", True, "p:A1b")["n"], self.shown("global", True, None)["n"])
+
+    def test_global_has_no_focus_node_so_nothing_is_tinted_or_redrawn_when_focus_moves(self):
+        for active in (True, False):
+            for focus in ("p:A1a", "p:A1b", None):
+                self.assertIsNone(self.shown("global", active, focus)["focus"], (active, focus))
+
+    def test_local_marks_the_focus_when_it_is_drawn(self):
+        self.assertEqual(self.shown("local", True, "p:A1a")["focus"], "p:A1a")
+        self.assertIsNone(self.shown("local", True, "p:Z")["focus"])
+
+    def test_local_active_only_keeps_an_idle_focus_and_its_artifact(self):
+        r = self.shown("local", True, "p:A1b")
+        self.assertIn("p:A1b", r["n"])
+        self.assertIn("art:x", r["n"])
+        self.assertEqual(r["focus"], "p:A1b")
+
+    def copy(self, mode, active):
+        return run("console.log(JSON.stringify(S.emptyCopy(P.mode, P.active)));", {"mode": mode, "active": active}, FILTER)
+
+    def test_an_empty_global_graph_says_when_active_only_is_what_hides_everything(self):
+        r = self.copy("global", True)
+        self.assertEqual(r["title"], "Nothing is active")
+        self.assertIn("Active only", r["body"])
+        self.assertIn("switch it off", r["body"].lower())
+
+    def test_the_other_empty_graphs_keep_their_words(self):
+        self.assertEqual(self.copy("global", False), {"title": "Nothing to draw", "body": "Machines, spaces, panes and agents appear here."})
+        r = self.copy("local", True)
+        self.assertEqual(r["title"], "No session focused")
+        self.assertIn("Switch to Global", r["body"])
+
+    def test_main_builds_the_view_through_shownGraph(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertIn("shownGraph(", src)
+        self.assertNotIn("filterGraph(", src)
+        self.assertIn("emptyCopy(this.mode, this.activeNow())", src)
+
+
 class TouchActiveOnly(unittest.TestCase):
     """Active only keeps the notes and artifacts of the agents it keeps, and drops the links to the rest."""
 
@@ -1340,10 +1408,10 @@ class MenuCopy(unittest.TestCase):
 class EmptyCopy(unittest.TestCase):
     def test_the_empty_state_names_only_node_kinds_the_graph_has(self):
         """There is no tab node any more (shape.js): the empty graph must not promise tabs."""
-        src = MAIN.read_text(encoding="utf-8")
-        body = re.search(r'"Nothing to draw",\s*body: [^:]*: "([^"]*)"', src).group(1)
-        self.assertNotIn("tab", body.lower())
-        self.assertIn("agents", body)
+        for mode, active in (("global", False), ("global", True), ("local", False)):
+            body = run("console.log(JSON.stringify(S.emptyCopy(P.mode, P.active).body));", {"mode": mode, "active": active}, FILTER)
+            self.assertNotIn("tab", body.lower(), (mode, active))
+            self.assertIn("agent", body, (mode, active)) if mode == "global" else None
 
 
 class OpenArtifact(unittest.TestCase):

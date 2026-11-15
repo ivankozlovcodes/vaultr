@@ -12,6 +12,9 @@
 // its hop: they cost no depth, so a tab's agent and all its subagents are one hop away. A machine is reached but never
 // walked through, and the focus's parent chain up to its machine is always kept.
 //
+// What a view shows is shownGraph: Local anchors "Active only" on the focus, Global does not, so a pane gaining focus never
+// reshuffles Global.
+//
 // Active only (filterGraph, one switch per view, see activeState): on keeps each active foreground agent pane, every active
 // subagent that hangs (directly or through another kept subagent) off a kept agent, and the machines and spaces above them. An anchor (the focus) and its ancestors are always kept. Off keeps everything, finished subagents too.
 
@@ -104,6 +107,27 @@ export function activeOnly(graph, anchor = null, now = Date.now()) {
 // The filter as the toolbar sees it: off returns the graph unchanged (finished subagents included).
 export function filterGraph(graph, on, anchor = null, now = Date.now()) {
   return on ? activeOnly(graph, anchor, now) : graph;
+}
+
+// What a view shows: Local is the focus's neighbourhood (localGraph), Global is everything; then "Active only" over it.
+// Only Local is built around the focus, so only Local anchors the filter on it. In Global the filter shows what is active,
+// whichever pane has focus: clicking something that opens a pane moves focus and must not reshuffle the graph or tint a
+// different node. `focus` of the result is the node to draw in the accent colour: Local's focus when it is drawn, else null
+// (Global has none).
+export function shownGraph(lists, { mode, focus = null, depth = 1, active = true, now = Date.now() }) {
+  const local = mode === "local";
+  const base = local ? localGraph(lists, focus, depth) : lists;
+  const shown = filterGraph(base, active, local ? focus : null, now);
+  const drawn = local && focus && shown.nodes.some((n) => n.key === focus) ? focus : null;
+  return { nodes: shown.nodes, edges: shown.edges, focus: drawn };
+}
+
+// The words of the empty graph. In Global, Active only with nothing active is the one case where the filter, not the
+// absence of machines and agents, is what leaves the view empty: say so, and what to do.
+export function emptyCopy(mode, active) {
+  if (mode === "local") return { title: "No session focused", body: "The local graph follows the focused session. Switch to Global to see every machine." };
+  if (active) return { title: "Nothing is active", body: "Active only is on and no agent is working. Switch it off to see every machine, space and agent." };
+  return { title: "Nothing to draw", body: "Machines, spaces, panes and agents appear here." };
 }
 
 // The Active only state per view: { local: bool, global: bool }, on by default. A view with no saved value takes the old

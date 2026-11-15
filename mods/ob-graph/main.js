@@ -9,7 +9,7 @@
 // Layout: sim.js (Quartz's forces on the vendored d3-force; tested by test/test_ob_graph.py). Positions are kept per
 // node, so a refresh does not move anything; a new node enters a link distance from its parent; the simulation
 // cools and stops; the view fits the drawing until the person pans or zooms by hand.
-// Look: plain grey dots (the focused node in the accent colour, live agents in the working colour), labels under them
+// Look: plain grey dots (in Local the focused node in the accent colour, live agents in the working colour), labels under them
 // that fade in with zoom. Hover fades the rest of the graph to 0.2 (dim 100 ms, restore 200 ms); the timer runs only
 // during a fade. Click (down and up under 500 ms, no drag) selects and goes there; right-click: menu. Drag the
 // background to pan, wheel to zoom (Quartz's scale extent 0.25..4), drag a node to pull it (it reheats, then cools).
@@ -30,7 +30,7 @@ import {
   S, tc, alpha, icon, iconButton, feed, machineLabel, machineOf, tabLabel, paneLabelOf,
   takeFocus, openMenu, openView, reveal, isBookmarked, toggleBookmark, emptyState, placedTerminals, mainAgents,
 } from "./kit.js";
-import { localGraph, filterGraph, activeState, activeOf, setActive, touchState, touchOn, setTouch } from "./filter.js";
+import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, touchOn, setTouch } from "./filter.js";
 import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
@@ -410,12 +410,12 @@ export default class Graph extends View {
     const lists = { nodes: [...model.nodes.values()], edges: model.edges };
     const focus = this.focusOf(model);
     // Local: the focus's neighbourhood first (a pane's subagents free), then "Active only" over it, anchored on the focus.
-    const local = this.mode === "local" ? localGraph(lists, focus, this.depth) : { ...lists, focus };
-    const shown = filterGraph(local, this.activeNow(), focus);
+    // Global: everything, then "Active only" with no anchor. (filter.js shownGraph)
+    const shown = shownGraph(lists, { mode: this.mode, focus, depth: this.depth, active: this.activeNow() });
     // edgeOf: link id -> its first edge, so a link's rest alpha (read per link per frame) is one lookup.
     const edgeOf = new Map();
     for (const e of shown.edges) { const id = linkId(e[0], e[1]); if (!edgeOf.has(id)) edgeOf.set(id, e); }
-    const g = { nodes: new Map(shown.nodes.map((n) => [n.key, n])), edges: shown.edges, edgeOf, focus: local.focus ?? focus };
+    const g = { nodes: new Map(shown.nodes.map((n) => [n.key, n])), edges: shown.edges, edgeOf, focus: shown.focus };
     this.g = g;
     this.cfg = this.mode === "local" ? { ...QUARTZ.local, depth: this.depth } : QUARTZ.global;
     // A change of nodes or links (or of the forces) reheats gently; a refresh with the same ones changes nothing.
@@ -537,8 +537,8 @@ export default class Graph extends View {
         cx.stop_propagation(); cx.notify();
       });
     if (!g.nodes.size || (this.mode === "local" && !g.focus)) {
-      return root.child(v_flex().size_full().child(emptyState({ icon: "graph", title: this.mode === "local" ? "No session focused" : "Nothing to draw",
-        body: this.mode === "local" ? "The local graph follows the focused session. Switch to Global to see every machine." : "Machines, spaces, panes and agents appear here.",
+      const words = emptyCopy(this.mode, this.activeNow());
+      return root.child(v_flex().size_full().child(emptyState({ icon: "graph", title: words.title, body: words.body,
         action: this.mode === "local" ? { id: "to-global", label: "Show the global graph", onClick: (_e, cx) => { this.command("mode:global", cx); cx.notify(); } } : null })))
         .child(this.toolbar(t));
     }
