@@ -88,3 +88,24 @@ export function shapePoints(shape, x, y, r) {
   if (shape === "hexagon") return Array.from({ length: 6 }, (_, i) => { const a = (Math.PI / 3) * i - Math.PI / 2; return [x + r * Math.cos(a), y + r * Math.sin(a)]; });
   return [];
 }
+
+// Agents are coloured by the program that runs them, so claude, pi, codex and antigravity (agy) tell apart at a glance.
+// By the program's table key (Herdr's: "claude", "pi", ...); a Claude Code sub-agent (kind c) is claude's and a pi run
+// (kind r) is pi's. A program the table does not know uses its own `color` when that is a #rrggbb. A pane that is not an
+// agent (a shell, an editor), and every other kind of node, has none (null): its usual colour.
+const AGENT_HUES = {
+  claude: "#d97757", pi: "#8b7cf6", codex: "#10a37f", antigravity: "#4a90e2", gemini: "#8e75b2", opencode: "#e8a33d",
+  amp: "#f2594b", copilot: "#6e9bf0", cursor: "#9aa0a6", crush: "#d65db1", kiro: "#9b6dff",
+};
+const AGENT_ALIAS = { "claude-code": "claude", agy: "antigravity", "gemini-cli": "gemini", "codex-cli": "codex" };
+export function agentHue(n) {
+  if (!n) return null;
+  if (n.kind === "c") return AGENT_HUES.claude;
+  if (n.kind === "r") return AGENT_HUES.pi;
+  const pr = n.program;
+  if (n.kind !== "p" || !pr?.agent) return null;
+  const key = String(pr.key ?? "").toLowerCase();
+  const known = AGENT_HUES[AGENT_ALIAS[key] ?? key];
+  if (known) return known;
+  return typeof pr.color === "string" && /^#[0-9a-f]{6}$/i.test(pr.color) ? pr.color : null;
+}

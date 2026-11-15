@@ -1258,6 +1258,54 @@ class FrameShapes(unittest.TestCase):
         self.assertIn("add_polygon(", src)
 
 
+class AgentHue(unittest.TestCase):
+    """Agents are coloured by the program that runs them, so claude, pi, codex and antigravity (agy) tell apart at a
+    glance. Only agents: a pane running a shell or an editor keeps the usual colour."""
+
+    def hue(self, node):
+        return run("console.log(JSON.stringify(S.agentHue(P.n)));", {"n": node}, SHAPE)
+
+    def pane(self, key, **kw):
+        return {"kind": "p", "program": {"key": key, "agent": True, **kw}}
+
+    def test_the_four_named_agents_have_four_different_colours(self):
+        hues = [self.hue(self.pane(k)) for k in ("claude", "pi", "codex", "antigravity")]
+        self.assertTrue(all(isinstance(h, str) and h.startswith("#") for h in hues), hues)
+        self.assertEqual(len(set(hues)), 4)
+
+    def test_agy_and_claude_code_are_the_same_agents_as_antigravity_and_claude(self):
+        self.assertEqual(self.hue(self.pane("agy")), self.hue(self.pane("antigravity")))
+        self.assertEqual(self.hue(self.pane("claude-code")), self.hue(self.pane("claude")))
+        self.assertEqual(self.hue(self.pane("CLAUDE")), self.hue(self.pane("claude")))
+
+    def test_a_claude_sub_agent_is_claudes_colour_and_a_pi_run_is_pis(self):
+        self.assertEqual(self.hue({"kind": "c"}), self.hue(self.pane("claude")))
+        self.assertEqual(self.hue({"kind": "r"}), self.hue(self.pane("pi")))
+
+    def test_an_agent_the_table_does_not_know_uses_the_programs_own_colour_when_it_is_a_hex(self):
+        self.assertEqual(self.hue(self.pane("mystery", color="#12ab34")), "#12ab34")
+        self.assertIsNone(self.hue(self.pane("mystery", color="red")), "not a hex colour: the usual colour")
+        self.assertIsNone(self.hue(self.pane("mystery")))
+
+    def test_a_pane_that_is_not_an_agent_has_no_hue(self):
+        self.assertIsNone(self.hue({"kind": "p", "program": {"key": "claude", "agent": False}}), "a plain terminal")
+        self.assertIsNone(self.hue({"kind": "p", "program": {"key": "nvim", "agent": False}}))
+        self.assertIsNone(self.hue({"kind": "m"}))
+        self.assertIsNone(self.hue({"kind": "n"}))
+        self.assertIsNone(self.hue(None))
+
+    def test_a_foreground_pane_without_a_known_program_still_gets_the_default(self):
+        self.assertIsNone(self.hue({"kind": "p", "foreground": True, "program": {"key": "shell", "agent": False}}))
+
+    def test_main_colours_agents_by_hue_and_dims_the_idle_ones(self):
+        src = MAIN.read_text(encoding="utf-8")
+        body = src[src.index("  nodeColor(t, n, focusKey) {"):]
+        body = body[:body.index("\n  }\n")]
+        self.assertIn("agentHue(n)", body)
+        self.assertIn("alpha(hue, ", body)
+        self.assertLess(body.index("n.key === focusKey"), body.index("agentHue(n)"), "the Local focus accent still wins")
+
+
 class ToolbarRows(unittest.TestCase):
     """shape.js toolbarRows: the toolbar is Local/Global/Active only, Notes/Artifacts and the zoom buttons, about 415 px in
     one row. A narrower panel (the right sidebar is about 320 px) puts the zoom buttons on a second row instead of

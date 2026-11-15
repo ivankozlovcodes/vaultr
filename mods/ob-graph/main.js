@@ -34,7 +34,7 @@ import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, to
 import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
-import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, shapePoints } from "./shape.js";
+import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, shapePoints, agentHue } from "./shape.js";
 import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
 import {
   QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
@@ -433,11 +433,15 @@ export default class Graph extends View {
   }
 
   // ---------------------------------------------------------------- render
-  // Quartz's colours by state: the focused node (its "current page"), active agents, and everything else.
+  // Colours: the focused node (its "current page", Local only) in the accent colour, agents by program, and everything else.
   nodeColor(t, n, focusKey) {
     if (n.key === focusKey) return t.accent;
     if (n.kind === "n") return alpha(t.foreground, 0.55);   // a note: a light dot (Obsidian's note)
     if (n.kind === "a") return t.done;                     // an artifact: a square in the theme's done colour
+    // An agent is its program's colour (shape.js agentHue), full strength while active and dimmer when not; its halo shows
+    // the state too. Other nodes: the working colour while active.
+    const hue = agentHue(n);
+    if (hue) return activityOf(n, Date.now()) ? hue : alpha(hue, 0.55);
     if (activityOf(n, Date.now())) return t.working;
     if (n.kind === "m" && n.down) return t.dim;     // an offline machine: a dimmer fill, still a diamond
     const tone = framePaint(n.kind).tone;           // machines and spaces: a stronger colour than the rest
