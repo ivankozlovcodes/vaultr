@@ -4,8 +4,9 @@
 // Built from fixed tables plus the app's live commands() and keys() (rows for anything bound in
 // keys.json that the tables don't name, so nothing in the file is ever hidden).
 
-import { commands, keys } from "herdr";
+import { commands, keys, window as appWindow } from "herdr";
 import { DEFAULT_SCOPE, scopeInfo } from "./keysfile.js";
+import { chordForPlatform } from "./platform_keys.js";
 
 export const LAYOUT_SCOPE = DEFAULT_SCOPE;
 export const SESSIONS_SCOPE = "mod:ob-sessions";
@@ -171,10 +172,14 @@ export const GROUPS = ["Vaultr layout", "Sessions panel", "Herdr", "In terminals
 
 export function registry() {
   const out = [];
+  // The tables are written with Ctrl; on macOS install.sh binds Cmd instead (platform_keys.js), so defaults follow.
+  let platform = "linux";
+  try { platform = appWindow()?.platform ?? "linux"; } catch { platform = "linux"; }
+  const plat = (chords) => chords.map((c) => chordForPlatform(c, platform));
   const seen = new Set();
   const add = (e) => { if (seen.has(e.action)) return; seen.add(e.action); out.push(e); };
-  for (const [action, title, defaults, obsidian, when] of OB) add({ action, title, group: "Vaultr layout", home: LAYOUT_SCOPE, defaults, obsidian, when: when ?? null });
-  for (const [action, title, defaults, obsidian] of SESSIONS) add({ action, title, group: "Sessions panel", home: SESSIONS_SCOPE, defaults, obsidian, when: "Sessions" });
+  for (const [action, title, defaults, obsidian, when] of OB) add({ action, title, group: "Vaultr layout", home: LAYOUT_SCOPE, defaults: plat(defaults), obsidian, when: when ?? null });
+  for (const [action, title, defaults, obsidian] of SESSIONS) add({ action, title, group: "Sessions panel", home: SESSIONS_SCOPE, defaults: plat(defaults), obsidian, when: "Sessions" });
   const bound = safeKeys();
   // Terminal rows are reserved first so "Copy"/"Paste" land under In terminals, not Herdr.
   const termRows = [...TERMINAL.map(([action, title]) => ({ action, title }))];
