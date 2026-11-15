@@ -56,6 +56,8 @@ The layout also uses Herdr's shipped `files` and `changes` mods.
 
 ## Keybindings Reference
 
+The tables say `ctrl`. On macOS `install.sh` binds `cmd` in its place (`cmd-p`, `cmd-shift-p`, `cmd-,` and so on), as Herdr's own macOS keys do, and the Hotkeys tab shows those as the defaults. Set `VAULTR_OS=Linux` to keep `ctrl` on a Mac.
+
 ### `layout:vaultr`
 
 | Keybinding | Action | Description |
@@ -102,10 +104,10 @@ The settings dialog opens from the gear in the footer. `ob-tabs.settings:<tab>` 
 ### Requirements
 - The [Herdr](https://github.com/herdr/herdr) desktop app. `install.sh` switches layouts with its `herdr-app` command, so that command must be on your `PATH`.
 - `python3`: used by `install.sh` to merge `keys.json`, and by `ob-feed` to scan for agents.
-- `bash`, `readlink -f` and `cmp` for `install.sh`.
+- `bash` (macOS's 3.2 is enough) and `cmp` for `install.sh`; it uses `readlink -f` where it exists and `python3` otherwise.
 - `git` for `ob-sessions`; `node` for `insights` (defaults to `node` on `PATH`, or the path in `mods/insights/runtime.json`). Its Antigravity indexing needs `node:sqlite` and is skipped without it.
 - Optional: `hc`, for the remote machine list in `ob-sessions` and `ob-footer`; Obsidian, for the `obsidian` mod and daily notes. `obsidian` reads the vault from a `vault` key in `obsidian.json` in the Herdr app folder and nothing else; it does not read Obsidian's own vault list (the Vault tab of `ob-settings` sets that key; `obsidian.json` may still hold `dailyFolder`, `dailyFormat`, `dailyTemplate` and `editor` by hand, and the mod honours them).
-- `ob-feed` reads `/proc`, so it only finds running agents on Linux.
+- `ob-feed` finds running agents through `/proc` on Linux, and through `ps`, `ps -E` and `lsof` on macOS.
 - `obsidian` runs `rg` to list and search the vault (`find` and `grep` when `rg` is missing), `mkdir -p` for a daily note's folder, `xdg-open` (`open` on macOS, `cmd /c start` on Windows) for `obsidian://` links, and your editor in a new pane (`sh -c` with `$VISUAL`, `$EDITOR` or vi; `notepad` on Windows). It reads the vault's notes and its `.obsidian/daily-notes.json` and `.obsidian/app.json`. For an agent's last reply it reads `~/.claude/sessions/<pid>.json`, finds the session's transcript under `~/.claude/projects` (`sh` with `ls` and `head`) and reads its last 1.5 MB with `tail`; for an agent with no transcript (another agent, another machine) it runs `hc read` for its screen.
 - `ob-search` runs `python3` with `mods/ob-search/transcript_search.py` (read from the Herdr app folder) on this computer. It reads the transcript files that the sub-agent feed (`ob.subagents`, written by `ob-feed`) names for live agent sessions and their sub-agents: those live under `~/.claude/projects` and `~/.pi/agent/sessions`, or the pi-subagents temp folder. It reads each file's last 3 MiB and changes nothing.
 - `ob-props` runs `python3` with `mods/ob-props/usage.py` (read from the Herdr app folder) on this computer, or on the terminal's machine, for the followed agent's session file (the transcript path the sub-agent feed names: `~/.claude/projects` or `~/.pi/agent/sessions`). It reads the file's last 32 MiB, every 10 seconds while the panel shows, and changes nothing. It reads no plan or account limits.
@@ -146,7 +148,7 @@ The checks run in seconds and need no Herdr window: `python3 -m unittest discove
 
 - Attach is local only: it opens `hc` terminals on this computer, not on other machines.
 - The right-hand panels (Properties, Outline's pinned session) follow the last focused main-window pane, or the pin; there is no setting for it. Outline's tab view always shows the active tab's panes.
-- The transcript scanner (`ob-feed/scan_pi.py`) reads Linux `/proc`, so it finds no running agents on macOS.
+- macOS support is untested on a real Mac so far. The keys, the installer and the agent scan (`ps`/`lsof` in place of `/proc`) are covered by tests that fake the Mac side. `ps -E` shows only your own processes' environment, so an agent that runs as another user is not found.
 - Notes and artifacts (ob-graph) are a proof of concept: a touch comes from the last 64 KiB of each transcript, so an older read or write is not seen, and a Write is a "create" only when no earlier touch of that path is in that tail. pi's file-tool names (read, write, edit) are taken from its session format and not yet checked against a live pi session. Attachments in the vault are skipped; a note or plain file on another machine is not shown (only its published artifacts are); a file an agent wrote into its own project shows as an artifact along with its published ones.
 - The editor is set by `$VISUAL`, then `$EDITOR`, then vi; the Vault tab does not set it. The graph opens a plain-file artifact in `$VISUAL`, then `$EDITOR`, then the first of nvim, vim, nano, vi that is installed.
 - Search covers transcripts of agent sessions on this computer only; remote machines are not searched yet. It searches only the sessions the feed knows (live agents, their sub-agents, recent pi runs), not every file under `~/.claude/projects`. Tool calls and tool output are not searched. A transcript hit opens the transcript popup at its end, not at the message.
