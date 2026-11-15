@@ -112,19 +112,21 @@ class QuartzModel(unittest.TestCase):
         self.assertEqual(r["velocityDecay"], 0.8)
         self.assertEqual(r["extent"], [0.25, 4])                # zoom scaleExtent (graph.inline.ts 506)
 
-    def test_node_radius_is_two_plus_root_of_degree_and_grows_with_degree(self):
+    def test_node_radius_grows_with_the_nodes_that_reference_it(self):
         r = run('''
-            const radii = [0, 1, 2, 4, 9, 16].map((d) => S.radiusOf(d));
+            const radii = [0, 1, 2, 4, 9, 16, 100].map((d) => S.radiusOf(d, "p"));
             const sim = S.createSim();
-            const star = P.star;
-            S.sync(sim, star, S.QUARTZ.local, P.W, P.H);
+            S.sync(sim, P.star, S.QUARTZ.local, P.W, P.H);
             console.log(JSON.stringify({ radii, centre: sim.pos.get("c").r, leaf: sim.pos.get("l0").r }));
-        ''', {"star": {"nodes": [{"key": "c", "kind": "t"}] + [{"key": f"l{i}", "kind": "p"} for i in range(4)],
+        ''', {"star": {"nodes": [{"key": "c", "kind": "p"}] + [{"key": f"l{i}", "kind": "p"} for i in range(4)],
                        "edges": [["c", f"l{i}", "contain"] for i in range(4)]}, "W": W, "H": H})
-        self.assertEqual(r["radii"], [2, 3, 2 + 2 ** 0.5, 4, 5, 6], "2 + sqrt(degree) (graph.inline.ts 208-213)")
-        self.assertAlmostEqual(r["centre"], 2 + 2, places=9, msg="4 links: 2 + sqrt(4)")
-        self.assertAlmostEqual(r["leaf"], 2 + 1, places=9, msg="1 link: 2 + sqrt(1)")
-        self.assertGreater(r["centre"], r["leaf"])
+        radii = r["radii"]
+        self.assertEqual(radii[:2], [3, 3], "no link, or just its parent: the base size, so a leaf stays small")
+        self.assertEqual(radii, sorted(radii), "never smaller with more links")
+        self.assertGreater(radii[3], radii[1] + 2, "a session with a few sub-agents is clearly bigger than a leaf")
+        self.assertLessEqual(radii[6], 11, "capped")
+        self.assertEqual(r["leaf"], 3)
+        self.assertGreater(r["centre"], r["leaf"] + 2, "the hub of four links is bigger than its leaves")
 
 
 class LocalGraph(unittest.TestCase):

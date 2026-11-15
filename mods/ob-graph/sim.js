@@ -48,7 +48,12 @@ const MACHINE_GRAVITY = 0.2;                             // pull of each machine
 // Quartz: 2 + sqrt(number of links) (graph.inline.ts 208-213).
 // Machines and spaces have a fixed size (drawn as a diamond and a hexagon, shape.js): what hangs off them does not grow them.
 const FRAME_RADIUS = { m: 5, s: 4.5 };
-export const radiusOf = (degree, kind) => FRAME_RADIUS[kind] ?? 2 + Math.sqrt(degree);
+// Every other node grows with the nodes that reference it: its links minus the one to its parent, so a leaf is 3 and a
+// session with sub-agents, or a note several agents touched, is clearly bigger (Quartz: 2 + sqrt(degree), which barely
+// moved). Capped, so a busy node does not swallow its neighbours.
+const BASE_RADIUS = 3, RADIUS_SLOPE = 1.8, MAX_RADIUS = 11;
+export const radiusOf = (degree, kind) => FRAME_RADIUS[kind]
+  ?? Math.min(MAX_RADIUS, BASE_RADIUS + RADIUS_SLOPE * Math.sqrt(Math.max(0, degree - 1)));
 
 // Quartz: labels fade in with zoom (graph.inline.ts 513-514): alpha = max((k * opacityScale - 1) / 3.75, 0), capped at 1.
 export function labelOpacity(k, opacityScale = 1) {
