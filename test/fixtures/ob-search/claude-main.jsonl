@@ -1,0 +1,8 @@
+{"type":"user","uuid":"u1","sessionId":"fixture-main","timestamp":"2026-03-01T09:00:00.000Z","message":{"role":"user","content":"Please check the nightly backup job before lunch."}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-03-01T09:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"The backup job writes into the archive folder on the spare disk."}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-03-01T09:00:07.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls archive"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-03-01T09:00:08.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"backup.tar"}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-03-01T09:00:09.000Z","message":{"role":"user","content":"this line is cut off
+{"type":"user","uuid":"u4","isMeta":true,"timestamp":"2026-03-01T09:00:10.000Z","message":{"role":"user","content":"Caveat: injected meta text about backup"}}
+{"type":"user","uuid":"u5","timestamp":"2026-03-01T09:00:11.000Z","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>backup reminder noise</system-reminder>"}]}}
+{"type":"user","uuid":"u6","timestamp":"2026-03-01T09:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Thanks, the archive looks right now."}]}}

@@ -1,0 +1,4 @@
+{"type":"session","id":"fixture-pi","cwd":"/srv/example","timestamp":"2026-03-02T08:00:00.000Z"}
+{"type":"message","id":"m1","timestamp":"2026-03-02T08:00:05.000Z","message":{"role":"user","content":[{"type":"text","text":"Draft the release notes for the pottery studio site."}]}}
+{"type":"message","id":"m2","timestamp":"2026-03-02T08:00:09.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Here is a draft of the release notes."}]}}
+{"type":"message","id":"m3","timestamp":"2026-03-02T08:00:10.000Z","message":{"role":"toolResult","toolName":"read","toolCallId":"c1","content":[{"type":"text","text":"notes.md contents"}]}}

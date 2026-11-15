@@ -1,0 +1,20 @@
+[
+  ["herdr-trials", "the herdr-trials session is running", true],
+  ["herdr-trials", "The two panels' code merges into Outline", false],
+  ["herdr-trials", "it now records which keys it wrote", false],
+  ["herdr-trials", "I'm explaining why the socket fails", false],
+  ["trials-herdr", "herdr-trials", false],
+  ["hd-tr", "herdr-trials", true],
+  ["hd-tr", "The two panels code", false],
+  ["deploy", "run deploy script", true],
+  ["deploy", "dxexploy yy", false],
+  ["v2", "upgrade v2 now", true],
+  ["v2", "v one two", false],
+  ["sync", "resync now", true],
+  ["nbj", "nightlybackupjob", true],
+  ["nbj", "nightly backup job", false],
+  ["abc", "zazbzcz", true],
+  ["abc", "a lot of text b and c", false],
+  ["zen", "Toggle Zen mode", true],
+  ["zen", "zebra and nothing", false]
+]

@@ -1,0 +1,6 @@
+{"type":"session","id":"fixture-pi","cwd":"/srv/example","timestamp":"2026-03-02T08:00:00.000Z"}
+{"type":"model_change","id":"mc1","timestamp":"2026-03-02T08:00:01.000Z","provider":"anthropic","modelId":"claude-opus-5-5"}
+{"type":"message","id":"m1","timestamp":"2026-03-02T08:00:05.000Z","message":{"role":"user","content":[{"type":"text","text":"Fixture prompt for pi."}]}}
+{"type":"message","id":"m2","timestamp":"2026-03-02T08:00:09.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"fixture.md"}}],"model":"claude-opus-5-5","provider":"anthropic","responseId":"resp_fx1","stopReason":"toolUse","usage":{"input":12,"output":30,"cacheRead":800,"cacheWrite":0,"totalTokens":842,"cost":{"total":0.01}}}}
+{"type":"message","id":"m3","timestamp":"2026-03-02T08:00:10.000Z","message":{"role":"toolResult","toolName":"read","toolCallId":"c1","content":[{"type":"text","text":"fixture contents"}],"isError":false}}
+{"type":"message","id":"m4","timestamp":"2026-03-02T08:00:12.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Fixture answer for pi."}],"model":"claude-opus-5-5","provider":"anthropic","responseId":"resp_fx2","stopReason":"stop","usage":{"input":5,"output":9,"cacheRead":900,"cacheWrite":40,"totalTokens":954,"cost":{"total":0.02}}}}
