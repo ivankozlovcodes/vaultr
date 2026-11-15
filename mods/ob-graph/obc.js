@@ -1,4 +1,4 @@
-// obc.js: helpers shared by package C's mods (ob-subagents, ob-graph, ob-props, ob-outline).
+// obc.js: helpers shared by package C's mods (ob-outline, ob-graph, ob-props).
 // MASTER: $S/C-common/obc.js, copied into each of those folders (mods can't import across folders).
 // Kit request: move these into kit.js (they only use kit and herdr).
 
@@ -100,7 +100,8 @@ export function claudeAll() {
   const recs = liveRecords();
   const out = (f?.claude ?? []).map((c) => {
     const r = recs.get(c.parent)?.[c.id];
-    return { ...c, live: Boolean(r && (r.state === "working" || r.state === "blocked")), state: r?.state ?? null, desc: c.desc || r?.title || c.type };
+    // A local record is the say-so when there is one; a feed-only record is live as the feed (its scanner) says.
+    return { ...c, live: r ? r.state === "working" || r.state === "blocked" : Boolean(c.live), state: r?.state ?? null, desc: c.desc || r?.title || c.type };
   });
   for (const [addr, rs] of recs) {
     for (const [id, r] of Object.entries(rs)) {
@@ -116,11 +117,10 @@ export function hcChildren(address) {
   return terminals().filter((t) => t.parent && t.state === "live" && (address == null || t.parent === address));
 }
 
-// ---------------------------------------------------------------- viewer windows (ob-subagents)
+// ---------------------------------------------------------------- viewer windows (ob-outline)
 // props: { view: "log"|"transcript", machine, path, title, live, runKey }
 export function openViewer(p) {
-  const key = `ob-view-${String(p.key ?? p.path).replace(/[^A-Za-z0-9_.:-]+/g, "-").slice(-60)}`;
-  return openOverlay({ kind: "window", key, mod: "ob-subagents", width: 760, height: 0.7, props: { view: p.view, machine: p.machine ?? null, path: p.path, title: p.title ?? base(p.path), live: Boolean(p.live), runKey: p.runKey ?? null } });
+  return openOverlay({ kind: "popup", mod: "ob-outline", width: 760, props: { view: p.view, machine: p.machine ?? null, path: p.path, title: p.title ?? base(p.path), live: Boolean(p.live), runKey: p.runKey ?? null } });
 }
 
 export function copied(cx, what, text) {

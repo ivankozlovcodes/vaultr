@@ -1,53 +1,96 @@
-// ob-graph: Obsidian's graph view of the Herdr world (SPEC 8.C4).
-// Nodes: machines (r 9, hollow), spaces (r 7, avatar color), tabs (r 5), terminals/agents (r 5, status
-// color), sub-agents (r 3.5: pi runs, Claude agents, hc children; finished ones only with
-// "finished" on). Edges: containment (1px border) and sub-agent -> parent session links (1px dashed
-// accent), drawn with PathBuilder + window.paint_path in one absolute layer under the nodes.
-// Modes: Local (Obsidian's local graph: the inspected / focused session and what is within `depth`
-// links of it) and Global (everything). Layout: a deterministic radial tree relaxed by a small force
-// simulation; positions are cached per node so nothing jumps.
-// Hover highlights a node's neighbours; click selects and goes there; right-click: menu. Drag the
-// background to pan, wheel to zoom (0.4..2.5).
+// ob-graph: the Graph panel of the Herdr world, drawn on Quartz's graph model (jackyzha0/quartz v4, MIT).
+// Nodes: machines, spaces, panes (terminals and mod panes) and sub-agents (runs, Claude agents, hc children). There is no
+// tab node: a pane links straight to its space, and the panes of one tab are joined by sibling links (shape.js), an
+// invisible spring that makes a tab read as a small cluster, like a folder in Obsidian's graph. Pane names: paneLabel
+// (kit/names.js). Edges: containment and sub-agent -> parent session links, both 1 px solid (Obsidian's one style).
+// "Active only" (on by default, remembered per Local/Global view): the foreground agents placed in tabs, their live
+// sub-agents, and the machines and spaces holding them. Off shows every sub-agent, finished ones too (filter.js).
+// Modes: Local (Quartz's local graph: the focused session and what is within `depth` links of it) and Global (all).
+// Layout: sim.js (Quartz's forces on the vendored d3-force; tested by test/test_ob_graph.py). Positions are kept per
+// node, so a refresh does not move anything; a new node enters a link distance from its parent; the simulation
+// cools and stops; the view fits the drawing until the person pans or zooms by hand.
+// Look: plain grey dots (the focused node in the accent colour, live agents in the working colour), labels under them
+// that fade in with zoom. Hover fades the rest of the graph to 0.2 (dim 100 ms, restore 200 ms); the timer runs only
+// during a fade. Click (down and up under 500 ms, no drag) selects and goes there; right-click: menu. Drag the
+// background to pan, wheel to zoom (Quartz's scale extent 0.25..4), drag a node to pull it (it reheats, then cools).
+// Notes and artifacts (touch_shape.js; the switches "Notes" and "Artifacts", off by default, per view like Active only): the
+// files the agents touched (the feed's `touches`, paths only), as small dots (notes, from the vault's .md files) and
+// squares (artifacts: herdr-artifact publications, or files written outside the vault). A link from each agent by its op
+// (a read is faint). Notes need the vault in obsidian.json (read here, never written); danger/ and hidden folders are never
+// shown. Click a note: the Notes viewer; an artifact: `herdr-artifact open`, or an editor for a plain file.
 // Commands (ob-graph.<cmd>): fit, zoom-in, zoom-out, select:<key>, open:<key>, menu:<key>,
-//   finished:<on|off>, mode:<local|global>, depth:<1|2|3>, labels:<on|off>, focus.
-// Node keys: m:<machine|local>, s:<spaceId>, t:<tabId>, p:<paneId>, r:<runKey>, c:<claudeKey>, h:<address>.
+//   mode:<local|global>, depth:<1|2|3>, labels:<on|off>, active:<on|off>, notes:<on|off>, artifacts:<on|off>,
+//   focus-on:<address>, bookmark:<key>, focus.
+// Node keys: m:<machine|local>, s:<spaceId>, p:<paneId>, r:<runKey>, c:<claudeKey>, h:<address>.
 
 import { View, div, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, run, nextCommand, settings, machines, spaces, panes, shared, focused } from "herdr";
+import { props, run, nextCommand, settings, machines, spaces, panes, agents, shared, setShared, focused, exec, readTextFile, appHome, home as userHome, notify } from "herdr";
 import {
-  S, MARK, tc, alpha, icon, iconButton, statusColor, normStatus, feed, machineLabel, machineOf, tabLabel, paneName,
-  takeFocus, openMenu, openView, reveal, isBookmarked, toggleBookmark, emptyState,
+  S, tc, alpha, icon, iconButton, feed, machineLabel, machineOf, tabLabel, paneLabelOf,
+  takeFocus, openMenu, openView, reveal, isBookmarked, toggleBookmark, emptyState, placedTerminals, mainAgents,
 } from "./kit.js";
-import { splitCmd, sessionOf, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
+import { localGraph, filterGraph, activeState, activeOf, setActive, touchState, touchOn, setTouch } from "./filter.js";
+import { touchShape } from "./touch_shape.js";
+import { expandPath } from "./touches.js";
+import { activityOf, activeStatus } from "./agents.js";
+import { paneShape, placeSubs } from "./shape.js";
+import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
+import {
+  QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
+  boundsOf, fitNow, autoFit as autoFitView, linkBatches,
+  viewFrom, panTo, zoomAt as zoomView, labelOpacity, labelLayout, hoverSet, hoverAlpha, animateAlpha, fadeMs,
+  DIM_MS, RESTORE_MS, DIM_ALPHA, touchAlpha,
+} from "./sim.js";
 
+
+const LABEL_GAP = 8;                // label top = node bottom + 8 px
+// The model is rebuilt off the render path (Herdr's way): render marks it stale, a timer rebuilds it at most this
+// often and redraws only when the graph changed. Nodes may appear this late; a command rebuilds at once.
+const REBUILD_MS = 500;
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* keep in memory */ } };
-const R = { m: 9, s: 7, t: 5, p: 5, r: 3.5, c: 3.5, h: 3.5 };
-const REST = { m: 0, s: 95, t: 58, p: 44, r: 50, c: 50, h: 50 };   // edge rest length to the parent, by child kind
-const MIN_SCALE = 0.4, MAX_SCALE = 2.5;
-const hash = (s) => { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967295; };
+const drop = (k) => { try { localStorage.removeItem(k); } catch { /* nothing to remove */ } };
+const clampDepth = (v) => Math.max(1, Math.min(3, Number(v) || 1));
+const linkId = (a, b) => `l:${a}\u0001${b}`;
+const nodeId = (k) => `n:${k}`;
 
 export default class Graph extends View {
   init(_p, cx) {
     this.handle = cx.focus_handle();
-    this.pos = new Map();          // key -> {x, y} world coordinates (cached layout)
-    this.sig = "";
-    const v = load("view", null);
-    this.view = v && Number.isFinite(v.scale) ? v : { scale: 1, x: 0, y: 0 };
-    this.manual = Boolean(v?.manual);
-    this.finished = Boolean(load("show", {}).finished);
+    this.cx = cx;
+    this.sim = createSim();
+    this.view = viewFrom(load("view", null));
     this.mode = load("mode", "global") === "local" ? "local" : "global";
-    this.depth = Math.max(1, Math.min(3, Number(load("depth", 2)) || 2));
+    this.depth = clampDepth(load("depth", 1));          // Quartz's local default is depth 1
     this.labelsAll = Boolean(load("labels", false));
+    // "Active only" is remembered per view: { local, global }, both on by default. The old "show finished" setting
+    // (key "show") migrates once: its finished-visible state turns Active only off in both views.
+    this.activeOn = activeState(load("active", null), load("show", null));
+    // Notes and Artifacts: { local, global } of { notes, artifacts }, off by default.
+    this.touchOn = touchState(load("touch", null));
+    this.vault = null;                                  // the vault's full path (obsidian.json), null when none
+    this.homeDir = userHome();                          // known at once: it keeps the agents' own state out of artifacts
     this.hover = null;
+    this.near = new Set();                              // the hovered node and its neighbours
+    this.fade = null;                                   // { start, from: Map(id -> alpha) } while the hover fades
     this.selected = null;
     this.drag = null;
     this.nodeDrag = null;
-    this.physicsRunning = false;
-    this.settleFrames = 0;
-    this.pinnedAfterDrag = null;
+    this.looping = false;
+    this.cfg = QUARTZ.global;
     this.W = 0; this.H = 0;
+    this.g = null;                                      // the graph render draws (rebuild() sets it)
+    this.sig = "";                                      // what the last rebuild drew, to skip redraws with no change
+    this.dirty = true;                                  // rebuild before the next draw (first draw, a command)
+    this.stale = false;                                 // render ran: Herdr's data may have changed since the rebuild
+    cx.timer.every(REBUILD_MS, (cx) => {
+      if (!this.stale) return;
+      this.stale = false;
+      if (this.rebuild()) cx.notify();
+    });
+    this.readVault(cx);
+    cx.timer.every(10000, (cx) => this.readVault(cx));
     cx.spawn(async (cx) => {
       for (;;) {
         const c = String(await nextCommand());
@@ -58,20 +101,37 @@ export default class Graph extends View {
   }
 
   persist() {
-    save("view", { ...this.view, manual: this.manual });
-    save("show", { finished: this.finished });
+    save("view", this.view);
+    drop("show");
     save("mode", this.mode);
     save("depth", this.depth);
     save("labels", this.labelsAll);
+    save("active", this.activeOn);
+    save("touch", this.touchOn);
   }
+
+  // The vault: obsidian.json's `vault` (read only; the obsidian mod owns that file). Unset or relative: no vault.
+  readVault(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const text = await readTextFile(`${appHome()}/obsidian.json`);
+        const own = JSON.parse(text || "{}") ?? {};
+        this.vault = expandPath(own.vault, this.homeDir);
+      } catch {
+        this.vault = null;
+      }
+      this.dirty = true;
+      cx.notify();
+    });
+  }
+
+  activeNow() { return activeOf(this.activeOn, this.mode); }
 
   // ---------------------------------------------------------------- model
   // -> { nodes: Map(key -> node), edges: [[a, b, "contain"|"link"]] }
   model() {
-    const t = tc();
     const nodes = new Map(), edges = [];
     const add = (n) => { nodes.set(n.key, n); return n; };
-    const colors = shared("space.colors") ?? {};
     const ps = panes(), sp = spaces();
     for (const m of machines()) {
       const k = `m:${m.name ?? "local"}`;
@@ -79,264 +139,174 @@ export default class Graph extends View {
     }
     if (!nodes.has("m:local")) add({ key: "m:local", kind: "m", label: machineLabel(null), machine: null });
     const paneOf = new Map();
+    // Foreground: a main agent (its terminal is in a pane of a tab), kit/agents.js.
+    const main = new Map(mainAgents(agents(), placedTerminals(ps)).map((a) => [a.address, a]));
     for (const s of sp) {
       const mk = `m:${s.machine ?? "local"}`;
       if (!nodes.has(mk)) add({ key: mk, kind: "m", label: machineLabel(s.machine), machine: s.machine });
-      const c = colors[s.id] ?? "ansi6";
-      add({ key: `s:${s.id}`, kind: "s", label: s.name, parent: mk, status: s.status, color: c.startsWith("#") ? c : MARK[c] ?? t[c] ?? t.accent, space: s });
-      edges.push([mk, `s:${s.id}`, "contain"]);
+      const sk = `s:${s.id}`;
+      add({ key: sk, kind: "s", label: s.name, parent: mk, status: s.status, space: s });
+      edges.push([mk, sk, "contain"]);
       for (const tab of s.tabs) {
-        add({ key: `t:${tab.id}`, kind: "t", label: tabLabel(tab, ps), parent: `s:${s.id}`, status: tab.status, space: s, tab });
-        edges.push([`s:${s.id}`, `t:${tab.id}`, "contain"]);
-        for (const p of ps.filter((x) => x.tab === tab.id)) {
-          add({ key: `p:${p.pane}`, kind: "p", label: paneName(p), parent: `t:${tab.id}`, status: p.status, program: p.program, space: s, tab, pane: p, address: p.terminal });
-          edges.push([`t:${tab.id}`, `p:${p.pane}`, "contain"]);
-          if (p.terminal) paneOf.set(p.terminal, `p:${p.pane}`);
+        // No tab node: each pane is a node under its space, and the panes of one tab are joined by sibling links (shape.js).
+        const mine = ps.filter((x) => x.tab === tab.id);
+        const tabName = tabLabel(tab, ps);
+        const shape = paneShape(tab.id, mine.map((p) => ({ pane: p.pane, label: paneLabelOf(p, tabName) })));
+        for (const sn of shape.nodes) {
+          const p = mine.find((x) => x.pane === sn.pane);
+          // A foreground pane takes its agent's status (the one the Agents panel shows); other panes keep the pane's.
+          const agent = p?.terminal ? main.get(p.terminal) : undefined;
+          add({
+            key: sn.key, kind: "p", label: sn.label, parent: sk,
+            status: agent ? agent.status : p.status, space: s, tab, pane: p, program: p.program, address: p.terminal,
+            foreground: Boolean(agent),
+          });
+          if (p.terminal) paneOf.set(p.terminal, sn.key);
+          edges.push([sk, sn.key, "contain"]);
         }
+        for (const [a, b, k] of shape.edges) edges.push([a, b, k]);
       }
     }
-    // Sub-agents hang off their parent session's pane; without one, off their machine.
-    const sub = (key, kind, label, status, live, parentAddr, machine, extra) => {
-      if (!live && !this.finished) return;
-      const par = (parentAddr && paneOf.get(parentAddr)) || `m:${machine ?? "local"}`;
-      if (!nodes.has(par)) return;
-      add({ key, kind, label, status, live, parent: par, orphan: !paneOf.get(parentAddr), ...extra });
-      edges.push([par, key, paneOf.get(parentAddr) ? "link" : "contain"]);
-    };
+    // Sub-agents hang off their parent session: its pane, or an unplaced hc child (shape.js placeSubs); without one, off
+    // their machine. A sub-agent: live is the feed's (or the local record's) say so; extra.feedAt is the feed's `at` when
+    // the feed is its source.
+    const subs = [];
+    const sub = (key, kind, label, status, live, parentAddr, machine, extra) =>
+      subs.push({ key, parentAddr, machine, node: { key, kind, label, status, live, ...extra } });
     const f = feed();
-    for (const r of [...recordRuns(), ...(f?.runs ?? [])]) sub(`r:${r.key}`, "r", `${runTitle(r)} · ${r.short}`, r.state, r.live, r.parent, r.machine, { run: r });
-    for (const c of claudeAll()) sub(`c:${c.key}`, "c", c.desc || c.type || c.id, c.live ? (c.state === "blocked" ? "blocked" : "working") : "ok", c.live, c.parent, c.machine, { claude: c });
-    for (const k of hcChildren(null)) sub(`h:${k.address}`, "h", k.name || k.title || k.address, typeof k.status === "string" ? k.status : k.status?.state ?? "working", true, k.parent, machineOf(k.address), { address: k.address });
+    for (const r of recordRuns()) sub(`r:${r.key}`, "r", `${runTitle(r)} · ${r.short}`, r.state, r.live, r.parent, r.machine, { run: r });
+    for (const r of f?.runs ?? []) sub(`r:${r.key}`, "r", `${runTitle(r)} · ${r.short}`, r.state, r.live, r.parent, r.machine, { run: r, feedAt: f.at });
+    for (const c of claudeAll()) sub(`c:${c.key}`, "c", c.desc || c.type || c.id, c.live ? (c.state === "blocked" ? "blocked" : "working") : "ok", c.live, c.parent, c.machine, { claude: c, feedAt: c.updatedAt != null ? f?.at : undefined });
+    for (const k of hcChildren(null)) {
+      // An hc child is active by the status hc reports (working, blocked); no status, or an idle or done one, is not.
+      const st = typeof k.status === "string" ? k.status : k.status?.state ?? null;
+      sub(`h:${k.address}`, "h", k.name || k.title || k.address, st, activeStatus(st) != null, k.parent, machineOf(k.address), { address: k.address });
+    }
+    // A sub-agent is drawn when its parent is: a machine in the graph, or a sub-agent that is drawn.
+    const placed = placeSubs(subs, paneOf), drawn = new Set();
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const s of placed) if (!drawn.has(s.key) && (nodes.has(s.parent) || drawn.has(s.parent))) { drawn.add(s.key); grew = true; }
+    }
+    for (const s of placed) {
+      if (!drawn.has(s.key)) continue;
+      add({ ...s.node, parent: s.parent });
+      edges.push([s.parent, s.key, s.edge]);
+    }
+    // Notes and artifacts the agents touched: a link from each agent node that is in the graph (a terminal's pane, a sub-agent).
+    const touched = touchShape(f?.touches ?? {}, {
+      vault: this.vault, home: this.homeDir, notes: touchOn(this.touchOn, this.mode, "notes"),
+      artifacts: touchOn(this.touchOn, this.mode, "artifacts"),
+      resolve: (k) => (k.startsWith("term:") ? paneOf.get(k.slice(5)) ?? null : nodes.has(k) ? k : null),
+    });
+    for (const n of touched.nodes) add(n);
+    for (const e of touched.edges) edges.push(e);
     return { nodes, edges };
   }
 
-  // The local graph: nodes within `depth` links of the focus (never walking through a machine).
-  localize(model) {
+  // The focus (Quartz's "current page"): the inspected session, else the focused pane, else none.
+  focusOf(model) {
     const { address } = inspected();
-    let focus = null;
-    if (address) for (const n of model.nodes.values()) if (n.address === address) { focus = n.key; break; }
-    if (!focus) {
-      const fp = focused();
-      focus = fp?.pane && model.nodes.has(`p:${fp.pane}`) ? `p:${fp.pane}` : fp?.tab && model.nodes.has(`t:${fp.tab}`) ? `t:${fp.tab}` : null;
-    }
-    if (!focus) return { ...model, focus: null };
-    const adj = new Map();
-    for (const [a, b] of model.edges) { (adj.get(a) ?? adj.set(a, []).get(a)).push(b); (adj.get(b) ?? adj.set(b, []).get(b)).push(a); }
-    const keep = new Set([focus]);
-    let front = [focus];
-    for (let d = 0; d < this.depth; d++) {
-      const next = [];
-      for (const k of front) for (const o of adj.get(k) ?? []) if (!keep.has(o)) { keep.add(o); if (!o.startsWith("m:")) next.push(o); }
-      front = next;
-    }
-    // Always show the path up to the machine, so the local graph says where it is.
-    for (let k = focus; k; k = model.nodes.get(k)?.parent) keep.add(k);
-    const nodes = new Map([...model.nodes].filter(([k]) => keep.has(k)));
-    return { nodes, edges: model.edges.filter(([a, b]) => keep.has(a) && keep.has(b)), focus };
+    if (address) for (const n of model.nodes.values()) if (n.address === address) return n.key;
+    const fp = focused();
+    if (fp?.pane && model.nodes.has(`p:${fp.pane}`)) return `p:${fp.pane}`;
+    return null;
   }
 
-  // ---------------------------------------------------------------- layout
-  layoutGraph(g) {
-    const nodes = [...g.nodes.values()];
-    const kids = new Map();
-    let roots;
-    if (g.focus) {
-      // Local graph: a tree grown from the focused session outwards, so it sits in the middle.
-      const adj = new Map();
-      for (const [x, y] of g.edges) { (adj.get(x) ?? adj.set(x, []).get(x)).push(y); (adj.get(y) ?? adj.set(y, []).get(y)).push(x); }
-      const seen = new Set([g.focus]);
-      let front = [g.focus];
-      while (front.length) {
-        const next = [];
-        for (const k of front) for (const o of adj.get(k) ?? []) if (!seen.has(o)) { seen.add(o); (kids.get(k) ?? kids.set(k, []).get(k)).push(o); next.push(o); }
-        front = next;
-      }
-      roots = [g.focus, ...nodes.map((n) => n.key).filter((k) => !seen.has(k))];
-    } else {
-      for (const n of nodes) if (n.parent && g.nodes.has(n.parent)) (kids.get(n.parent) ?? kids.set(n.parent, []).get(n.parent)).push(n.key);
-      roots = nodes.filter((n) => !n.parent || !g.nodes.has(n.parent)).map((n) => n.key);
-    }
-    const weight = new Map();
-    const wOf = (k) => { if (weight.has(k)) return weight.get(k); const w = Math.max(1, (kids.get(k) ?? []).reduce((s, c) => s + wOf(c), 0)); weight.set(k, w); return w; };
-    roots.forEach(wOf);
-    const target = new Map();
-    const place = (k, a0, a1, r) => {
-      const a = (a0 + a1) / 2;
-      target.set(k, { x: Math.cos(a) * r, y: Math.sin(a) * r });
-      const cs = kids.get(k) ?? [];
-      const tot = cs.reduce((s, c) => s + wOf(c), 0) || 1;
-      let at = a0;
-      for (const c of cs) {
-        const span = ((a1 - a0) * wOf(c)) / tot;
-        const kind = g.nodes.get(c).kind;
-        place(c, at, at + span, r + (REST[kind] || 70) * (r === 0 ? 1.1 : 1));
-        at += span;
-      }
-    };
-    const total = roots.reduce((s, k) => s + wOf(k), 0) || 1;
-    if (roots.length === 1) place(roots[0], -Math.PI / 2, Math.PI * 1.5, 0);
-    else {
-      let at = -Math.PI / 2;
-      const R0 = Math.max(70, roots.length * 26);
-      for (const k of roots) { const span = (Math.PI * 2 * wOf(k)) / total; place(k, at, at + span, R0); at += span; }
-    }
-    // Fit the drawing to the panel's shape: stretch the targets along its long side.
-    const ky = Math.sqrt(this.aspect()), kx = 1 / ky;
-    for (const p of target.values()) { p.x *= kx; p.y *= ky; }
-    // Start from the cache (known nodes) or the radial target (new ones, nudged so none coincide).
-    const P = new Map();
-    let known = 0;
-    for (const n of nodes) {
-      const c = this.pos.get(n.key);
-      if (c) { P.set(n.key, { ...c }); known++; }
-      else { const tg = target.get(n.key); P.set(n.key, { x: tg.x + (hash(n.key) - 0.5) * 6, y: tg.y + (hash(n.key + "y") - 0.5) * 6 }); }
-    }
-    const iters = known === nodes.length ? 0 : known > nodes.length / 2 ? 40 : 110;
-    // Typed arrays: this runs inside render, so it must stay well under a frame's script budget.
-    const keys = nodes.map((n) => n.key);
-    const N = keys.length, idx = new Map(keys.map((k, i) => [k, i]));
-    const X = new Float64Array(N), Y = new Float64Array(N), TX = new Float64Array(N), TY = new Float64Array(N), FX = new Float64Array(N), FY = new Float64Array(N);
-    keys.forEach((k, i) => { const p = P.get(k), tg = target.get(k); X[i] = p.x; Y[i] = p.y; TX[i] = tg.x; TY[i] = tg.y; });
-    const E = g.edges.map(([a, b]) => [idx.get(a), idx.get(b), REST[g.nodes.get(b)?.kind] || 60]).filter(([a, b]) => a != null && b != null);
-    for (let it = 0; it < iters; it++) {
-      const cool = 1 - it / iters;
-      FX.fill(0); FY.fill(0);
-      for (let i = 0; i < N; i++) {
-        for (let j = i + 1; j < N; j++) {
-          let dx = X[i] - X[j], dy = Y[i] - Y[j];
-          let d2 = dx * dx + dy * dy;
-          if (d2 > 160000) continue;
-          if (d2 < 1) { dx = ((i * 7 + j * 13) % 11) / 11 - 0.5; dy = ((i * 5 + j * 3) % 7) / 7 - 0.5; d2 = 1; }
-          const d = Math.sqrt(d2), f = 1300 / d2 / d;
-          FX[i] += dx * f; FY[i] += dy * f; FX[j] -= dx * f; FY[j] -= dy * f;
+
+  // ---------------------------------------------------------------- frames
+  // Nothing ticks inside render: render draws the positions sim.js holds. The frame loop (here) ticks the simulation
+  // and redraws while wantsFrames(): alpha above alphaMin, a node being dragged, a hover fade, or a pulsing halo. The
+  // interval is 16 ms while the graph moves and 67 ms (15 fps) for a pulse alone (sim.js frameIntervalMs).
+  // A structural change (sync), a view switch, a drag or a fade only reheats and calls startLoop(); a still graph
+  // starts no loop. The loop is one task at a time (this.looping), and clears that flag even when it throws.
+  startLoop() {
+    if (this.looping || !this.cx) return;
+    this.looping = true;
+    this.cx.spawn(async (cx) => {
+      try {
+        while (this.wantsFrames()) {
+          tick(this.sim);
+          this.autoFit(this.g);
+          cx.notify();
+          await cx.sleep(frameIntervalMs(this.sim, this.frameOpts()) ?? 16);
         }
+      } finally {
+        this.looping = false;
       }
-      for (const [a, b, rest] of E) {
-        const dx = X[b] - X[a], dy = Y[b] - Y[a], d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-        const f = ((d - rest) * 0.06) / d;
-        FX[a] += dx * f; FY[a] += dy * f; FX[b] -= dx * f; FY[b] -= dy * f;
-      }
-      const lim = 12 * cool + 0.5;
-      for (let i = 0; i < N; i++) {
-        const fx = FX[i] + (TX[i] - X[i]) * 0.02, fy = FY[i] + (TY[i] - Y[i]) * 0.02;
-        const m = Math.sqrt(fx * fx + fy * fy), s = m > lim ? lim / m : 1;
-        X[i] += fx * s; Y[i] += fy * s;
-      }
-    }
-    keys.forEach((k, i) => P.set(k, { x: X[i], y: Y[i] }));
-    for (const [k, p] of P) this.pos.set(k, p);
-    // Forget positions of nodes gone for good (keep the cache small).
-    if (this.pos.size > 600) for (const k of [...this.pos.keys()]) if (!g.nodes.has(k)) this.pos.delete(k);
-  }
-
-  relaxDrag(g, pinnedKey, iters = 8) {
-    if (!g?.nodes?.size || !g?.edges?.length) return;
-    const nodes = [...g.nodes.values()];
-    const keys = nodes.map((n) => n.key);
-    const N = keys.length;
-    if (N < 2) return;
-    const idx = new Map(keys.map((k, i) => [k, i]));
-    const pinnedIdx = pinnedKey != null ? idx.get(pinnedKey) : null;
-    const X = new Float64Array(N), Y = new Float64Array(N), FX = new Float64Array(N), FY = new Float64Array(N);
-    for (let i = 0; i < N; i++) {
-      const p = this.pos.get(keys[i]) ?? { x: 0, y: 0 };
-      X[i] = p.x;
-      Y[i] = p.y;
-    }
-    const E = [];
-    for (const [a, b] of g.edges) {
-      const ia = idx.get(a), ib = idx.get(b);
-      if (ia != null && ib != null) {
-        const kind = g.nodes.get(b)?.kind;
-        const rest = REST[kind] || 50;
-        E.push([ia, ib, rest]);
-      }
-    }
-    for (let it = 0; it < iters; it++) {
-      FX.fill(0);
-      FY.fill(0);
-      for (let i = 0; i < N; i++) {
-        for (let j = i + 1; j < N; j++) {
-          let dx = X[i] - X[j], dy = Y[i] - Y[j];
-          let d2 = dx * dx + dy * dy;
-          if (d2 > 160000) continue;
-          if (d2 < 1) {
-            dx = ((i * 7 + j * 13) % 11) / 11 - 0.5;
-            dy = ((i * 5 + j * 3) % 7) / 7 - 0.5;
-            d2 = 1;
-          }
-          const d = Math.sqrt(d2), f = 1200 / d2 / d;
-          FX[i] += dx * f; FY[i] += dy * f;
-          FX[j] -= dx * f; FY[j] -= dy * f;
-        }
-      }
-      for (const [a, b, rest] of E) {
-        const dx = X[b] - X[a], dy = Y[b] - Y[a];
-        const d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-        const f = ((d - rest) * 0.14) / d;
-        FX[a] += dx * f; FY[a] += dy * f;
-        FX[b] -= dx * f; FY[b] -= dy * f;
-      }
-      for (let i = 0; i < N; i++) {
-        if (i === pinnedIdx) continue;
-        const fx = FX[i], fy = FY[i];
-        const m = Math.sqrt(fx * fx + fy * fy);
-        const lim = 8;
-        const s = m > lim ? lim / m : 1;
-        X[i] += fx * s;
-        Y[i] += fy * s;
-      }
-    }
-    for (let i = 0; i < N; i++) {
-      if (i !== pinnedIdx) {
-        this.pos.set(keys[i], { x: X[i], y: Y[i] });
-      }
-    }
-  }
-
-  startPhysicsLoop(cx) {
-    if (this.physicsRunning) return;
-    this.physicsRunning = true;
-    cx.spawn(async (cx) => {
-      while (this.nodeDrag || this.settleFrames > 0) {
-        if (!this.g?.nodes?.size) break;
-        if (!this.nodeDrag) this.settleFrames--;
-        const pin = this.nodeDrag?.key ?? (this.settleFrames > 0 ? this.pinnedAfterDrag : null);
-        this.relaxDrag(this.g, pin, 8);
-        cx.notify();
-        await cx.sleep(16);
-      }
-      this.physicsRunning = false;
-      this.pinnedAfterDrag = null;
       this.persist();
+      cx.notify();
     });
   }
 
-  aspect() { return this.W && this.H ? Math.max(0.6, Math.min(2.2, this.H / this.W)) : 1; }
+  fadeRunning() { return Boolean(this.fade && Date.now() - this.fade.start < Math.max(DIM_MS, RESTORE_MS)); }
 
-  bounds(g) {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const k of g.nodes.keys()) { const p = this.pos.get(k); if (!p) continue; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
-    return Number.isFinite(x0) ? { x0, y0, x1, y1 } : { x0: 0, y0: 0, x1: 0, y1: 0 };
+  frameOpts() {
+    return { fading: this.fadeRunning(), dragging: Boolean(this.nodeDrag?.moved), pulsing: Boolean(this.pulsing) };
   }
+
+  wantsFrames() { return wantsFrames(this.sim, this.frameOpts()); }
 
   fit(g) {
     if (!this.W || !this.H || !g) return;
-    const b = this.bounds(g);
-    const pad = 44;
-    const bw = Math.max(1, b.x1 - b.x0), bh = Math.max(1, b.y1 - b.y0);
-    const scale = Math.max(MIN_SCALE, Math.min(1.6, (this.W - pad * 2) / bw, (this.H - pad * 2 - 20) / bh));
-    this.view = { scale, x: this.W / 2 - ((b.x0 + b.x1) / 2) * scale, y: (this.H + 14) / 2 - ((b.y0 + b.y1) / 2) * scale };
-    this.manual = false;
+    this.view = fitNow(boundsOf(this.sim, g.nodes.keys()), this.W, this.H);
+  }
+
+  autoFit(g) {
+    if (!this.W || !this.H || !g) return;
+    this.view = autoFitView(this.view, boundsOf(this.sim, g.nodes.keys()), this.W, this.H);
   }
 
   zoomAt(factor, px, py) {
-    const s0 = this.view.scale;
-    const s1 = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s0 * factor));
-    if (s1 === s0) return;
-    this.view = { scale: s1, x: px - ((px - this.view.x) / s0) * s1, y: py - ((py - this.view.y) / s0) * s1 };
-    this.manual = true;
+    const v = zoomView(this.view, factor, px, py);
+    if (v === this.view) return;
+    this.view = v;
     this.persist();
+  }
+
+  // ---------------------------------------------------------------- hover fade
+  // Targets: a node is 1 in the hovered neighbourhood and 0.2 outside it while something is hovered; a link is 1 when it
+  // touches the hovered node, 0.2 when it does not, and 0.35 at rest.
+  targetOf(id) {
+    const hovering = this.hover != null;
+    if (id.startsWith("n:")) return hoverAlpha(this.near.has(id.slice(2)), hovering);
+    const [a, b] = id.slice(2).split("\u0001");
+    if (!hovering) return this.restAlpha(id);
+    return a === this.hover || b === this.hover ? 1 : DIM_ALPHA;
+  }
+
+  // A link's rest alpha: stronger when it joins an active agent (working or blocked) to its parent.
+  restAlpha(id) {
+    const [a, b] = id.slice(2).split("\u0001");
+    const edge = this.g?.edgeOf.get(id);
+    if (edge && edge[2] === "touch") return touchAlpha(edge[3]);
+    const touches = (k) => { const st = this.stateOf?.get(k); return st === "working" || st === "blocked"; };
+    return linkRestAlpha(Boolean(edge && edge[2] === "link" && (touches(a) || touches(b))));
+  }
+
+  // The halo's state: working or blocked ("needs you") when the agent is active (kit/agents.js activityOf), else idle.
+  agentState(n) {
+    return activityOf(n, Date.now()) ?? "idle";
+  }
+
+  alphaNow(id, now) {
+    const to = this.targetOf(id);
+    if (!this.fade) return to;
+    const from = this.fade.from.has(id) ? this.fade.from.get(id) : to;
+    return animateAlpha(from, to, now - this.fade.start, fadeMs(from, to));
+  }
+
+  setHover(key, cx) {
+    if (key === this.hover) return;
+    const now = Date.now();
+    const from = new Map();
+    for (const k of this.g?.nodes.keys() ?? []) from.set(nodeId(k), this.alphaNow(nodeId(k), now));
+    for (const [a, b] of this.g?.edges ?? []) from.set(linkId(a, b), this.alphaNow(linkId(a, b), now));
+    this.hover = key;
+    this.near = key && this.g ? hoverSet(this.g.edges, key) : new Set();
+    this.fade = { start: now, from };
+    this.startLoop();
+    cx.notify();
   }
 
   // ---------------------------------------------------------------- actions
@@ -346,20 +316,60 @@ export default class Graph extends View {
     this.selected = key;
     if (n.kind === "m") { const s = spaces().find((x) => (x.machine ?? null) === n.machine); if (s) run("space.select", { id: s.id }); }
     else if (n.kind === "s") run("space.select", { id: n.space.id });
-    else if (n.kind === "t") reveal({ space: n.space.id, tab: n.tab.id });
     else if (n.kind === "p") reveal({ space: n.space.id, tab: n.tab.id, pane: n.pane.pane });
-    else if (n.kind === "r") openView("ob-subagents", `run:${n.run.key}`);
-    else if (n.kind === "c") openView("ob-subagents", `run:${n.claude.key}`);
+    else if (n.kind === "r") openView("ob-outline", `run:${n.run.key}`);
+    else if (n.kind === "c") openView("ob-outline", `run:${n.claude.key}`);
     else if (n.kind === "h") run("terminal.peek", { terminal: n.address });
+    else if (n.kind === "n") this.openNote(n);
+    else if (n.kind === "a") this.openArtifact(n);
+  }
+
+  // A note: the Notes viewer that shows this tab (through shared "obsidian.show", as the obsidian mod does), else a new
+  // Notes pane beside it. The obsidian mod's own rule: a viewer registers its tab under "obsidian.viewers".
+  openNote(n) {
+    const tab = focused()?.tab;
+    const viewers = Object.values(shared("obsidian.viewers") ?? {});
+    const live = panes().some((p) => p.tab === tab && p.mod === "obsidian");
+    if (tab && viewers.includes(tab) && live) setShared("obsidian.show", { tab, note: n.rel, line: null, n: Date.now() });
+    else run("pane.split", { direction: "right", mod: "obsidian", props: { note: n.rel, line: null } });
+  }
+
+  // A herdr-artifact publication: `herdr-artifact open` shows it in a pane beside the focused one. A plain file: an
+  // editor pane.
+  // The editor: $VISUAL, then $EDITOR (often unset in a pane: they live in the person's shell profile), then the
+  // first of nvim, vim, nano, vi that is installed.
+  openArtifact(n) {
+    if (n.artifact?.id) {
+      // exec resolves on a failed run too: its exit code and stderr say so, shown as a toast.
+      const fail = (why) => notify({ title: `Couldn't open ${n.label}`, body: String(why), level: "error" });
+      exec("herdr-artifact", ["open", n.artifact.id]).then((r) => {
+        if (r.code !== 0) fail((r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop());
+      }, fail);
+      return;
+    }
+    const pick = 'e="${VISUAL:-$EDITOR}"; if [ -z "$e" ]; then for c in nvim vim nano vi; do '
+      + 'if command -v "$c" >/dev/null 2>&1; then e=$c; break; fi; done; fi; exec ${e:-vi} "$1"';
+    run("pane.split", { direction: "right", argv: ["sh", "-c", pick, "editor", n.path] });
+  }
+
+  // Ends a node drag or a pan without a click (the pointer left the panel): the node is let go, so alphaTarget drops
+  // and the loop cools and stops; a moved pan is saved.
+  endDrag(cx) {
+    if (this.nodeDrag?.moved) release(this.sim);
+    if (this.drag?.moved) this.persist();
+    this.nodeDrag = null;
+    this.drag = null;
+    this.startLoop();
+    cx.notify();
   }
 
   menu(key) {
     const n = this.g?.nodes.get(key);
     if (!n) return;
     const addr = n.address ?? n.run?.parent ?? n.claude?.parent ?? null;
-    const bm = n.kind === "s" ? ["space", n.space.id] : n.kind === "t" ? ["tab", n.tab.id] : n.kind === "p" && n.address ? ["terminal", n.address] : n.kind === "r" ? ["run", n.run.key] : null;
+    const bm = n.kind === "s" ? ["space", n.space.id] : n.kind === "p" && n.address ? ["terminal", n.address] : n.kind === "r" ? ["run", n.run.key] : null;
     openMenu([
-      { label: n.kind === "r" || n.kind === "c" ? "Open in Subagents" : n.kind === "h" ? "Peek" : "Reveal", icon: "locate", command: `ob-graph.open:${key}` },
+      { label: n.kind === "r" || n.kind === "c" ? "Open in Outline" : n.kind === "h" ? "Peek" : n.kind === "n" ? "Open note" : n.kind === "a" ? "Open" : "Reveal", icon: "locate", command: `ob-graph.open:${key}` },
       ...(addr ? [{ label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${addr}` }] : []),
       ...(n.kind === "p" && n.address ? [{ label: "Local graph of this session", icon: "graph", command: `ob-graph.focus-on:${n.address}` }] : []),
       ...(bm ? [{ label: isBookmarked(bm[0], bm[1]) ? "Remove bookmark" : "Bookmark", icon: "bookmark", command: `ob-graph.bookmark:${key}` }] : []),
@@ -367,6 +377,7 @@ export default class Graph extends View {
   }
 
   command(c, cx) {
+    this.dirty = true;
     const [verb, arg] = splitCmd(c);
     const cxW = this.W / 2, cxH = this.H / 2;
     if (verb === "fit") { this.fit(this.g); this.persist(); }
@@ -375,29 +386,62 @@ export default class Graph extends View {
     else if (verb === "select") this.selected = arg || null;
     else if (verb === "open") this.open(arg);
     else if (verb === "menu") this.menu(arg);
-    else if (verb === "finished") { this.finished = arg !== "off"; this.refit = true; this.persist(); }
     else if (verb === "mode") { this.mode = arg === "local" ? "local" : "global"; this.refit = true; this.persist(); }
-    else if (verb === "depth") { this.depth = Math.max(1, Math.min(3, Number(arg) || 2)); this.refit = true; this.persist(); }
+    else if (verb === "depth") { this.depth = clampDepth(arg); this.refit = true; this.persist(); }
     else if (verb === "labels") { this.labelsAll = arg !== "off"; this.persist(); }
+    else if (verb === "active") { this.activeOn = setActive(this.activeOn, this.mode, arg !== "off"); this.refit = true; this.persist(); }
+    else if (verb === "notes" || verb === "artifacts") { this.touchOn = setTouch(this.touchOn, this.mode, verb, arg !== "off"); this.refit = true; this.persist(); }
     else if (verb === "focus-on") { inspect(arg || null); this.mode = "local"; this.refit = true; this.persist(); }
     else if (verb === "bookmark") {
       const n = this.g?.nodes.get(arg);
       if (n?.kind === "s") toggleBookmark({ kind: "space", id: n.space.id, label: n.label, machine: n.space.machine ?? null });
-      else if (n?.kind === "t") toggleBookmark({ kind: "tab", id: n.tab.id, label: n.label, machine: n.space.machine ?? null });
       else if (n?.kind === "p" && n.address) toggleBookmark({ kind: "terminal", id: n.address, label: n.label, machine: machineOf(n.address) });
       else if (n?.kind === "r") toggleBookmark({ kind: "run", id: n.run.key, label: runTitle(n.run), machine: n.run.machine });
     }
     else if (verb === "focus") this.handle.focus();
   }
 
+  // ---------------------------------------------------------------- rebuild (off the render path)
+  // Builds the model, filters it to what the view shows and syncs the simulation. Returns true when the drawn graph
+  // changed (a node, its label or status, a link, the focus), so the caller redraws only then.
+  rebuild() {
+    this.dirty = false;
+    const model = this.model();
+    const lists = { nodes: [...model.nodes.values()], edges: model.edges };
+    const focus = this.focusOf(model);
+    // Local: the focus's neighbourhood first (a pane's subagents free), then "Active only" over it, anchored on the focus.
+    const local = this.mode === "local" ? localGraph(lists, focus, this.depth) : { ...lists, focus };
+    const shown = filterGraph(local, this.activeNow(), focus);
+    // edgeOf: link id -> its first edge, so a link's rest alpha (read per link per frame) is one lookup.
+    const edgeOf = new Map();
+    for (const e of shown.edges) { const id = linkId(e[0], e[1]); if (!edgeOf.has(id)) edgeOf.set(id, e); }
+    const g = { nodes: new Map(shown.nodes.map((n) => [n.key, n])), edges: shown.edges, edgeOf, focus: local.focus ?? focus };
+    this.g = g;
+    this.cfg = this.mode === "local" ? { ...QUARTZ.local, depth: this.depth } : QUARTZ.global;
+    // A change of nodes or links (or of the forces) reheats gently; a refresh with the same ones changes nothing.
+    // sync() moves nothing; it reheats on a change, and the frame loop does the moving.
+    const moved = sync(this.sim, { nodes: g.nodes.values(), edges: g.edges }, this.cfg, this.W, Math.max(this.H, 250));
+    if (moved) {
+      if (this.refit) this.fit(g); else this.autoFit(g);
+      this.startLoop();
+    } else if (this.refit) this.fit(g);
+    this.refit = false;
+    let sig = `${g.focus}\u0002${g.edges.length}`;
+    for (const n of g.nodes.values()) sig += `\u0002${n.key}\u0001${n.label}\u0001${n.status}\u0001${n.live}`;
+    const changed = moved || sig !== this.sig;
+    this.sig = sig;
+    return changed;
+  }
+
   // ---------------------------------------------------------------- render
-  nodeColor(t, n) {
-    if (n.kind === "m") return n.down ? t.dim : t.muted;
-    if (n.kind === "s") return n.color;
-    if (n.kind === "t") return n.status ? statusColor(t, n.status) : alpha(t.muted, 0.8);
-    const k = normStatus(n.status);
-    if (!k) return alpha(t.dim, 0.9);
-    return k === "ok" ? t.ansi2 : statusColor(t, n.status);
+  // Quartz's colours by state: the focused node (its "current page"), active agents, and everything else.
+  nodeColor(t, n, focusKey) {
+    if (n.key === focusKey) return t.accent;
+    if (n.kind === "n") return alpha(t.foreground, 0.55);   // a note: a light dot (Obsidian's note)
+    if (n.kind === "a") return t.done;                     // an artifact: a square in the theme's done colour
+    if (activityOf(n, Date.now())) return t.working;
+    if (n.kind === "m" && n.down) return t.dim;     // an offline machine: a dimmer fill, still a dot
+    return t.muted;
   }
 
   toolbar(t) {
@@ -411,16 +455,40 @@ export default class Graph extends View {
       .text_size(14).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip)
       .on_mouse_down("left", stop).on_mouse_down("right", stop)
       .on_click((_e, cx) => { this.command(cmd, cx); cx.notify(); }).child(label);
+    const activeSwitch = (on, cmd) => h_flex().id("g-active").h(20).px(7).items_center().rounded(S.radius).cursor_pointer()
+      .text_size(S.textXs).font_medium().border_1().border_color(on ? t.selected : t.border)
+      .text_color(on ? t.foreground : t.dim).when(on, (e) => e.bg(t.selected))
+      .when(!on, (e) => e.hover((s) => s.bg(t.hover).text_color(t.muted)))
+      .tooltip(on ? "Showing only active agents" : "Showing all")
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
+      .on_click((_e, cx) => { this.command(cmd, cx); cx.notify(); }).child("Active only");
+    // Notes and Artifacts: off by default. Notes need a vault; without one the switch is disabled and says why.
+    const touchSwitch = (id, label, which, tip, enabled = true) => {
+      const on = touchOn(this.touchOn, this.mode, which) && enabled;
+      return h_flex().id(id).h(20).px(7).items_center().rounded(S.radius).border_1().border_color(on ? t.selected : t.border)
+        .text_size(S.textXs).font_medium().text_color(!enabled ? t.dim : on ? t.foreground : t.dim).when(on, (e) => e.bg(t.selected))
+        .when(enabled && !on, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.muted)))
+        .when(!enabled, (e) => e.opacity(0.5))
+        .tooltip(tip).on_mouse_down("left", stop).on_mouse_down("right", stop)
+        .when(enabled, (e) => e.on_click((_e, cx) => { this.command(`${which}:${on ? "off" : "on"}`, cx); cx.notify(); }))
+        .child(label);
+    };
+    const noVault = !this.vault;
+    const touchGroup = h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
+      .child(touchSwitch("g-notes", "Notes", "notes", noVault ? "Set your vault in Settings" : "Notes your agents touched", !noVault))
+      .child(touchSwitch("g-artifacts", "Artifacts", "artifacts", "Artifacts agents publish or write outside the vault"));
     return h_flex().id("gtb").absolute().top(6).left(6).right(6).h(26).gap(4).items_center()
       .child(h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
         .on_mouse_down("left", stop).on_mouse_down("right", stop)
         .child(seg("g-local", "Local", this.mode === "local", "mode:local"))
-        .child(seg("g-global", "Global", this.mode === "global", "mode:global")))
+        .child(seg("g-global", "Global", this.mode === "global", "mode:global"))
+        .child(activeSwitch(this.activeNow(), `active:${this.activeNow() ? "off" : "on"}`)))
+      .child(touchGroup)
       .child(div().flex_1())
       .child(h_flex().p(2).gap(1).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
         .on_mouse_down("left", stop).on_mouse_down("right", stop)
-        .child(iconButton({ id: "g-finished", icon: "circle-check", size: 22, iconSize: 13, active: this.finished, tip: this.finished ? "Hide finished sub-agents" : "Show finished sub-agents", onClick: (_e, cx) => { this.command(`finished:${this.finished ? "off" : "on"}`, cx); cx.notify(); } }))
-        .child(iconButton({ id: "g-labels", icon: "hash", size: 22, iconSize: 13, active: this.labelsAll, tip: this.labelsAll ? "Labels: all" : "Labels: machines and spaces (hover for the rest)", onClick: (_e, cx) => { this.command(`labels:${this.labelsAll ? "off" : "on"}`, cx); cx.notify(); } }))
+        .child(iconButton({ id: "g-labels", icon: "hash", size: 22, iconSize: 13, active: this.labelsAll, tip: this.labelsAll ? "Labels: all" : "Labels: fade in with zoom (hover for the rest)", onClick: (_e, cx) => { this.command(`labels:${this.labelsAll ? "off" : "on"}`, cx); cx.notify(); } }))
         .child(txt("g-out", "−", "Zoom out", "zoom-out"))
         .child(txt("g-in", "+", "Zoom in", "zoom-in"))
         .child(iconButton({ id: "g-fit", icon: "maximize", size: 22, iconSize: 13, tip: "Fit to view", onClick: (_e, cx) => { this.command("fit", cx); cx.notify(); } })));
@@ -430,20 +498,16 @@ export default class Graph extends View {
     if (!this.g?.nodes) return null;
     if (my < 36 || (my > this.H - 24 && mx < 250)) return null;
     const { scale, x: ox, y: oy } = this.view;
-    const ns = Math.max(0.75, Math.min(1.6, Math.sqrt(scale)));
     let bestKey = null, bestDist = Infinity;
     for (const n of this.g.nodes.values()) {
-      const p = this.pos.get(n.key);
-      if (!p) continue;
+      const p = this.sim.pos.get(n.key);
+      if (!p || !Number.isFinite(p.x)) continue;
       const x = p.x * scale + ox, y = p.y * scale + oy;
-      const hitR = Math.max(10, (R[n.kind] ?? 5) * ns + 4);
+      const hitR = Math.max(8, p.r * scale + 4);
       const dx = x - mx, dy = y - my;
       if (Math.abs(dx) > hitR || Math.abs(dy) > hitR) continue;
       const d = Math.hypot(dx, dy);
-      if (d <= hitR && d < bestDist) {
-        bestDist = d;
-        bestKey = n.key;
-      }
+      if (d <= hitR && d < bestDist) { bestDist = d; bestKey = n.key; }
     }
     return bestKey;
   }
@@ -451,101 +515,82 @@ export default class Graph extends View {
   render(cx) {
     const t = tc();
     takeFocus(this, cx, props()?.slot ?? "ob-graph", this.handle, () => {});
-    const full = this.model();
-    const g = this.mode === "local" ? this.localize(full) : { ...full, focus: null };
-    this.g = g;
-    // Re-lay out only when the structure changed.
-    const sig = (g.focus ?? "") + "|" + [...g.nodes.keys()].join("|") + "#" + g.edges.length + "@" + Math.round(this.aspect() * 4);
-    if (sig !== this.sig) {
-      const T1 = Date.now();
-      // A new panel shape lays everything out again (from the radial targets, not the cache).
-      if (this.sig && sig.split("@")[1] !== this.sig.split("@")[1]) this.pos.clear();
-      this.layoutGraph(g);
-      this.sig = sig;
-      console.log(`ob-graph: layout ${Date.now() - T1}ms ${g.nodes.size} nodes`);
-      if (!this.manual || this.refit) this.fit(g);
-      this.refit = false;
-    } else if (this.refit) { this.fit(g); this.refit = false; }
+    // Draw the cached graph. Herdr re-renders when its data changes: mark the model stale and let the timer rebuild
+    // it (a command or the first draw rebuilds here, at once).
+    if (this.dirty || !this.g) this.rebuild();
+    this.stale = true;
+    const g = this.g;
+    if (this.fadeRunning() || this.wantsFrames()) this.startLoop();
     const zoom = settings().zoom || 1;
-    const root = div().id("root").track_focus(this.handle).relative().size_full().min_h(0).overflow_hidden().bg(t.chrome)
+    const root = div().id("root").track_focus(this.handle).relative().size_full().min_h(0).overflow_hidden().bg(t.canvas)
       .on_size_change((s, cx) => {
         const W = s.width / zoom, H = s.height / zoom;
-        if (Math.abs(W - this.W) > 1 || Math.abs(H - this.H) > 1) { this.W = W; this.H = H; this.fit(this.g); cx.notify(); }
+        if (Math.abs(W - this.W) > 1 || Math.abs(H - this.H) > 1) { this.W = W; this.H = H; this.autoFit(this.g); cx.notify(); }
       })
       .on_key_down((e, cx) => {
         if (e.key === "=" || e.key === "+") this.zoomAt(1.25, this.W / 2, this.H / 2);
         else if (e.key === "-") this.zoomAt(0.8, this.W / 2, this.H / 2);
         else if (e.key === "0" || e.key === "f") this.fit(this.g);
         else if (e.key === "enter" && this.selected) this.open(this.selected);
-        else if (e.key === "escape") { this.selected = null; this.nodeDrag = null; this.settleFrames = 0; }
+        else if (e.key === "escape") { this.selected = null; this.nodeDrag = null; release(this.sim); this.startLoop(); }
         else return;
         cx.stop_propagation(); cx.notify();
       });
     if (!g.nodes.size || (this.mode === "local" && !g.focus)) {
       return root.child(v_flex().size_full().child(emptyState({ icon: "graph", title: this.mode === "local" ? "No session focused" : "Nothing to draw",
-        body: this.mode === "local" ? "The local graph follows the focused session. Switch to Global to see every machine." : "Machines, spaces, tabs and agents appear here.",
+        body: this.mode === "local" ? "The local graph follows the focused session. Switch to Global to see every machine." : "Machines, spaces, panes and agents appear here.",
         action: this.mode === "local" ? { id: "to-global", label: "Show the global graph", onClick: (_e, cx) => { this.command("mode:global", cx); cx.notify(); } } : null })))
         .child(this.toolbar(t));
     }
-    const { scale, x: ox, y: oy } = this.view;
+    const { scale: k, x: ox, y: oy } = this.view;
     const W = Math.max(1, this.W), H = Math.max(1, this.H);
-    const scr = (k) => { const p = this.pos.get(k) ?? { x: 0, y: 0 }; return [p.x * scale + ox, p.y * scale + oy]; };
-    const focusKey = this.hover ?? this.selected;
-    const near = new Set(focusKey ? [focusKey] : []);
-    if (focusKey) for (const [a, b] of g.edges) { if (a === focusKey) near.add(b); if (b === focusKey) near.add(a); }
-    const dimmed = (k) => focusKey && !near.has(k);
-    // Edges: four paths (containment / sub-agent link, each normal or highlighted).
-    const groups = { c: [], ch: [], l: [], lh: [] };
-    for (const [a, b, kind] of g.edges) {
-      const hl = focusKey && (a === focusKey || b === focusKey);
-      groups[(kind === "link" ? "l" : "c") + (hl ? "h" : "")].push([scr(a), scr(b)]);
-    }
+    const pt = (key) => { const p = this.sim.pos.get(key); return p && Number.isFinite(p.x) ? [p.x * k + ox, p.y * k + oy] : [0, 0]; };
+    const now = Date.now();
     const pathOf = (segs, w, dash) => {
       let p = PathBuilder.stroke(w);
       for (const [[x1, y1], [x2, y2]] of segs) p = p.move_to(x1, y1).line_to(x2, y2);
       if (dash) p = p.dash_array(dash);
       return p.build();
     };
-    const layer = (id, segs, w, color, dash) => (segs.length ? div().id(id).absolute().left(0).top(0).w(W).h(H).child(window.paint_path(pathOf(segs, w, dash), color)) : null);
-    const ns = Math.max(0.75, Math.min(1.6, Math.sqrt(scale)));
+    const layer = (id, segs, w, color, dash) => div().id(id).absolute().left(0).top(0).w(W).h(H).child(window.paint_path(pathOf(segs, w, dash), color));
+    // The state of every node (halo, pulse, link strength), set before anything is drawn.
+    this.stateOf = new Map([...g.nodes.values()].map((n) => [n.key, this.agentState(n)]));
+    this.pulsing = anyPulsing([...this.stateOf.values()].map((state) => ({ state })));
+    // Links: 1 px straight lines; rest alpha from restAlpha (0.35, 0.6 into an active agent); hover sets 1 or 0.2.
+    // The sibling links are springs only: nothing draws them (or hovers them).
+    const links = g.edges.filter(([, , k]) => k !== "sibling")
+      .map(([a, b]) => ({ seg: [pt(a), pt(b)], alpha: this.alphaNow(linkId(a, b), now) }));
+    const linkEls = linkBatches(links).map((b, i) => layer(`e-${i}`, b.segs, 1, alpha(t.muted, b.alpha)));
     const nodes = [], labels = [];
+    const L = labelLayout(k, this.cfg.scale);
     for (const n of g.nodes.values()) {
-      const [x, y] = scr(n.key);
+      const p = this.sim.pos.get(n.key);
+      if (!p || !Number.isFinite(p.x)) continue;
+      const [x, y] = pt(n.key);
       if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
-      const r = R[n.kind] * ns;
-      const color = this.nodeColor(t, n);
-      const sel = this.selected === n.key, isFocus = g.focus === n.key;
-      const st = normStatus(n.status);
-      const id = `n-${n.key}`;
-      const dim = dimmed(n.key);
-      if (st === "working" && (n.kind === "p" || n.kind === "r" || n.kind === "c" || n.kind === "h")) {
-        nodes.push(div().id(`${id}-halo`).absolute().left(x - r - 4).top(y - r - 4).size(r * 2 + 8).rounded_full().bg(alpha(t.working, 0.28))
-          .loop("opacity", { from: 0.2, to: 1, period: 1200 }));
-      }
-      if (st === "blocked" && n.kind === "p") {
-        nodes.push(div().id(`${id}-halo`).absolute().left(x - r - 4).top(y - r - 4).size(r * 2 + 8).rounded_full().bg(alpha(t.blocked, 0.3))
-          .loop("opacity", { from: 0.3, to: 1, period: 1100 }));
-      }
+      const rs = p.r * k;
+      const na = this.alphaNow(nodeId(n.key), now);
+      const color = this.nodeColor(t, n, g.focus);
+      // The halo: a filled ring under the dot, same hue, radius + 4 px; pulsing when working, steady when blocked.
+      const ha = haloDrawAlpha({ state: this.stateOf.get(n.key) }, now, na);
+      if (ha != null) nodes.push(div().id(`${nodeId(n.key)}-halo`).absolute().left(x - rs - 4).top(y - rs - 4).size((rs + 4) * 2).rounded_full().bg(alpha(color, ha)));
       const tip = [n.label, n.kind === "p" ? n.program?.name : null, n.status ? `${n.status}` : null, n.address ?? null].filter(Boolean).join(" · ");
-      let el = div().id(id).absolute().left(x - r).top(y - r).size(r * 2).rounded_full().cursor_pointer()
-        .tooltip(tip);
-      if (n.kind === "m") el = el.bg(t.chrome).border(1.5 * ns).border_color(color);
-      else el = el.bg(color).when(n.kind === "p" && !n.status, (e) => e.border(1).border_color(t.muted));
-      if (n.orphan) el = el.opacity(0.7);
-      if (sel || isFocus) el = el.border(2).border_color(t.accent);
-      if (dim) el = el.opacity(0.3);
-      nodes.push(el);
-      const always = n.kind === "m" || n.kind === "s" || this.labelsAll || (scale >= 1.35 && n.kind !== "r" && n.kind !== "c");
-      if (always || sel || isFocus || near.has(n.key)) {
-        const lw = n.kind === "m" ? 140 : 120;
-        labels.push(div().id(`${id}-l`).absolute().left(x - lw / 2).top(y + r + 2).w(lw).h(14).text_center().truncate()
-          .text_size(n.kind === "m" ? 11 : 10).when(n.kind === "m" || n.kind === "s", (e) => e.font_medium())
-          .text_color(this.hover === n.key || sel ? t.foreground : n.kind === "m" ? t.muted : t.dim).when(Boolean(dim), (e) => e.opacity(0.35))
+      const dot = div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).bg(color)
+        .opacity(na).cursor_pointer().tooltip(tip);
+      nodes.push(n.kind === "a" ? dot : dot.rounded_full());     // artifacts are squares, notes and agents dots
+      // Labels: the hovered node and its neighbours always; the rest fade in with zoom (Quartz's opacityScale formula).
+      const shown = this.near.has(n.key) || this.labelsAll ? 1 : labelOpacity(k, this.cfg.opacityScale);
+      const la = shown * na;
+      if (la > 0.01) {
+        const lw = 120;
+        labels.push(div().id(`${nodeId(n.key)}-l`).absolute().left(x - lw / 2).top(y + rs + LABEL_GAP).w(lw).h(L.height).text_center().truncate()
+          .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium()
+          .text_color(this.hover === n.key || this.selected === n.key ? t.foreground : t.muted).opacity(la)
           .child(n.label));
       }
     }
     const f = feed();
-    const live = [...g.nodes.values()].filter((n) => (n.kind === "r" || n.kind === "c" || n.kind === "h") && n.live).length;
+    const live = [...g.nodes.values()].filter((n) => (n.kind === "r" || n.kind === "c" || n.kind === "h") && activityOf(n, now)).length;
     const bad = Object.entries(f?.machines ?? {}).filter(([, m]) => !m.ok).map(([k]) => machineLabel(k === "local" ? null : k));
     return root
       .when(Boolean(this.nodeDrag || this.drag?.moved), (e) => e.cursor_grabbing())
@@ -555,10 +600,10 @@ export default class Graph extends View {
         const mx = p.x / zoom, my = p.y / zoom;
         const hit = this.hitNode(mx, my);
         if (hit) {
-          const cur = this.pos.get(hit) ?? { x: 0, y: 0 };
-          this.nodeDrag = { key: hit, x: mx, y: my, nx: cur.x, ny: cur.y, moved: false };
+          const cur = this.sim.pos.get(hit);
+          this.nodeDrag = { key: hit, x: mx, y: my, nx: cur.x, ny: cur.y, moved: false, t0: Date.now() };
           this.drag = null;
-          this.hover = hit;
+          this.setHover(hit, cx);
         } else {
           this.nodeDrag = null;
           this.drag = { x: mx, y: my, vx: this.view.x, vy: this.view.y, moved: false };
@@ -583,14 +628,9 @@ export default class Graph extends View {
           if (!this.nodeDrag.moved && Math.hypot(dx, dy) < 3) return;
           this.nodeDrag.moved = true;
           const sc = this.view.scale || 1;
-          this.pos.set(this.nodeDrag.key, {
-            x: this.nodeDrag.nx + dx / sc,
-            y: this.nodeDrag.ny + dy / sc,
-          });
-          this.manual = true;
-          this.settleFrames = 15;
-          this.relaxDrag(this.g, this.nodeDrag.key, 8);
-          this.startPhysicsLoop(cx);
+          drag(this.sim, this.nodeDrag.key, this.nodeDrag.nx + dx / sc, this.nodeDrag.ny + dy / sc);
+          this.view = { ...this.view, manual: true };
+          this.startLoop();
           cx.notify();
           return;
         }
@@ -598,29 +638,19 @@ export default class Graph extends View {
           const dx = mx - this.drag.x, dy = my - this.drag.y;
           if (!this.drag.moved && Math.hypot(dx, dy) < 3) return;
           this.drag.moved = true;
-          this.view = { ...this.view, x: this.drag.vx + dx, y: this.drag.vy + dy };
-          this.manual = true;
+          this.view = panTo(this.view, this.drag.vx + dx, this.drag.vy + dy);
           cx.notify();
           return;
         }
         const nextHover = this.hitNode(mx, my);
-        if (nextHover !== this.hover) {
-          this.hover = nextHover;
-          cx.notify();
-        }
+        if (nextHover !== this.hover) this.setHover(nextHover, cx);
       })
       .on_mouse_up("left", (_e, cx) => {
         if (this.nodeDrag) {
           const nd = this.nodeDrag;
           this.nodeDrag = null;
-          if (!nd.moved) {
-            this.settleFrames = 0;
-            this.open(nd.key);
-          } else {
-            this.pinnedAfterDrag = nd.key;
-            this.settleFrames = 15;
-            this.startPhysicsLoop(cx);
-          }
+          if (nd.moved) { release(this.sim); this.startLoop(); }
+          else if (Date.now() - nd.t0 < 500) this.open(nd.key);       // a click: down and up under 500 ms, no drag
           cx.notify();
           return;
         }
@@ -632,12 +662,10 @@ export default class Graph extends View {
         }
       })
       .on_hover((h, cx) => {
-        if (!h) {
-          if (!this.nodeDrag && !this.drag && this.hover) {
-            this.hover = null;
-            cx.notify();
-          }
-        }
+        if (h) return;
+        // A drag released outside the panel never gets its mouse up: leaving the panel ends it.
+        if (this.nodeDrag || this.drag) this.endDrag(cx);
+        if (this.hover) this.setHover(null, cx);
       })
       .on_scroll_wheel((e, cx) => {
         const dy = e.delta?.y ?? 0;
@@ -647,12 +675,7 @@ export default class Graph extends View {
         cx.stop_propagation();
         cx.notify();
       })
-      .children([
-        layer("e-c", groups.c, 1, focusKey ? alpha(t.border, 0.6) : t.border),
-        layer("e-l", groups.l, 1, alpha(t.accent, focusKey ? 0.3 : 0.55), [3, 3]),
-        layer("e-ch", groups.ch, 1.5, t.muted),
-        layer("e-lh", groups.lh, 1.5, t.accent, [3, 3]),
-      ].filter(Boolean))
+      .children(linkEls)
       .children(nodes)
       .children(labels)
       .child(this.toolbar(t))
