@@ -266,6 +266,27 @@ class Helper(unittest.TestCase):
                 json.dumps(r["files"])), TRANSCRIPTS)
             self.assertEqual(len(groups), 1)
 
+    def test_terms_far_apart_in_one_long_message_are_both_kept_in_the_returned_text(self):
+        # No single 2000-character window holds both terms: the text is cut around each one and joined, so the
+        # re-match in buildGroups still finds the message.
+        d = tempfile.mkdtemp(prefix="ob-search-fixture-")
+        self.addCleanup(shutil.rmtree, d, True)
+        p = os.path.join(d, "far.jsonl")
+        text = "alpha zanzibar here " + "filler " * 700 + "much later the ledger appears " + "tail " * 100
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "user", "timestamp": 1, "message": {"role": "user", "content": text}}) + "\n")
+        r = run_helper({"terms": ["zanzibar", "ledger"], "files": [{"id": "s0", "path": p}]})
+        msgs = r["files"][0]["msgs"]
+        self.assertEqual(len(msgs), 1)
+        self.assertLessEqual(len(msgs[0]["text"]), 2000)
+        self.assertIn("zanzibar", msgs[0]["text"])
+        self.assertIn("ledger", msgs[0]["text"])
+        if NODE:
+            groups = run_node("return M.buildGroups(%s, %s, 'zanzibar ledger');" % (
+                json.dumps([{"id": "s0", "path": p, "kind": "main", "label": "x", "parent": None}]),
+                json.dumps(r["files"])), TRANSCRIPTS)
+            self.assertEqual(len(groups), 1)
+
     def test_a_short_text_is_returned_whole(self):
         r = run_helper({"terms": ["nightly", "backup"], "files": [{"id": "c", "path": str(CLAUDE_MAIN)}]})
         self.assertFalse(any(m["text"].startswith("…") for m in r["files"][0]["msgs"]))

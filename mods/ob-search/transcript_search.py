@@ -150,6 +150,13 @@ def window(text, n):
             out = w
         if matches(w):
             return w
+    # No single window holds every term (they are far apart): cut around each term and join the pieces.
+    if len(starts) > 1:
+        each = max(1, (n - 2 - 3 * len(starts)) // len(starts))
+        pieces = [("…" if p > each // 4 else "") + text[max(0, p - each // 4):max(0, p - each // 4) + each] for p in starts]
+        joined = " … ".join(pieces)
+        if len(joined) <= n and matches(joined):
+            return joined
     return out
 
 
