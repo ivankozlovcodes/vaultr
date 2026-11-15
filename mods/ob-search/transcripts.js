@@ -84,3 +84,20 @@ export function txStatus(tx) {
   if (tx?.none) return "no agent sessions on this computer";
   return n ? `${n} in ${groups.length} session${groups.length === 1 ? "" : "s"}` : "no matches";
 }
+
+// Runs fn(cx, job) for one job at a time. A job that arrives while one runs is not started: only the newest of them is
+// kept and runs when the current one ends (with the first call's cx). exec cannot be cancelled, so this is what keeps
+// several python3 scans from piling up while a person types with pauses.
+export function latestOnly(fn) {
+  let busy = false, next = null;
+  return async (cx, job) => {
+    if (busy) { next = { job }; return; }
+    busy = true;
+    try {
+      for (let j = { job }; j; j = next) {
+        next = null;
+        try { await fn(cx, j.job); } catch (e) { console.log(`ob-search: transcript scan failed: ${e?.message ?? e}`); }
+      }
+    } finally { busy = false; next = null; }
+  };
+}

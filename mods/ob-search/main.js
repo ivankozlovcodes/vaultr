@@ -17,7 +17,7 @@ import {
   S, alpha, icon, programIcon, iconButton, badge, treeRow, emptyState, inputFrame, openMenu, statusMark,
   takeFocus, tabLabel, paneLabelOf, machineOf, machineLabel, current, feed, matchQuery,
 } from "./kit.js";
-import { sourcesFrom, buildGroups, txStatus } from "./transcripts.js";
+import { sourcesFrom, buildGroups, txStatus, latestOnly } from "./transcripts.js";
 
 const LINES = 1500, PARALLEL = 6, TTL = 15000, SHOW = 5, MAX_HITS = 400;
 const TX_SHOW = 5, MAX_TX = 200;   // transcript hits: per session, and in all
@@ -215,27 +215,31 @@ export default class Search extends View {
     this.tx = { status: "searching", groups: [], error: null, partial: false };
     const caseSensitive = this.opts.case;
     const words = q.split(/\s+/).filter(Boolean);
-    cx.spawn(async (cx) => {
-      let results = [], partial = false, error = null;
-      try {
-        const script = await this.helperScript();
-        if (!script) throw new Error("transcript_search.py is missing");
-        const opts = { terms: words, caseSensitive, files: sources.map((s) => ({ id: s.id, path: s.path })) };
-        const r = await exec("python3", ["-c", script, JSON.stringify(opts)], { timeout: 15000 });
-        const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
-        if (!line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());
-        const d = JSON.parse(line);
-        if (d.error) throw new Error(d.error);
-        results = Array.isArray(d.files) ? d.files : [];
-        partial = Boolean(d.partial);
-      } catch (e) {
-        error = String(e?.message ?? e).slice(0, 200);
-      }
-      if (gen !== this.gen) return;
-      const groups = buildGroups(sources, results, q, { caseSensitive, perGroup: TX_SHOW, total: MAX_TX });
-      this.tx = { status: "done", groups, error, partial, none: false };
-      cx.notify();
-    });
+    this.scan ??= latestOnly((cx, job) => this.scanTranscripts(cx, job));
+    cx.spawn((cx) => this.scan(cx, { q, gen, sources, caseSensitive, words }));
+  }
+
+  // One scan (see latestOnly): its results are dropped when a newer query has started (gen).
+  async scanTranscripts(cx, { q, gen, sources, caseSensitive, words }) {
+    let results = [], partial = false, error = null;
+    try {
+      const script = await this.helperScript();
+      if (!script) throw new Error("transcript_search.py is missing");
+      const opts = { terms: words, caseSensitive, files: sources.map((s) => ({ id: s.id, path: s.path })) };
+      const r = await exec("python3", ["-c", script, JSON.stringify(opts)], { timeout: 15000 });
+      const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
+      if (!line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());
+      const d = JSON.parse(line);
+      if (d.error) throw new Error(d.error);
+      results = Array.isArray(d.files) ? d.files : [];
+      partial = Boolean(d.partial);
+    } catch (e) {
+      error = String(e?.message ?? e).slice(0, 200);
+    }
+    if (gen !== this.gen) return;
+    const groups = buildGroups(sources, results, q, { caseSensitive, perGroup: TX_SHOW, total: MAX_TX });
+    this.tx = { status: "done", groups, error, partial, none: false };
+    cx.notify();
   }
 
   // transcript_search.py, read on the first transcript search and kept (a failed read is tried again next time).

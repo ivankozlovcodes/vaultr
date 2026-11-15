@@ -423,6 +423,39 @@ class RegexAndTranscripts(unittest.TestCase):
         self.assertRegex(body, r"if \(this\.opts\.regex\) \{ this\.tx = \{[^}]*regex: true")
 
     @unittest.skipUnless(NODE, "node is not installed")
+    def test_only_one_transcript_scan_runs_at_a_time_and_only_the_newest_query_follows_it(self):
+        # Typing with pauses used to start a python3 scan per pause, all running at once (exec cannot be cancelled).
+        src = (f'import {{ latestOnly }} from "{TRANSCRIPTS.as_uri()}";\n'
+               'const log = []; let running = 0, most = 0;\n'
+               'const scan = latestOnly(async (cx, job) => { running++; most = Math.max(most, running); log.push(cx + ":" + job);\n'
+               '  await new Promise((r) => setTimeout(r, 20)); running--; });\n'
+               'const first = scan("a", "q1"); scan("b", "q2"); scan("c", "q3"); scan("d", "q4");\n'
+               'await first; await new Promise((r) => setTimeout(r, 80));\n'
+               'await scan("e", "q5");\n'
+               'console.log(JSON.stringify({ log, most }));')
+        out = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        r = json.loads(out.stdout)
+        self.assertEqual(r["most"], 1)
+        # the first query runs, the two in between are dropped, the newest follows (with the first call's context); a later one runs again
+        self.assertEqual(r["log"], ["a:q1", "a:q4", "e:q5"])
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_a_scan_that_throws_does_not_lose_the_waiting_query(self):
+        src = (f'import {{ latestOnly }} from "{TRANSCRIPTS.as_uri()}";\n'
+               'const log = [];\n'
+               'const scan = latestOnly(async (cx, job) => { log.push(job); await new Promise((r) => setTimeout(r, 10)); if (job === "q1") throw new Error("boom"); });\n'
+               'const first = scan("a", "q1"); scan("b", "q2");\n'
+               'await first; await scan("c", "q3");\n'
+               'console.log(JSON.stringify(log));')
+        out = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout.strip().splitlines()[-1]), ["q1", "q2", "q3"], "the waiting query runs after a failure, and later ones still run")
+
+    def test_main_runs_the_transcript_scan_through_latestOnly(self):
+        self.assertIn("latestOnly(", self.src)
+
+    @unittest.skipUnless(NODE, "node is not installed")
     def test_the_section_says_transcripts_are_fuzzy_only(self):
         r = run_node('return M.txStatus({ status: "done", groups: [], regex: true });', TRANSCRIPTS)
         self.assertEqual(r, "fuzzy only: regex is on")
@@ -448,7 +481,7 @@ class HelperReadOnce(unittest.TestCase):
         self.src = MAIN.read_text(encoding="utf-8")
 
     def test_the_search_uses_the_cached_script(self):
-        body = self.src[self.src.index("  searchTranscripts(cx, q, gen) {"):]
+        body = self.src[self.src.index("  async scanTranscripts("):]
         body = body[:body.index("\n  }\n")]
         self.assertIn("await this.helperScript()", body)
         self.assertNotIn("readTextFile", body)
