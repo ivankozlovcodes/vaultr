@@ -111,7 +111,7 @@ function tightSubsequence(t, hay, words) {
       idxs.push(i);
       at = i + 1;
     }
-    if (!ok) continue;
+    if (!ok) return best; // a letter is missing after here: no later start can find it either
     const span = idxs[idxs.length - 1] - s + 1;
     const w = wordAt(words, s);
     const inOneWord = Boolean(w) && idxs.every((i) => i < w.e);

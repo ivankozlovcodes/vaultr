@@ -1,27 +1,46 @@
-// ob-search: Obsidian's "Search in all files", over the text of every live terminal shown in a space.
-// Each terminal's screen and history (`hc read <addr> --lines 1500`, at most 6 at once, cached 15 s)
-// is searched for the query (plain or regex, case-sensitive or not), within a scope: all machines,
-// this machine, or this space. Results are grouped by session; a hit opens its pane and scrolls the
-// terminal to the line.
+// ob-search: Obsidian's "Search in all files", over the text of every live terminal shown in a space, and
+// the transcripts of the agent sessions the sub-agent feed knows about (this computer only).
+// Each terminal's screen and history (`hc read <addr> --lines 1500`, at most 6 at once, cached 15 s) is
+// searched for the query within a scope: all machines, this machine, or this space. Terms are fuzzy
+// (kit/fuzzy.js: every term must match) unless regex is on. Terminal results are grouped by session; a hit
+// opens its pane and scrolls the terminal to the line. Transcript hits (transcript_search.py, run through
+// exec like ob-feed's scan, never on the UI path) are listed under TRANSCRIPTS; a click opens that
+// transcript in ob-outline' popup (at its end: the popup cannot open at a message yet).
 //
 // Commands (herdr-app do ob-search.<cmd>): focus, query:<text>, next, prev, open, rescan,
 // scope:<all|machine|space>, case:<on|off|toggle>, regex:<on|off|toggle>, clear-recent.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, ScrollHandle, Scrollbar } from "gpui-base";
-import { spaces, panes, terminals, focused, run, hc, theme, props, nextCommand, settings } from "herdr";
+import { spaces, panes, terminals, focused, run, hc, theme, props, nextCommand, settings, exec, readTextFile, appHome, openOverlay } from "herdr";
 import {
   S, alpha, icon, programIcon, iconButton, badge, treeRow, emptyState, inputFrame, openMenu, statusMark,
-  takeFocus, tabLabel, paneName, machineOf, machineLabel, current,
+  takeFocus, tabLabel, paneLabelOf, machineOf, machineLabel, current, feed, matchQuery,
 } from "./kit.js";
+import { sourcesFrom, buildGroups, txStatus } from "./transcripts.js";
 
 const LINES = 1500, PARALLEL = 6, TTL = 15000, SHOW = 5, MAX_HITS = 400;
+const TX_SHOW = 5, MAX_TX = 200;   // transcript hits: per session, and in all
 const SCOPES = [["all", "All machines", "layers"], ["machine", "This machine", "monitor"], ["space", "This space", "folder"]];
 function load(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) ?? d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage off */ } }
 function splitCmd(c) { const s = String(c ?? ""); const i = s.indexOf(":"); return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)]; }
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const onOff = (arg, cur) => (arg === "toggle" ? !cur : arg !== "off");
+// Text cut at the highlighted [start, end) spans: [[piece, highlighted], ...] in order.
+function pieces(text, spans) {
+  const out = [];
+  let pos = 0;
+  for (const [a, b] of spans) {
+    const e = Math.min(text.length, b);
+    if (e <= pos) continue;
+    const st = Math.max(pos, a);
+    if (st > pos) out.push([text.slice(pos, st), false]);
+    out.push([text.slice(st, e), true]);
+    pos = e;
+  }
+  if (pos < text.length) out.push([text.slice(pos), false]);
+  return out;
+}
 
 export default class Search extends View {
   init(_p, cx) {
@@ -31,7 +50,7 @@ export default class Search extends View {
     const o = load("opts", {});
     this.opts = { case: Boolean(o.case), regex: Boolean(o.regex), scope: SCOPES.some(([id]) => id === o.scope) ? o.scope : "all" };
     this.recent = load("recent", []).filter((x) => typeof x === "string").slice(0, 10);
-    this.input = InputState.new({ placeholder: "Search all sessions…" });
+    this.input = InputState.new({ placeholder: "Search terminals and transcripts…" });
     this.input.on("change", (_e, cx) => {
       const g = ++this.typing;
       cx.timer.after(250, (cx) => { if (g === this.typing && this.input.value().trim() !== this.q) { this.search(cx, false); } });
@@ -48,6 +67,8 @@ export default class Search extends View {
     this.pending = new Map(); // machine label -> count of reads in flight
     this.error = null;
     this.folded = new Set();
+    this.txFolded = new Set();
+    this.tx = { status: "idle", groups: [], error: null, partial: false };
     this.expanded = new Set();
     this.cursor = -1; // index into this.hits()
     this.rowIndex = new Map();
@@ -98,12 +119,18 @@ export default class Search extends View {
     return out;
   }
 
+  // The matcher for the query: fuzzy terms (every term must match, see kit/fuzzy.js) unless regex is on.
+  // -> { error } or { test(text) -> { score, spans } | null }
   matcher(q) {
+    if (!this.opts.regex) return { test: (text) => matchQuery(q, text, { caseSensitive: this.opts.case }) };
     try {
-      const src = this.opts.regex ? q : escapeRe(q);
-      const re = new RegExp(src, this.opts.case ? "g" : "gi");
+      const re = new RegExp(q, this.opts.case ? "g" : "gi");
       if (re.test("")) return { error: "This pattern matches empty text." };
-      return { re };
+      return { test: (text) => {
+        re.lastIndex = 0;
+        const m = re.exec(text);
+        return m ? { score: 0, spans: [[m.index, m.index + Math.max(1, m[0].length)]] } : null;
+      } };
     } catch (e) { return { error: String(e?.message ?? e).replace(/^Invalid regular expression: /, "") }; }
   }
 
@@ -118,16 +145,18 @@ export default class Search extends View {
     this.cursor = -1;
     this.expanded.clear();
     this.pending.clear();
+    this.tx = { status: "idle", groups: [], error: null, partial: false };
     if (!q) return;
     const m = this.matcher(q);
     if (m.error) { this.error = m.error; return; }
     if (remember) { this.recent = [q, ...this.recent.filter((x) => x !== q)].slice(0, 10); save("recent", this.recent); }
+    this.searchTranscripts(cx, q, gen);
     const queue = this.targets();
     const now = Date.now();
     const todo = [];
     for (const tg of queue) {
       const c = this.cache.get(tg.addr);
-      if (c && now - c.at < TTL) this.addResult(tg, c.lines, m.re);
+      if (c && now - c.at < TTL) this.addResult(tg, c.lines, m);
       else todo.push(tg);
     }
     for (const tg of todo) { const k = machineLabel(machineOf(tg.addr)); this.pending.set(k, (this.pending.get(k) ?? 0) + 1); }
@@ -145,7 +174,7 @@ export default class Search extends View {
           const k = machineLabel(machineOf(tg.addr));
           const left = (this.pending.get(k) ?? 1) - 1;
           left > 0 ? this.pending.set(k, left) : this.pending.delete(k);
-          if (lines) this.addResult(tg, lines, m.re);
+          if (lines) this.addResult(tg, lines, m);
           cx.notify();
         }
       };
@@ -154,24 +183,71 @@ export default class Search extends View {
     });
   }
 
-  addResult(tg, lines, re) {
-    const hits = [];
+  addResult(tg, lines, m) {
+    const found = [];
     let count = 0;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      re.lastIndex = 0;
-      const m = re.exec(line);
-      if (!m) continue;
+      const text = lines[i].replace(/\t/g, "  ");
+      const r = m.test(text);
+      if (!r) continue;
       count++;
-      if (hits.length < MAX_HITS) hits.push({ idx: i, text: line, at: m.index, len: Math.max(1, m[0].length) });
+      found.push({ idx: i, text, score: r.score, spans: r.spans });
     }
     if (!count) return;
-    // Newest first: the bottom of a terminal is what happened last.
-    hits.reverse();
+    // Best score first; equal scores newest first (the bottom of a terminal is what happened last).
+    found.sort((a, b) => (b.score - a.score) || (b.idx - a.idx));
+    const hits = found.slice(0, MAX_HITS);
     const sp = spaces();
     const group = { addr: tg.addr, pane: tg.pane, space: tg.space, tab: tg.tab, single: tg.single, total: lines.length, count, hits,
-      order: sp.findIndex((s) => s.id === tg.space.id) * 1000 + (tg.tab.index ?? 0) };
-    this.results = [...this.results.filter((g) => g.addr !== tg.addr), group].sort((a, b) => a.order - b.order);
+      best: hits[0].score, order: sp.findIndex((s) => s.id === tg.space.id) * 1000 + (tg.tab.index ?? 0) };
+    this.results = [...this.results.filter((g) => g.addr !== tg.addr), group].sort((a, b) => (b.best - a.best) || (a.order - b.order));
+  }
+
+  // Transcripts of the agent sessions the feed knows about, on this computer, scanned off the UI path by
+  // transcript_search.py (exec, like ob-feed's scan). Runs beside the terminal read: its results land when
+  // they land, and a newer query drops this one (gen). Scope "this space" keeps the sessions of its terminals.
+// Transcripts are matched fuzzily only: with regex on they are not searched, and the section says so.
+  searchTranscripts(cx, q, gen) {
+    if (this.opts.regex) { this.tx = { status: "done", groups: [], error: null, partial: false, regex: true }; return; }
+    const parents = this.opts.scope === "space" ? new Set(this.targets().map((t) => t.addr)) : null;
+    const sources = sourcesFrom(feed(), parents ? { parents } : {});
+    if (!sources.length) { this.tx = { status: "done", groups: [], error: null, partial: false, none: true }; return; }
+    this.tx = { status: "searching", groups: [], error: null, partial: false };
+    const caseSensitive = this.opts.case;
+    const words = q.split(/\s+/).filter(Boolean);
+    cx.spawn(async (cx) => {
+      let results = [], partial = false, error = null;
+      try {
+        const script = await this.helperScript();
+        if (!script) throw new Error("transcript_search.py is missing");
+        const opts = { terms: words, caseSensitive, files: sources.map((s) => ({ id: s.id, path: s.path })) };
+        const r = await exec("python3", ["-c", script, JSON.stringify(opts)], { timeout: 15000 });
+        const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
+        if (!line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());
+        const d = JSON.parse(line);
+        if (d.error) throw new Error(d.error);
+        results = Array.isArray(d.files) ? d.files : [];
+        partial = Boolean(d.partial);
+      } catch (e) {
+        error = String(e?.message ?? e).slice(0, 200);
+      }
+      if (gen !== this.gen) return;
+      const groups = buildGroups(sources, results, q, { caseSensitive, perGroup: TX_SHOW, total: MAX_TX });
+      this.tx = { status: "done", groups, error, partial, none: false };
+      cx.notify();
+    });
+  }
+
+  // transcript_search.py, read on the first transcript search and kept (a failed read is tried again next time).
+  async helperScript() {
+    if (!this.script) this.script = await readTextFile(`${appHome()}/mods/ob-search/transcript_search.py`);
+    return this.script;
+  }
+
+  // A transcript opens in ob-outline' popup, from the top of its last entries (the popup has no way to
+  // open at a given message yet).
+  openTranscript(g) {
+    openOverlay({ kind: "popup", mod: "ob-outline", width: 760, props: { view: "transcript", machine: null, path: g.path, title: `${g.label} · transcript`, live: false, runKey: null } });
   }
 
   // Hit lines in display order (what next/prev/open walk through).
@@ -212,18 +288,18 @@ export default class Search extends View {
   label(g) {
     const ps = panes();
     const parts = [g.space.name, tabLabel(g.tab, ps)];
-    if (!g.single) parts.push(paneName(g.pane));
+    if (!g.single) parts.push(paneLabelOf(g.pane, tabLabel(g.tab, ps)));
     return this.w < 260 ? parts.slice(1).join(" / ") : parts.join(" / ");
   }
   lineEl(g, line, i, t) {
-    const raw = line.text.replace(/\t/g, "  ");
-    let at = line.at, text = raw;
-    const lead = text.length - text.trimStart().length;
-    text = text.trimStart(); at = Math.max(0, at - lead);
+    // Spans are [start, end) in line.text; the leading blanks are dropped and the start cut to the context width.
+    const lead = line.text.length - line.text.trimStart().length;
+    const body0 = line.text.trimStart();
+    const spans = line.spans.map(([a, b]) => [Math.max(0, a - lead), Math.max(0, b - lead)]).filter(([a, b]) => b > a);
     const ctx = this.w < 260 ? 10 : 22;
-    let pre = "";
-    if (at > ctx) { pre = "…"; text = text.slice(at - ctx); at = ctx; }
-    const before = pre + text.slice(0, at), hit = text.slice(at, at + line.len), after = text.slice(at + line.len);
+    const cut = spans.length && spans[0][0] > ctx ? spans[0][0] - ctx : 0;
+    const body = body0.slice(cut);
+    const parts = pieces(body, spans.map(([a, b]) => [a - cut, b - cut]));
     const cur = this.kbd && this.cursor === i;
     return h_flex().id(`hit-${g.addr}-${line.idx}`).h(S.rowSm).flex_none().pl(S.pad + S.indent + 4).pr(8).items_center().rounded(S.radius)
       .text_size(S.textSm).text_color(t.muted).overflow_hidden().cursor_pointer()
@@ -232,9 +308,46 @@ export default class Search extends View {
       .child(div().absolute().top(0).bottom(0).left(S.pad + 7).w(1).bg(t.border))
       .relative()
       .on_click((_e, cx) => { this.cursor = i; this.kbd = false; this.openHit(g, line); cx.notify(); })
-      .child(div().flex_none().whitespace_nowrap().child(before))
-      .child(div().flex_none().whitespace_nowrap().px(1).rounded(2).bg(alpha(t.accent, 0.25)).text_color(t.foreground).child(hit))
-      .child(div().min_w(0).flex_1().truncate().child(after));
+      .when(cut > 0, (e) => e.child(div().flex_none().whitespace_nowrap().child("…")))
+      .children(parts.map(([s, hit]) => div().flex_none().whitespace_nowrap()
+        .when(hit, (e) => e.px(1).rounded(2).bg(alpha(t.accent, 0.25)).text_color(t.foreground)).child(s)));
+  }
+  // The Transcripts section under the terminal results: the scan state, then each session's best hits.
+  // A hit opens that session's transcript (the whole transcript, see openTranscript).
+  txRows(t) {
+    const tx = this.tx;
+    const busy = tx.status === "searching";
+    const status = txStatus(tx);
+    const rows = [h_flex().id("tx-head").h(S.rowSm + 6).flex_none().pl(S.pad + 4).pr(8).mt(6).gap(6).items_center()
+      .text_size(S.textXs).text_color(t.dim)
+      .child(div().flex_none().font_semibold().child("TRANSCRIPTS"))
+      .child(div().flex_1().min_w(0).truncate().text_right().child(status))
+      .when(busy, (e) => e.child(statusMark("working", S.iconXs)))];
+    if (tx.error) rows.push(div().pl(S.pad + 4).text_size(S.textXs).text_color(t.blocked).child(tx.error));
+    if (tx.partial) rows.push(div().pl(S.pad + 4).text_size(S.textXs).text_color(t.dim).child("Stopped early: some transcripts were not searched."));
+    for (const g of tx.groups) {
+      const open = !this.txFolded.has(g.path);
+      const toggle = (_e, cx) => { open ? this.txFolded.add(g.path) : this.txFolded.delete(g.path); cx.notify(); };
+      rows.push(treeRow({
+        id: `tx-${g.id}`, depth: 0, chevron: open, onToggle: toggle, onClick: toggle,
+        lead: icon("file-text", S.iconSm, t.muted), label: g.label, labelColor: t.foreground,
+        after: [], right: [badge(String(g.count), "accent")],
+      }).tooltip(`${g.label} · transcript`));
+      if (!open) continue;
+      for (const h of g.hits) {
+        const parts = pieces(h.snippet.text, h.snippet.spans);
+        rows.push(h_flex().id(`txh-${g.id}-${h.i}`).h(S.rowSm).flex_none().pl(S.pad + S.indent + 4).pr(8).items_center().rounded(S.radius)
+          .text_size(S.textSm).text_color(t.muted).overflow_hidden().cursor_pointer().hover((s) => s.bg(t.hover))
+          .tooltip("Open this transcript")
+          .on_click(() => this.openTranscript(g))
+          .child(div().flex_none().mr(6).text_size(10).text_color(h.role === "user" ? t.accent : t.dim).child(h.role === "user" ? "You" : "Agent"))
+          .children(parts.map(([s, hit]) => div().flex_none().whitespace_nowrap()
+            .when(hit, (e) => e.px(1).rounded(2).bg(alpha(t.accent, 0.25)).text_color(t.foreground)).child(s))));
+      }
+      if (g.count > g.hits.length) rows.push(div().h(S.rowSm).flex_none().pl(S.pad + S.indent + 4).flex().items_center().text_size(S.textXs).text_color(t.dim)
+        .child(`${g.count - g.hits.length} more in this transcript`));
+    }
+    return rows;
   }
   groupEl(g, t) {
     const open = !this.folded.has(g.addr);
@@ -246,7 +359,7 @@ export default class Search extends View {
       after: machine && this.w >= 240 ? [div().flex_none().text_size(10.5).text_color(t.dim).child(machine)] : [],
       right: [statusMark(g.pane.status && g.pane.status !== "idle" ? g.pane.status : null), badge(String(g.count), "accent")],
       onClick: (_e, cx) => { this.reveal(g); cx.notify(); },
-    }).tooltip(`${machineLabel(machine)} · ${g.space.name} / ${tabLabel(g.tab, panes())} / ${paneName(g.pane)}`);
+    }).tooltip(`${machineLabel(machine)} · ${g.space.name} / ${tabLabel(g.tab, panes())} / ${paneLabelOf(g.pane, tabLabel(g.tab, panes()))}`);
   }
 
   optToggle(id, text, on, tip, cmd) {
@@ -289,6 +402,7 @@ export default class Search extends View {
           .child(`${g.count - g.hits.length} more not listed`));
       }
     }
+    if (this.q && this.tx.status !== "idle" && !this.tx.none) rows.push(...this.txRows(t));
     const summary = this.error ? null
       : !this.q ? null
       : busy ? `${total} result${total === 1 ? "" : "s"} so far`
@@ -306,10 +420,10 @@ export default class Search extends View {
             .items_center().bg(t.raised).text_size(S.textSm).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
             .on_click((_e, cx) => { this.input.set_value(q); this.search(cx, true); cx.notify(); })
             .child(div().truncate().child(q)))))))
-        .child(emptyState({ icon: "search", title: "Search all sessions", body: "Finds text in the screen and history of every terminal in your spaces, on every machine. Press Enter to search." }));
+        .child(emptyState({ icon: "search", title: "Search all sessions", body: "Finds text in the screen and history of every terminal in your spaces, on every machine, and in the transcripts of agent sessions on this computer. Terms are fuzzy: every word must match. Press Enter to search." }));
     } else if (!rows.length) {
       body = busy ? v_flex().flex_1().items_center().justify_center().gap(8).child(statusMark("working", 16)).child(div().text_size(S.textSm).text_color(t.dim).child("Reading terminals…"))
-        : emptyState({ icon: "search", title: "No matches", body: `No terminal in ${scope[1].toLowerCase()} shows “${this.q}”.` });
+        : emptyState({ icon: "search", title: "No matches", body: `No terminal in ${scope[1].toLowerCase()} shows “${this.q}”, and no transcript on this computer has it.` });
     } else {
       body = div().relative().flex_1().min_h(0)
         .child(v_flex().id("list").size_full().px(4).pb(12).overflow_y_scroll().track_scroll(this.scroll).children(rows))
