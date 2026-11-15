@@ -1,35 +1,33 @@
 // ob-switcher: Obsidian's quick switcher for Herdr (a popup at the top, 660 x 0.72, `popover`).
 // Type to find a tab, space, agent, sub-agent, bookmark or sidebar view; Enter goes there.
 // Empty query: Recent visits, then Bookmarks, then every other tab. No match: create a tab or a
-// space with that name. Modes (props.mode, Tab cycles go/views): go (default), views (sidebar
-// views only), move (ctrl-shift-m: move the active tab; Herdr can only reorder within a space).
+// space with that name. Modes (modes.js is the rule set): Everything (default), Views (sidebar views
+// only), Commands (Vaultr and Herdr commands; ctrl-shift-p, or ">" typed in any mode), and Move (ctrl-shift-m:
+// move the active tab; Herdr can only reorder within a space). Tab cycles Everything, Views, Commands.
 //
 // Keys: ↑/↓ (PgUp/PgDn) move, Enter open, Shift+Enter create a tab named like the query,
 // Ctrl+Enter open to the right (agents and sub-agent terminals: kept as a pane on the right),
-// Tab switches go/views, Esc closes.
+// Tab cycles the modes (Shift+Tab backwards), Esc closes.
 // Commands (ob-switcher.<cmd>, the test path; no keyboard in tests):
-//   mode:<go|move|views>  query:<text>  down  up  enter  close
+//   mode:<go|views|commands|move>  query:<text>  down  up  enter  close
 //   create (= Shift+Enter)  open-right (= Ctrl+Enter)  tab (= Tab)
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle, Scrollbar } from "gpui-base";
 import {
-  props, run, closeOverlay, nextCommand, shared, spaces, panes, agents, terminals, layout, settings,
+  props, run, closeOverlay, nextCommand, shared, spaces, panes, agents, terminals, layout, settings, commands, keys,
 } from "herdr";
 import {
   S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel,
-  feed, bookmarks, VIEWS, findNode, current, chordParts,
+  feed, bookmarks, VIEWS, findNode, current, chordParts, kbd, sessionTitleOf,
 } from "./kit.js";
+import { commandRows } from "./commands.js";
+import { sessionTitles, bestTitle } from "./titles.js";
+import { MODES, nextMode, placeholder, headerLabel, tabHint, modeForQuery, queryForMode, bodyOf, allowsRow } from "./modes.js";
 
 const ROW_H = 34;
 const HEAD_H = 28;
-const MODES = ["go", "views"]; // what Tab cycles through (move is its own entry point)
 const MAX_RECENT = 10;
-const PLACEHOLDER = {
-  go: "Find a session, space, agent or view…",
-  views: "Find a view…",
-  move: "Find a space or a position…",
-};
 
 const ls = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
@@ -38,18 +36,20 @@ const q = (s) => `“${s}”`;
 export default class Switcher extends View {
   init(_p, cx) {
     const m = props()?.mode;
-    this.mode = m === "move" || m === "views" ? m : "go";
+    this.mode = ["move", "views", "commands"].includes(m) ? m : "go";
+    // The mode a ">" came from (Everything or Views): deleting the ">" goes back there.
+    this.base = this.mode === "views" ? "views" : "go";
     this.query = "";
     this.at = 0;
     this.width = 0;
     this.recent = ls("recent", []).filter((k) => typeof k === "string");
     this.scroll = ScrollHandle.new();
     this.handle = cx.focus_handle();
-    // One input per mode (an InputState's placeholder is fixed); Tab swaps them, keeping the text.
+    // One input per mode (an InputState's placeholder is fixed); a mode change swaps them, keeping the text.
     this.inputs = {};
-    for (const m of ["go", "views", "move"]) {
-      const inp = InputState.new({ placeholder: PLACEHOLDER[m] });
-      inp.on("change", (_e, cx) => { if (this.input !== inp) return; this.query = inp.value(); this.at = this.firstPick(); this.reveal(); cx.notify(); });
+    for (const m of ["go", "views", "commands", "move"]) {
+      const inp = InputState.new({ placeholder: m === "move" ? "Find a space or a position…" : placeholder(m) });
+      inp.on("change", (_e, cx) => { if (this.input !== inp) return; this.typed(inp.value()); this.reveal(); cx.notify(); });
       inp.on("submit", (_e, cx) => {
         // Shift/Ctrl+Enter are handled in on_key_down (which runs first and stops the event); this
         // guard covers an Input that submits on them anyway.
@@ -59,6 +59,7 @@ export default class Switcher extends View {
       this.inputs[m] = inp;
     }
     this.input = this.inputs[this.mode];
+    if (m === "commands") { this.query = ">"; this.input.set_value(">"); }
     this.input.focus();
     cx.timer.after(60, () => this.input.focus());
     cx.spawn(async (cx) => {
@@ -79,8 +80,13 @@ export default class Switcher extends View {
     const arg = i < 0 ? "" : s.slice(i + 1);
     if (verb === "close") return this.close();
     if (verb === "focus") return this.input.focus();
-    if (verb === "mode") { if (["go", "move", "views"].includes(arg)) this.setMode(arg); return; }
-    if (verb === "query") { this.query = arg; this.input.set_value(arg); this.at = this.firstPick(); this.reveal(); return; }
+    if (verb === "mode") {
+      if (arg === "move") this.setMode("move");
+      else if (MODES.includes(arg)) this.select(arg);
+      return;
+    }
+    // set_value fires no "change": run the typing rule here, so "query:>zen" enters Commands like typing it does.
+    if (verb === "query") { this.input.set_value(arg); this.typed(arg); this.reveal(); return; }
     if (verb === "down") return this.move(1);
     if (verb === "up") return this.move(-1);
     if (verb === "enter") return this.accept(cx, "open");
@@ -89,20 +95,38 @@ export default class Switcher extends View {
     if (verb === "tab") return this.cycleMode();
   }
 
-  setMode(m) {
+  // The query changed by typing: a leading ">" enters Commands, deleting it returns to the base mode.
+  typed(text) {
+    const next = modeForQuery(this.mode, this.base, text);
+    this.base = next.base;
+    this.query = text;
+    if (next.mode !== this.mode) this.setMode(next.mode, text);
+    this.at = this.firstPick();
+  }
+  // Show `m` (Everything, Views, Commands or Move) with the text it should carry.
+  setMode(m, text = this.query) {
     this.mode = m;
+    this.query = text;
     const next = this.inputs[m];
     if (next && next !== this.input) {
-      next.set_value(this.query);
       this.input = next;
+      next.set_value(text);
       this.input.focus();
-    }
+    } else if (next && next.value() !== text) next.set_value(text);
     this.at = this.firstPick();
     this.reveal();
   }
-  cycleMode() {
-    const i = MODES.indexOf(this.mode);
-    this.setMode(MODES[(i + 1) % MODES.length] ?? "go");
+  // Select a mode from Tab, the header or a command: Commands keeps the mode it came from as its base.
+  select(m) {
+    if (m === this.mode) return;
+    if (m === "commands" && this.mode !== "commands") this.base = this.mode;
+    if (m !== "commands" && this.mode === "commands") this.base = m;
+    this.setMode(m, queryForMode(m, this.query));
+  }
+  // Tab (step 1) or Shift+Tab (step -1).
+  cycleMode(step = 1) {
+    if (this.mode === "move") return;
+    this.select(nextMode(this.mode, step));
   }
 
   // ---------------------------------------------------------------- data
@@ -123,6 +147,10 @@ export default class Switcher extends View {
     for (const p of ps) if (p.terminal && tabById.has(p.tab)) where.set(p.terminal, tabById.get(p.tab));
     const tabText = (tb) => tabLabel(tb, ps);
     const ctxOf = (s) => (s ? `${machineLabel(s.machine)} / ${s.name}` : "");
+    const f = feed();
+    // The session titles each tab holds (its agents' and terminals' titles, the feed's session names): a tab is
+    // found by them too, so "herdr-trials" finds the tab whose Claude Code session has that title.
+    const titles = sessionTitles(new Map([...where].map(([addr, w]) => [addr, w.tab.id])), { agents: ag, terminals: terms, terms: f?.terms ?? {} });
     const items = [];
 
     for (const s of sp) {
@@ -131,7 +159,7 @@ export default class Switcher extends View {
         const lead = mine.find((p) => p.program?.agent) ?? mine.find((p) => p.focused) ?? mine[0];
         const progs = [...new Set(mine.map((p) => p.program?.name).filter(Boolean))];
         items.push({
-          key: `tab:${tb.id}`, kind: "tab", label: tabText(tb), context: ctxOf(s), words: progs.join(" "),
+          key: `tab:${tb.id}`, kind: "tab", label: tabText(tb), context: ctxOf(s), words: progs.join(" "), titles: titles.get(tb.id) ?? [],
           status: tb.status, here: tb.id === cur.tab?.id, bookmarked: isBm("tab", tb.id), settled: tb.settled,
           lead: () => (lead?.program ? programIcon(lead.program, S.icon) : icon("tab", S.icon)),
           go: () => { run("space.select", { id: s.id }); run("tab.select", { id: tb.id }); },
@@ -148,7 +176,7 @@ export default class Switcher extends View {
       const w = where.get(a.address);
       const tl = w ? tabText(w.tab) : a.tab_name ?? "";
       items.push({
-        key: `agent:${a.address}`, kind: "agent", label: a.title || a.program?.name || a.app || "agent",
+        key: `agent:${a.address}`, kind: "agent", label: sessionTitleOf(a.address) || a.program?.name || a.app || "agent",
         context: `${a.program?.name ?? "agent"} · ${w ? ctxOf(w.space) : a.space_name ?? ""} / ${tl}`, words: `agent ${a.app ?? ""} ${tl}`,
         status: a.status, bookmarked: isBm("terminal", a.address), terminal: a.address,
         lead: () => programIcon(a.program, S.icon), go: () => run("agent.focus", { terminal: a.address }),
@@ -166,7 +194,6 @@ export default class Switcher extends View {
         lead: () => programIcon(t.program, S.icon), go: () => run("terminal.peek", { terminal: t.address }),
       });
     }
-    const f = feed();
     for (const r of f?.runs ?? []) {
       const chain = (r.steps ?? []).map((st) => st.agent).filter(Boolean);
       const label = chain.length > 3 ? `workflow · ${chain.length} agents` : chain.join(" → ") || `run ${r.short ?? r.id ?? ""}`;
@@ -174,7 +201,7 @@ export default class Switcher extends View {
       items.push({
         key: `run:${r.key}`, kind: "run", label, context: `subagent of ${r.parent ? parentText(r.parent) : `unattached · ${machineLabel(r.machine)}`}`,
         words: `subagent pi ${task} ${r.short ?? ""}`, status: r.live ? "working" : r.state, bookmarked: isBm("run", r.key) || isBm("run", r.id),
-        lead: () => icon("subagents", S.icon), go: () => run(`ob-tabs.open:ob-subagents@run:${r.key}`),
+        lead: () => icon("subagents", S.icon), go: () => run(`ob-tabs.open:ob-outline@run:${r.key}`),
       });
     }
     const liveRec = new Map();
@@ -185,7 +212,7 @@ export default class Switcher extends View {
       items.push({
         key: `claude:${c.key}`, kind: "claude", label: c.desc || c.type || "Claude agent", context: `subagent of ${parentText(c.parent)}${c.type ? ` · ${c.type}` : ""}`,
         words: `subagent claude ${c.type ?? ""}`, status: live ? "working" : "ok",
-        lead: () => icon("bot", S.icon), go: () => run(`ob-tabs.open:ob-subagents@run:${c.key}`),
+        lead: () => icon("bot", S.icon), go: () => run(`ob-tabs.open:ob-outline@run:${c.key}`),
       });
     }
 
@@ -194,14 +221,14 @@ export default class Switcher extends View {
     for (const [id, v] of Object.entries(VIEWS)) {
       if (!findNode(root, id)) continue;
       items.push({
-        key: `view:${id}`, kind: "view", label: `View: ${v.title}`, context: "sidebar", words: "view panel sidebar",
+        key: `view:${id}`, kind: "view", route: `ob-tabs.open:${id}`, label: `View: ${v.title}`, context: "sidebar", words: "view panel sidebar",
         lead: () => icon(v.icon, S.icon), go: () => run(`ob-tabs.open:${id}`),
       });
     }
 
     // Commands (Zen mode, palette actions).
     items.push({
-      key: "cmd:ob-tabs.zen", kind: "command", label: "Toggle Zen mode", context: "Zen mode: Toggle", words: "zen mode toggle focus",
+      key: "cmd:ob-tabs.zen", kind: "command", route: "ob-tabs.zen", label: "Toggle Zen mode", context: "Zen mode: Toggle", words: "zen mode toggle focus",
       lead: () => icon("minimize", S.icon), go: () => run("ob-tabs.zen"),
     });
 
@@ -224,22 +251,22 @@ export default class Switcher extends View {
     const query = this.query.trim();
     const out = [];
     if (this.mode === "move") return this.moveRows(cur, query);
-    if (query.startsWith(">")) {
-      const qText = query.slice(1).trim();
-      const cmdPool = [
-        items.find((it) => it.key === "cmd:ob-tabs.zen"),
-        ...items.filter((it) => it.kind === "view"),
-      ].filter(Boolean);
-      const scored = [];
-      for (const it of cmdPool) {
-        if (!qText) { scored.push({ item: it, hits: [], score: 1 }); continue; }
-        const best = fuzzy(qText, it.label) ?? fuzzy(qText, `${it.label} ${it.context ?? ""} ${it.words ?? ""}`);
-        if (best) scored.push({ item: it, hits: best.hits, score: best.score });
-      }
-      scored.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-      return scored.length ? scored : [{ head: `No commands matching “${qText}”` }];
+    if (this.mode === "commands") {
+      // Vaultr's commands and Herdr's app commands (commands.js), one list. Each row runs its route.
+      const cmdText = bodyOf(query);
+      const vaultr = items.filter((it) => it.route && it.kind === "command");
+      const scored = commandRows({ vaultr, herdr: commands(), keys: keys(), query: cmdText, match: fuzzy })
+        .map((r) => ({
+          ...r,
+          item: {
+            ...r.item,
+            lead: r.item.lead ?? (() => icon("terminal", S.icon)),
+            go: () => run(r.item.route),
+          },
+        }));
+      return scored.length ? scored : [{ head: `No commands matching “${cmdText}”` }];
     }
-    const pool = this.mode === "views" ? items.filter((it) => it.kind === "view") : items;
+    const pool = items.filter((it) => allowsRow(this.mode, it));
     if (!query) {
       if (this.mode === "views") { for (const it of pool) out.push({ item: it }); return out; }
       const recent = this.recentItems(byKey, cur);
@@ -255,12 +282,17 @@ export default class Switcher extends View {
     const scored = [];
     for (const it of pool) {
       const title = fuzzy(query, it.label);
-      const more = title ? null : fuzzy(query, `${it.label} ${it.context ?? ""} ${it.words ?? ""}`);
-      const best = title ?? (more && { score: more.score - 4, hits: [] });
+      // A session title the tab holds: the row shows that title as its context.
+      const via = title || !it.titles?.length ? null : bestTitle(query, it.titles, fuzzy);
+      const more = title || via ? null : fuzzy(query, `${it.label} ${it.context ?? ""} ${it.words ?? ""}`);
+      let best = title;
+      if (!best && via) best = { score: via.score - 4, hits: [] };
+      if (!best && more) best = { score: more.score - 4, hits: [] };
       if (!best) continue;
       // Settled tabs and where you already are sink a little; bookmarks rise a little.
       const adj = (it.here ? -2 : 0) + (it.settled ? -1 : 0) + (it.bookmarked ? 1 : 0);
-      scored.push({ item: it, hits: best.hits, score: best.score + adj, r: rank.get(it.key) ?? 999 });
+      const row = via && !title ? { ...it, context: [via.title, it.context].filter(Boolean).join(" · ") } : it;
+      scored.push({ item: row, hits: best.hits, score: best.score + adj, r: rank.get(it.key) ?? 999 });
     }
     scored.sort((a, b) => Math.round(b.score) - Math.round(a.score) || a.r - b.r || b.score - a.score);
     for (const s of scored) out.push(s);
@@ -369,7 +401,7 @@ export default class Switcher extends View {
     else if (k === "up" || (k === "p" && m.control && !m.shift)) this.move(-1);
     else if (k === "pagedown") this.move(8);
     else if (k === "pageup") this.move(-8);
-    else if (k === "tab" && !m.control && !m.alt) { if (this.mode !== "move") this.cycleMode(); }
+    else if (k === "tab" && !m.control && !m.alt) { if (this.mode !== "move") this.cycleMode(m.shift ? -1 : 1); }
     else if (k === "enter" && m.shift) { this.modEnterAt = Date.now(); this.accept(cx, "create"); }
     else if (k === "enter" && (m.control || m.platform)) { this.modEnterAt = Date.now(); this.accept(cx, "right"); }
     else return;
@@ -400,13 +432,9 @@ export default class Switcher extends View {
         .child(icon("move", S.iconSm, t.muted))
         .child(div().min_w(0).truncate().text_size(S.textLg - 1).font_semibold().child(`Move ${q(tabName)} to…`))))
       .child(h_flex().h(56).flex_none().px(16).gap(10).items_center().border_b(1).border_color(t.border)
-        .child(icon(this.mode === "views" ? "layers" : this.mode === "move" ? "move" : "search", S.icon + 2, t.dim))
+        .child(icon(this.mode === "views" ? "layers" : this.mode === "commands" ? "terminal" : this.mode === "move" ? "move" : "search", S.icon + 2, t.dim))
         .child(div().flex_1().min_w(0).child(Input.new(this.input).h(36).text_size(S.textLg + 1).text_color(t.foreground)))
-        .when(this.mode !== "move", (el) => el.child(h_flex().id("sw-mode").flex_none().h(22).px(8).gap(5).rounded(S.radius).items_center()
-          .bg(t.raised).text_size(S.textXs).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .tooltip("Tab switches between everything and sidebar views")
-          .on_click((_e, cx) => { this.cycleMode(); cx.notify(); })
-          .child(this.mode === "views" ? "Views" : "Everything").child(icon("chevron-down", S.iconXs)))))
+        .when(this.mode !== "move", (el) => el.child(this.modeControl(t))))
       .child(rows.length
         ? div().relative().flex_none().h(listH)
           .child(v_flex().id("sw-list").size_full().overflow_y_scroll().track_scroll(this.scroll).px(6).py(4)
@@ -414,6 +442,21 @@ export default class Switcher extends View {
           .child(Scrollbar.vertical("sw-list").absolute().inset_0())
         : this.empty(t))
       .child(this.footer(t));
+  }
+
+  // The mode control: one segment per mode, the current one lit; a click selects that mode.
+  modeControl(t) {
+    return h_flex().id("sw-mode").flex_none().h(24).p(2).gap(2).rounded(S.radius).items_center().bg(t.raised)
+      .children(MODES.map((m) => {
+        const on = m === this.mode;
+        return h_flex().id(`sw-mode-${m}`).flex_none().h(20).px(8).rounded(4).items_center()
+          .text_size(S.textXs).font_medium().cursor_pointer()
+          .when(on, (el) => el.bg(t.selected).text_color(t.foreground))
+          .when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)))
+          .tooltip(on ? `${headerLabel(m)} (current)` : `Switch to ${headerLabel(m)}`)
+          .on_click((_e, cx) => { this.select(m); cx.notify(); })
+          .child(headerLabel(m));
+      }));
   }
 
   head(t, text, i) {
@@ -440,6 +483,7 @@ export default class Switcher extends View {
         .when(Boolean(it.bookmarked), (el) => el.child(icon("bookmark", S.iconXs, t.accent)))
         .when(Boolean(it.context) && !narrow, (el) => el.child(div().flex_1().min_w(0).truncate().text_size(S.textSm).text_color(t.dim).child(it.context)))
         .when(Boolean(it.settled), (el) => el.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child("settled"))))
+      .when(Boolean(it.chord), (el) => el.child(kbd(it.chord)))
       .when(Boolean(it.disabled && it.hint && !it.quiet), (el) => el.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child(it.hint)))
       .when(it.status != null, (el) => el.child(statusMark(it.status)))
       .when(on, (el) => el.child(h_flex().flex_none().h(18).px(5).rounded(4).items_center().border_1().border_color(t.input).bg(t.raised)
@@ -447,9 +491,9 @@ export default class Switcher extends View {
   }
 
   empty(t) {
-    const text = this.mode === "move" ? "Nothing to move here." : this.mode === "views" ? `No view matches ${q(this.query)}.` : "Nothing yet: no tabs or spaces to show.";
+    const text = this.mode === "move" ? "Nothing to move here." : this.mode === "views" ? `No view matches ${q(this.query)}.` : this.mode === "commands" ? `No commands matching ${q(bodyOf(this.query))}.` : "Nothing yet: no tabs or spaces to show.";
     return v_flex().flex_none().py(28).gap(6).items_center()
-      .child(icon(this.mode === "views" ? "layers" : "search", 24, t.dim))
+      .child(icon(this.mode === "views" ? "layers" : this.mode === "commands" ? "terminal" : "search", 24, t.dim))
       .child(div().text_size(S.textSm).text_color(t.muted).child(text));
   }
 
@@ -461,9 +505,9 @@ export default class Switcher extends View {
     const items = this.mode === "move"
       ? [hint(["↑", "↓"], "to navigate"), hint(["↵"], "to move"), hint(["esc"], "to dismiss")]
       : [
-        hint(["↑", "↓"], "to navigate"), hint(["↵"], "to open"),
+        hint(["↑", "↓"], "to navigate"), hint(["↵"], this.mode === "commands" ? "to run" : "to open"),
         ...(this.mode === "go" ? [hint(["⇧", "↵"], "to create"), hint([ctrl, "↵"], "to the right")] : []),
-        hint(["tab"], this.mode === "views" ? "everything" : "views"), hint(["esc"], "to dismiss"),
+        hint(["tab"], tabHint(this.mode)), hint(["esc"], "to dismiss"),
       ];
     return h_flex().h(40).flex_none().px(16).gap(14).items_center().border_t(1).border_color(t.border).text_size(S.textXs)
       .bg(alpha(t.background, 0.35)).overflow_hidden().children(items);
