@@ -60,7 +60,8 @@ export default class Status extends View {
     const branch = c.pane?.branch ?? c.space?.branch ?? null;
     const cwd = this.cwd();
     const switchKey = bindingFor("mod.open:ob-switcher");
-    const paletteKey = bindingFor("app.palette");
+    // The commands key: what the layout binds for the commands switcher, else Herdr's own palette.
+    const paletteKey = bindingFor("ob-tabs.switcher:commands") ?? bindingFor("app.palette");
     const hint = [switchKey && `${chordLabel(switchKey)} switch`, paletteKey && `${chordLabel(paletteKey)} commands`].filter(Boolean).join("  ·  ");
 
     // Items right to left, each with its width; keep what fits.
