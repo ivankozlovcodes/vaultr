@@ -2,7 +2,7 @@
 # Run by ob-feed through exec("python3", ["-c", <this file's text>, <options json>], { on: machine }).
 # Read-only: it only reads /proc, ~/.pi, ~/.claude and the pi-subagents temp folder.
 # Output: see SPEC.md section 7 ("scan JSON"). Never raises: errors go into "errors".
-import json, os, sys, time, glob, tempfile, socket
+import json, os, sys, time, glob, tempfile, socket, datetime
 
 T0 = time.time()
 NOW = int(T0 * 1000)
@@ -15,7 +15,14 @@ LIMIT = int(OPT.get("limit", 40))
 CLAUDE = bool(OPT.get("claude", True))
 # Test hook (ob-feed `fixture:<dir>`): extra folders laid out like async-subagent-runs/ (one run dir each).
 EXTRA = [str(x) for x in (OPT.get("extraRoots") or []) if isinstance(x, str) and x]
+# Test hook (test/test_scan_pi.py): a fixture herdr-artifact store folder instead of ~/.herdr/artifacts.
+ARTIFACT_STORE = str(OPT.get("artifactStore")) if OPT.get("artifactStore") else None
+TOUCHES = {}                                    # agent key -> [touch rows]: term:<terminal> main, a:<id> sub-agent, r:<id> run
 HOME = os.path.expanduser("~")
+# Test hooks (test/test_scan_pi.py): a fixture home for ~/.claude, and fixed processes instead of /proc.
+CHOME = str(OPT.get("claudeHome") or HOME)
+PHOME = str(OPT.get("piHome") or HOME)          # test hook: a fixture home for ~/.pi
+FIXTURE_PROCS = OPT.get("procs") if isinstance(OPT.get("procs"), list) else None
 ERRORS = []
 
 
@@ -24,6 +31,156 @@ def clip(s, n):
         return None
     s = str(s).replace("\r", "").replace("\t", " ")
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def short_arg(inp):
+    """What a tool touched, briefly: a file's basename, or the first 40 characters of its command or pattern.
+    Never tool output: only the tool's input is read."""
+    inp = inp if isinstance(inp, dict) else {}
+    fp = inp.get("file_path") or inp.get("path") or inp.get("notebook_path")
+    if fp:
+        return clip(os.path.basename(str(fp)), 40)
+    cmd = inp.get("command") or inp.get("pattern") or inp.get("description") or ""
+    return clip(str(cmd).strip().split("\n")[0], 40) if cmd else ""
+
+
+def last_tool_in(recs):
+    """The last tool a session transcript called (in its tail), as {tool, args}; None when there is none."""
+    last = None
+    for r in recs:
+        msg = r.get("message") if isinstance(r.get("message"), dict) else {}
+        content = msg.get("content") if isinstance(msg.get("content"), list) else []
+        for c in content:
+            if isinstance(c, dict) and c.get("type") == "tool_use":
+                last = {"tool": c.get("name"), "args": short_arg(c.get("input"))}
+    return last
+
+
+# ---- files the agents touch (paths and ops only: never contents) ----
+# A transcript tail gives {path, op, at}: Read -> read, Edit/MultiEdit/NotebookEdit -> edit, Write -> create when the
+# path has not been touched before in this tail, else write. pi's lowercase read/edit/write are the same. Per agent at
+# most TOUCH_CAP distinct paths (the newest); one path once, with its strongest op and its newest time. A path with a
+# `danger` folder in it is never collected (the vault's rule: it holds credentials). Artifact publications come from the
+# herdr-artifact store (publisher = the terminal that published it), not from the transcripts.
+TOUCH_CAP = 40
+PI_READS = 30                                   # pi transcripts read for touches per scan (the time budget)
+OP_RANK = {"read": 0, "edit": 1, "write": 2, "create": 3, "publish": 4}
+CLAUDE_FILE_TOOLS = {"Read": "read", "Edit": "edit", "MultiEdit": "edit", "NotebookEdit": "edit", "Write": "write"}
+PI_FILE_TOOLS = {"read": "read", "edit": "edit", "write": "write"}
+
+
+def iso_ms(s):
+    if not isinstance(s, str):
+        return None
+    try:
+        return int(datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)
+    except Exception:
+        return None
+
+
+def dangerous(path):
+    return any(seg.lower() == "danger" for seg in str(path).split("/"))
+
+
+def records_of(path, size=65536):
+    """A transcript tail's parsed lines (dicts only), oldest first. A malformed line is skipped."""
+    recs = []
+    for line in tail_lines(path, size):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(r, dict):
+            recs.append(r)
+    return recs
+
+
+def merge_touch_dicts(*ds):
+    """{path: (op, at)} dicts -> one: the strongest op and the newest time per path."""
+    out = {}
+    for d in ds:
+        for p, (o, a) in d.items():
+            prev = out.get(p)
+            out[p] = (o if prev is None or OP_RANK[o] > OP_RANK[prev[0]] else prev[0], max(a or 0, prev[1] if prev else 0))
+    return out
+
+
+def file_touches(recs):
+    """recs: one transcript tail's parsed lines, oldest first. Returns {path: (op, at)}. Tool inputs only: no result
+    text and no file content."""
+    out, seen = {}, set()
+    for r in recs:
+        msg = r.get("message") if isinstance(r.get("message"), dict) else {}
+        content = msg.get("content") if isinstance(msg.get("content"), list) else []
+        at = iso_ms(r.get("timestamp"))
+        for c in content:
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "tool_use" and c.get("name") in CLAUDE_FILE_TOOLS:
+                inp = c.get("input") if isinstance(c.get("input"), dict) else {}
+                path, op = inp.get("file_path") or inp.get("notebook_path"), CLAUDE_FILE_TOOLS[c["name"]]
+            elif c.get("type") == "toolCall" and str(c.get("name", "")).lower() in PI_FILE_TOOLS:
+                args = c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
+                path, op = args.get("path") or args.get("file_path"), PI_FILE_TOOLS[str(c["name"]).lower()]
+            else:
+                continue
+            if not isinstance(path, str) or not path or dangerous(path):
+                continue
+            if op == "write":
+                op = "write" if path in seen else "create"
+            seen.add(path)
+            prev = {path: out[path]} if path in out else {}
+            out[path] = merge_touch_dicts(prev, {path: (op, at or 0)})[path]
+    return out
+
+
+def touch_rows(d, cap=TOUCH_CAP):
+    """{path: (op, at)} -> the newest `cap` rows, as the payload lists them."""
+    rows = [{"path": p, "op": o, "at": a or None} for p, (o, a) in d.items()]
+    rows.sort(key=lambda r: -(r["at"] or 0))
+    return rows[:cap]
+
+
+def artifact_store():
+    """herdr-artifact's store folder (one <folder>.json per project, each with its artifacts), or None."""
+    if ARTIFACT_STORE:
+        return ARTIFACT_STORE if os.path.isdir(ARTIFACT_STORE) else None
+    for d in (os.path.join(HOME, ".herdr", "artifacts"), os.path.join(HOME, ".local", "share", "shepherdr", "artifacts")):
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+def artifact_touches():
+    """{terminal address: [row]}: the newest version of each artifact a terminal published (its publisher), as op
+    "publish" with the artifact's id, title and version. Its path is the version's folder in the store."""
+    d = artifact_store()
+    out = {}
+    if not d:
+        return out
+    try:
+        names = sorted(os.listdir(d))
+    except Exception as e:
+        ERRORS.append(f"artifacts: {e}")
+        return out
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        data = load(os.path.join(d, n))
+        arts = data.get("artifacts") if isinstance(data, dict) else None
+        for a in arts if isinstance(arts, list) else []:
+            if not isinstance(a, dict) or not isinstance(a.get("id"), str):
+                continue
+            for v in a.get("versions") if isinstance(a.get("versions"), list) else []:
+                if not isinstance(v, dict) or not isinstance(v.get("publisher"), str) or not v["publisher"]:
+                    continue
+                vv = v.get("v") if isinstance(v.get("v"), int) else 0
+                row = {"path": os.path.join(d, "files", a["id"][:80], f"v{vv}"), "op": "publish", "at": num(v.get("at")) or None,
+                       "artifact": {"id": a["id"][:80], "title": clip(a.get("title"), 120), "v": vv}}
+                by = out.setdefault(v["publisher"], {})
+                if a["id"] not in by or (row["at"] or 0) > (by[a["id"]]["at"] or 0):
+                    by[a["id"]] = row
+    return {k: sorted(v.values(), key=lambda r: -(r["at"] or 0))[:TOUCH_CAP] for k, v in out.items()}
 
 
 def load(path):
@@ -95,7 +252,7 @@ def processes():
     return out
 
 
-PROCS = processes()
+PROCS = {int(p["pid"]): p for p in FIXTURE_PROCS if isinstance(p, dict) and "pid" in p and "term" in p} if FIXTURE_PROCS is not None else processes()
 
 # ---- pi-subagents async runs ----
 ROOT = os.path.join(os.environ.get("PI_SUBAGENTS_TEMP_ROOT") or os.path.join(tempfile.gettempdir(), f"pi-subagents-uid-{os.getuid()}"), "async-subagent-runs")
@@ -139,7 +296,7 @@ def step_view(s, full=None):
         "cost": num(dget(cost, "costUsd")),
         "turns": num(pick("turnCount")),
         "toolCount": num(pick("toolCount")),
-        "tools": [{"tool": t.get("tool"), "args": clip(t.get("args"), 90), "at": t.get("endMs")} for t in tools if isinstance(t, dict)],
+        "tools": [{"tool": t.get("tool"), "args": clip(t.get("args"), 40), "at": t.get("endMs")} for t in tools if isinstance(t, dict)],
         "out": out,
         "error": clip(pick("error"), 200),
         "session": pick("sessionFile"),
@@ -254,7 +411,7 @@ def pi_sessions(run_list):
         if owned:
             t["session"], t["guess"] = owned[0]["parentSession"], False
         else:
-            d = os.path.join(HOME, ".pi", "agent", "sessions", "--" + p["cwd"].strip("/").replace("/", "-") + "--")
+            d = os.path.join(PHOME, ".pi", "agent", "sessions", "--" + p["cwd"].strip("/").replace("/", "-") + "--")
             try:
                 files = [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".jsonl")]
                 files = [f for f in files if os.stat(f).st_mtime * 1000 >= (p["start"] or 0) - 5000]
@@ -280,7 +437,14 @@ def tail_lines(path, size=65536):
         return []
 
 
+# A Claude Code subagent whose transcript was written this recently is running (live), unless its last
+# assistant message ended the turn. A running agent that is silent longer than this shows as not live.
+LIVE_MS = 90 * 1000
+
+
 def claude_view(meta_path):
+    """One Claude Code subagent: its meta and its transcript tail (the last 64 KiB). Read-only; a malformed line is
+    skipped. Finished and live agents get the same fields; `live` is set from the file's age and `ended`."""
     meta = load(meta_path) or {}
     aid = os.path.basename(meta_path)[len("agent-"):-len(".meta.json")]
     jl = meta_path[: -len(".meta.json")] + ".jsonl"
@@ -289,29 +453,37 @@ def claude_view(meta_path):
         updated, size = int(st.st_mtime * 1000), st.st_size
     except Exception:
         updated, size = None, 0
-    last_tool, out_tok, started, model, ended = None, 0, None, None, False
-    for line in tail_lines(jl):
-        try:
-            r = json.loads(line)
-        except Exception:
+    last_tool, out_tok, tool_n, model, ended = None, 0, 0, None, False
+    seen_msg, seen_usage = set(), set()
+    recs = records_of(jl)
+    for r in recs:
+        msg = r.get("message") if isinstance(r.get("message"), dict) else {}
+        if not msg:
             continue
-        msg = r.get("message") or {}
-        if isinstance(msg, dict):
-            if msg.get("model"):
-                model = msg["model"]
-            u = msg.get("usage") or {}
+        mid = msg.get("id")
+        if msg.get("model"):
+            model = msg["model"]
+        # One message is written as several lines (one per content block) with the same usage: count it once.
+        if mid is None or mid not in seen_usage:
+            if mid is not None:
+                seen_usage.add(mid)
+            u = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
             out_tok += int(u.get("output_tokens") or 0)
-            for c in msg.get("content") or [] if isinstance(msg.get("content"), list) else []:
-                if isinstance(c, dict) and c.get("type") == "tool_use":
-                    inp = c.get("input") or {}
-                    arg = inp.get("command") or inp.get("file_path") or inp.get("pattern") or inp.get("description") or ""
-                    last_tool = {"tool": c.get("name"), "args": clip(arg, 90)}
-            if msg.get("stop_reason") == "end_turn" and msg.get("role") == "assistant":
+        if mid is not None:
+            seen_msg.add(mid)
+        content = msg.get("content") if isinstance(msg.get("content"), list) else []
+        for c in content:
+            if isinstance(c, dict) and c.get("type") == "tool_use":
+                last_tool = {"tool": c.get("name"), "args": short_arg(c.get("input"))}
+                tool_n += 1
+        if msg.get("role") == "assistant":
+            if msg.get("stop_reason") == "end_turn":
                 ended = True
-            elif msg.get("role") == "assistant":
+            else:
                 ended = False
     if meta.get("finished") is True:
         ended = True
+    live = (not ended) and updated is not None and (NOW - updated) < LIVE_MS
     return {
         "id": aid,
         "type": meta.get("agentType"),
@@ -321,8 +493,12 @@ def claude_view(meta_path):
         "bytes": size,
         "lastTool": last_tool,
         "outTokens": out_tok or None,
+        "toolCount": tool_n,
+        "turns": len(seen_msg),
         "ended": ended,
+        "live": live,
         "transcript": jl,
+        "touches": touch_rows(file_touches(recs)),
     }
 
 
@@ -331,18 +507,23 @@ def claude():
     for pid, p in PROCS.items():
         if p["comm"] != "claude":
             continue
-        s = load(os.path.join(HOME, ".claude", "sessions", f"{pid}.json")) or {}
+        s = load(os.path.join(CHOME, ".claude", "sessions", f"{pid}.json")) or {}
         sid = s.get("sessionId")
         entry = {"pid": pid, "kind": "claude", "cwd": s.get("cwd") or p["cwd"], "session": sid, "name": s.get("name"), "agents": []}
         if sid:
-            dirs = glob.glob(os.path.join(HOME, ".claude", "projects", "*", sid, "subagents"))
+            dirs = glob.glob(os.path.join(CHOME, ".claude", "projects", "*", sid, "subagents"))
             metas = []
             for d in dirs:
                 metas += glob.glob(os.path.join(d, "agent-*.meta.json"))
             metas.sort(key=lambda m: os.stat(m).st_mtime if os.path.exists(m) else 0, reverse=True)
             entry["agents"] = [claude_view(m) for m in metas[:20]]
-            files = glob.glob(os.path.join(HOME, ".claude", "projects", "*", sid + ".jsonl"))
+            for a in entry["agents"]:
+                TOUCHES[f"a:{a['id']}"] = a.pop("touches")
+            files = glob.glob(os.path.join(CHOME, ".claude", "projects", "*", sid + ".jsonl"))
             entry["transcript"] = files[0] if files else None
+            recs = records_of(files[0]) if files else []
+            entry["lastTool"] = last_tool_in(recs) if files else None
+            TOUCHES[f"term:{p['term']}"] = touch_rows(file_touches(recs))
         out[p["term"]] = entry
     return out
 
@@ -363,6 +544,29 @@ if CLAUDE:
     except Exception as e:
         ERRORS.append(f"claude: {e}")
 
+# pi transcripts: the session file of each pi terminal, and the step transcripts of each run (at most PI_READS).
+jobs = []
+for key, t in terms.items():
+    if t.get("kind") == "pi" and isinstance(t.get("session"), str) and t["session"].endswith(".jsonl"):
+        jobs.append((f"term:{key}", t["session"]))
+for r in R:
+    for st in r.get("steps") or []:
+        for k in ("session", "transcript"):
+            if isinstance(st.get(k), str) and st[k].endswith(".jsonl"):
+                jobs.append((f"r:{r['id']}", st[k]))
+pi_acc = {}
+for key, path in jobs[:PI_READS]:
+    try:
+        pi_acc[key] = merge_touch_dicts(pi_acc.get(key, {}), file_touches(records_of(path)))
+    except Exception as e:
+        ERRORS.append(f"touches: {e}")
+for key, d in pi_acc.items():
+    TOUCHES[key] = touch_rows(d)
+# herdr-artifact publications: listed under the terminal that published them (its address is the terminal's id).
+for term_id, rows in artifact_touches().items():
+    key = f"term:{term_id}"
+    TOUCHES[key] = sorted(TOUCHES.get(key, []) + rows, key=lambda r: -(r["at"] or 0))[:TOUCH_CAP]
+
 print(json.dumps({
     "v": 1,
     "host": socket.gethostname(),
@@ -371,6 +575,7 @@ print(json.dumps({
     "root": ROOT,
     "runs": R,
     "terms": terms,
+    "touches": {k: v for k, v in TOUCHES.items() if v},
     "errors": ERRORS,
     "ms": int((time.time() - T0) * 1000),
 }, separators=(",", ":")))

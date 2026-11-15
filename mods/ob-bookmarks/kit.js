@@ -13,6 +13,25 @@ import {
 export const MOD = "ob-bookmarks";
 export const LAYOUT = "vaultr";
 
+// Pure agent helpers (kit/agents.js): which agents are main agents, the ones placed in a pane of a tab.
+export { placedTerminals, mainAgents } from "./agents.js";
+
+// Pure pane naming (kit/names.js): paneLabel(pane, ctx), shortFolder(folder, home). paneLabel is also used here.
+import { paneLabel } from "./names.js";
+export { paneLabel, shortFolder, paneSecondary } from "./names.js";
+
+// The one fuzzy matcher (kit/fuzzy.js, fzf-style): fuzzy(q, text) -> { score, hits } | null, matchQuery for spans.
+export { fuzzy, matchQuery } from "./fuzzy.js";
+
+// Pure feed-age rule (kit/feed_age.js): when the sub-agent feed counts as paused, and the scanner's heartbeat.
+export { feedLine, publishDue, FEED_BEAT_MS, FEED_STALE_MS } from "./feed_age.js";
+
+// Pure ticker of running agents for the status row (kit/ticker.js).
+export { tickerChips, tickerAction, TICKER_MAX } from "./ticker.js";
+
+// Pure follow rule (kit/follow_target.js): which terminal the right-hand panels show.
+export { followTarget } from "./follow_target.js";
+
 // ---------------------------------------------------------------- sizes (design px at zoom 1)
 export const S = {
   strip: 40,        // top strip of every column (icon tabs, tab bar)
@@ -40,7 +59,7 @@ export const S = {
 };
 
 // ---------------------------------------------------------------- colors
-// theme() plus helpers. Use names, never hex, except MARK (space avatar colors, same as iv-spaces).
+// theme() plus helpers. Use names, never hex, except MARK (the space avatar colors).
 export const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 export function tc() { return theme(); }
 // alpha("#rrggbb", 0.15) -> "#rrggbb26"; works on #rgb, #rrggbb and #rrggbbaa (multiplies).
@@ -324,25 +343,6 @@ export function tilde(path) {
 }
 export const base = (p) => String(p ?? "").replace(/\/+$/, "").split("/").pop();
 
-// Fuzzy match (the shipped palette's): letters in order, word starts and runs score higher.
-// Returns { score, hits: [indexes] } or null.
-export function fuzzy(q, text) {
-  q = String(q ?? "").toLowerCase().replace(/\s+/g, "");
-  if (!q) return { score: 0, hits: [] };
-  const s = String(text ?? "").toLowerCase();
-  let score = 0, at = 0, runLen = 0;
-  const hits = [];
-  for (const ch of q) {
-    const i = s.indexOf(ch, at);
-    if (i < 0) return null;
-    const start = i === 0 || /[\s:.\-_/·]/.test(s[i - 1]);
-    runLen = i === at && hits.length ? runLen + 1 : 0;
-    score += 1 + (start ? 6 : 0) + runLen * 3 - Math.min(i - at, 6) * 0.3;
-    hits.push(i);
-    at = i + 1;
-  }
-  return { score: score - s.length * 0.02, hits };
-}
 // Text with matched letters highlighted (accent, semibold). Returns an h_flex of spans.
 export function highlight(text, hits, color) {
   const t = theme();
@@ -409,7 +409,6 @@ export const VIEWS = {
   "ob-changes": { title: "Changes", icon: "git-compare" },
   "ob-insights": { title: "Insights", icon: "chart" },
   "ob-notes": { title: "Notes", icon: "file-text" },
-  "ob-subagents": { title: "Subagents", icon: "subagents" },
   "ob-graph": { title: "Graph", icon: "graph" },
   "ob-outline": { title: "Outline", icon: "list" },
 };
@@ -460,7 +459,7 @@ export function bindingFor(action, inTerminal = false) {
 }
 
 // ---------------------------------------------------------------- machines, spaces, agents
-// Addresses: "t7" here, "devbox/t7" there. Ids of remote spaces/tabs/panes have the same prefix.
+// Addresses: "t7" on this machine, "<machine>/t7" on another. Ids of remote spaces/tabs/panes have the same prefix.
 export const machineOf = (addr) => (String(addr ?? "").includes("/") ? String(addr).split("/")[0] : null);
 export const localId = (addr) => String(addr ?? "").split("/").pop();
 export const addrOn = (machine, id) => (machine ? `${machine}/${id}` : id);
@@ -485,6 +484,20 @@ export function tabLabel(tab, ps) {
   const mine = ps.filter((p) => p.tab === tab.id);
   const lead = mine.find((p) => p.program?.agent) ?? mine.find((p) => p.focused) ?? mine[0];
   return lead ? paneName(lead) : tab.name;
+}
+// An agent's session title: the feed's name for its session (Claude Code's, from its session record), else none. The
+// agent's terminal title is left out: it is a task line that changes ("bash in src"), not the session.
+export function sessionTitleOf(address) {
+  const named = feed()?.terms?.[address]?.name;
+  return typeof named === "string" && named.trim() ? named.trim() : null;
+}
+// A pane's label (kit/names.js paneLabel): an agent by its session title, a shell by its folder, a mod by its panel's
+// name. tabName: the tab's own name, so the pane does not repeat it.
+export function paneLabelOf(p, tabName = "") {
+  return paneLabel(p, {
+    sessionTitle: p?.terminal ? sessionTitleOf(p.terminal) : null, folder: p?.cwd, home: home(),
+    panelName: p?.mod ? VIEWS[p.mod]?.title ?? null : null, tabName,
+  });
 }
 // The context the user is in: { space, tab, pane, terminal, machine } (objects, may be null).
 export function current() {
