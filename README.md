@@ -123,7 +123,7 @@ Clone this repo and run the commands below from its folder. To sync kit assets, 
 
 *(To install without immediately switching layouts, run `./install.sh`)*
 
-The layout is copied, not linked, so the arrangement you make in the app (panel order, sizes, a hidden status row, your theme) stays in your copy and never lands in the repo. A re-install keeps a copy that differs from the repo. To take the repo's layout again, run `./install.sh --reset-layout`: your copy is backed up next to it as `vaultr.json.bak-<date-time>` first. To develop the layout, `./install.sh --link` symlinks the repo file instead (a differing copy is backed up first).
+The layout is copied, not linked, so the arrangement you make in the app (panel order, sizes, a hidden status row, your theme) stays in your copy and never lands in the repo. A re-install keeps a copy that differs from the repo. It also leaves alone the keys you changed in Hotkeys: a Vaultr key you removed stays removed (`vaultr-keys.owned.json` in the Herdr app folder records which; `--uninstall`, then a fresh install, brings every key back), and a chord you bound to your own action is not overwritten. To take the repo's layout again, run `./install.sh --reset-layout`: your copy is backed up next to it as `vaultr.json.bak-<date-time>` first. To develop the layout, `./install.sh --link` symlinks the repo file instead (a differing copy is backed up first).
 
 ### 2. Kit Synchronization
 When modifying shared components in `kit/` (`kit.js`, icons, or scanners), synchronize them to all mods:

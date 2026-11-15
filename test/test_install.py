@@ -8,9 +8,11 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = home_guard.ROOT
 INSTALL = os.path.join(ROOT, "install.sh")
+KEYSFILE_JS = Path(ROOT, "mods", "ob-settings", "keysfile.js")
 OB_MODS = sorted(d for d in os.listdir(os.path.join(ROOT, "mods")) if d.startswith("ob-"))
 EXTRA = ["insights", "obsidian"]
 
@@ -415,6 +417,100 @@ class KeyOwnership(unittest.TestCase):
         self.install("--uninstall")
         self.assertEqual(self.installed()["layout:vaultr"], {"ctrl-q": "mine.thing"},
                          "a chord Vaultr did not install is not removed on uninstall")
+
+    def drop_key(self, section, chord):
+        keys = self.installed()
+        del keys[section][chord]
+        with open(os.path.join(self.app, "keys.json"), "w") as f:
+            json.dump(keys, f)
+
+    def test_a_vaultr_key_the_person_removed_stays_removed_on_reinstall(self):
+        self.install()
+        self.drop_key("layout:vaultr", "ctrl-shift-f")
+        out = self.install()
+        layout = self.installed()["layout:vaultr"]
+        self.assertNotIn("ctrl-shift-f", layout, "removed in Settings, so not put back")
+        self.assertEqual(layout.get("ctrl-x"), "old", "the other Vaultr keys are still installed")
+        self.install()
+        self.assertNotIn("ctrl-shift-f", self.installed()["layout:vaultr"], "and it stays removed on every install after")
+        self.assertIn("ctrl-shift-f", out, "the install says it left that key out")
+
+    def test_a_removed_key_comes_back_with_a_fresh_install_after_uninstall(self):
+        self.install()
+        self.drop_key("layout:vaultr", "ctrl-shift-f")
+        self.install()
+        self.install("--uninstall")
+        self.assertFalse(os.path.exists(os.path.join(self.app, "vaultr-keys.owned.json")), "the record goes with the keys")
+        self.install()
+        self.assertEqual(self.installed()["layout:vaultr"].get("ctrl-shift-f"), "ob-tabs.open:ob-search")
+
+    def test_a_removed_key_is_forgotten_when_the_repo_drops_it(self):
+        self.install()
+        self.drop_key("layout:vaultr", "ctrl-shift-f")
+        self.install()
+        self.write_repo_keys({"layout:vaultr": {"ctrl-x": "old"}, "mod:ob-sessions": {"f2": "ob-sessions.rename"}})
+        self.install()
+        self.write_repo_keys({"layout:vaultr": {"ctrl-shift-f": "ob-tabs.other", "ctrl-x": "old"},
+                              "mod:ob-sessions": {"f2": "ob-sessions.rename"}})
+        self.install()
+        self.assertEqual(self.installed()["layout:vaultr"].get("ctrl-shift-f"), "ob-tabs.other",
+                         "a chord the repo dropped and later brought back is new again")
+
+    def hotkeys_edit(self, scope, op):
+        """Edit keys.json the way Settings > Hotkeys does: through ob-settings' keysfile.js applyEdit."""
+        path = os.path.join(self.app, "keys.json")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        src = (f'import {{ applyEdit }} from "{KEYSFILE_JS.as_uri()}";\n'
+               f'const a = JSON.parse(process.argv[1]);\n'
+               f'process.stdout.write(applyEdit(a.text, a.scope, a.op).text);')
+        out = subprocess.run(["node", "--input-type=module", "-e", src, json.dumps({"text": text, "scope": scope, "op": op})],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(out.stdout)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_key_removed_in_the_hotkeys_tab_stays_removed(self):
+        self.install()
+        self.hotkeys_edit("layout:vaultr", {"kind": "unbind", "chord": "ctrl-shift-f", "action": "ob-tabs.open:ob-search"})
+        self.install()
+        layout = self.installed()["layout:vaultr"]
+        self.assertNotIn("ctrl-shift-f", layout)
+        self.assertEqual(layout.get("ctrl-x"), "old")
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_key_restored_in_the_hotkeys_tab_is_vaultrs_again(self):
+        self.install()
+        self.hotkeys_edit("layout:vaultr", {"kind": "unbind", "chord": "ctrl-shift-f", "action": "ob-tabs.open:ob-search"})
+        self.install()
+        self.hotkeys_edit("layout:vaultr", {"kind": "restore", "action": "ob-tabs.open:ob-search", "defaults": ["ctrl-shift-f"]})
+        self.install()
+        self.assertEqual(self.installed()["layout:vaultr"].get("ctrl-shift-f"), "ob-tabs.open:ob-search")
+        self.install("--uninstall")
+        self.assertNotIn("layout:vaultr", self.installed(), "a restored default is Vaultr's again, so uninstall removes it")
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_removing_every_key_of_a_section_removes_the_section_and_keeps_it_removed(self):
+        # the Hotkeys tab drops a section when its last key goes
+        self.install()
+        self.hotkeys_edit("mod:ob-sessions", {"kind": "unbind", "chord": "f2", "action": "ob-sessions.rename"})
+        self.assertNotIn("mod:ob-sessions", self.installed())
+        self.install()
+        self.assertNotIn("mod:ob-sessions", self.installed())
+        self.assertIn("layout:vaultr", self.installed())
+
+    def test_an_owned_record_from_before_removed_keys_were_tracked_still_works(self):
+        self.install()
+        with open(os.path.join(self.app, "vaultr-keys.owned.json")) as f:
+            rec = json.load(f)
+        rec.pop("_removed", None)
+        with open(os.path.join(self.app, "vaultr-keys.owned.json"), "w") as f:
+            json.dump(rec, f)
+        self.install()
+        self.assertEqual(self.installed()["layout:vaultr"], {"ctrl-shift-f": "ob-tabs.open:ob-search", "ctrl-x": "old"})
+        self.install("--uninstall")
+        self.assertNotIn("layout:vaultr", self.installed())
 
     def test_uninstall_removes_only_vaultr_keys(self):
         self.install()

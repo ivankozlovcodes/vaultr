@@ -389,6 +389,10 @@ keys.pop("layout:obsidian", None)
 with open(src_file, "r") as f:
     vaultr_keys = json.load(f)
 
+# "_removed" in the record: per section, the Vaultr chords the person deleted (they were installed, and are gone from
+# keys.json). They are not put back. Older records have no "_removed". Uninstall deletes the record, so a fresh install
+# brings every key back (also what to do after restoring an old keys.json).
+removed = dict(owned.get("_removed", {}))
 new_owned = dict(owned)
 for k in ("layout:vaultr", "mod:ob-sessions"):
     if k in vaultr_keys:
@@ -397,14 +401,35 @@ for k in ("layout:vaultr", "mod:ob-sessions"):
             cur = {key: val for key, val in keys.get(k, {}).items() if key not in owned[k] or key in repo}
             # a chord the person bound themselves (in the section, not installed by Vaultr) is theirs: leave it
             theirs = {key for key in repo if key in cur and key not in owned[k]}
+            # a chord Vaultr installed that is gone from keys.json was deleted by the person (Settings > Hotkeys drops the
+            # whole section with its last key); one it had removed before stays out, unless it is back
+            gone = set(removed.get(k, [])) & set(repo)
+            gone |= {key for key in owned[k] if key in repo and key not in keys.get(k, {})}
+            gone -= set(cur)
+            # a removed chord that is back with Vaultr's own action (Hotkeys > restore) is Vaultr's again
+            theirs -= {key for key in removed.get(k, []) if key in cur and cur[key] == repo.get(key)}
         else:
             cur = {}
             theirs = set()
+            gone = set()
         for key in sorted(key for key in theirs if cur[key] != repo[key]):
             print(f"kept your key: {k} {key} = {cur[key]} (Vaultr's {repo[key]} not installed)")
-        cur.update({key: val for key, val in repo.items() if key not in theirs})
-        keys[k] = cur
-        new_owned[k] = sorted(key for key in repo if key not in theirs)
+        for key in sorted(gone):
+            print(f"left out the key you removed: {k} {key} (uninstall, then install, brings it back)")
+        cur.update({key: val for key, val in repo.items() if key not in theirs and key not in gone})
+        if cur:
+            keys[k] = cur
+        else:
+            keys.pop(k, None)
+        new_owned[k] = sorted(key for key in repo if key not in theirs and key not in gone)
+        if gone:
+            removed[k] = sorted(gone)
+        else:
+            removed.pop(k, None)
+if removed:
+    new_owned["_removed"] = removed
+else:
+    new_owned.pop("_removed", None)
 
 with open(dst_file, "w") as f:
     json.dump(keys, f, indent=2)
