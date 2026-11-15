@@ -19,8 +19,9 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { exec, machines, readTextFile, appHome, setShared, agents, nextCommand, settings } from "herdr";
-import { S, tc, icon, statusMark, liveRecords, machineOf, addrOn, openView, subagentCounts, machineLabel, ago } from "./kit.js";
+import { exec, machines, readTextFile, appHome, setShared, agents, nextCommand, settings, props, run, panes } from "herdr";
+import { S, tc, icon, statusMark, liveRecords, machineOf, addrOn, openView, subagentCounts, machineLabel, ago, feed, publishDue, tickerChips } from "./kit.js";
+import { mainAgentAt } from "./ticker_at.js";
 
 const FAST = 2000;      // a machine with live runs or live claude records
 const SLOW = 15000;     // otherwise
@@ -33,6 +34,28 @@ const mkey = (m) => m ?? "local";
 const str = (v, n = 400) => (typeof v === "string" ? (v.length > n ? v.slice(0, n - 1) + "…" : v) : null);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const arr = (v) => (Array.isArray(v) ? v : []);
+// Files the agents touch (scan_pi.py `touches`): paths and ops only. TOUCH_TOTAL caps all of them, newest first.
+const TOUCH_OPS = ["read", "edit", "write", "create", "publish"];
+const TOUCH_TOTAL = 400;
+
+// A scanner key to the graph's node key: term:<terminal> (a main agent's pane), a:<id> (a Claude sub-agent, c:<key>),
+// r:<id> (a pi run, r:<key>), with the machine as ob-feed keys them.
+function touchKey(key, k, m) {
+  const i = key.indexOf(":");
+  const kind = key.slice(0, i), id = key.slice(i + 1);
+  if (!id) return null;
+  if (kind === "term") return `term:${addrOn(m, id)}`;
+  if (kind === "a") return `c:${k}:${id}`;
+  if (kind === "r") return `r:${k}:${id}`;
+  return null;
+}
+
+function cleanTouch(x) {
+  if (!x || typeof x !== "object" || typeof x.path !== "string" || !TOUCH_OPS.includes(x.op)) return null;
+  const t = { path: str(x.path, 600), op: x.op, at: num(x.at) };
+  if (x.artifact && typeof x.artifact === "object") t.artifact = { id: str(x.artifact.id, 80), title: str(x.artifact.title, 120), v: num(x.artifact.v) };
+  return t;
+}
 
 // Scanner output is trusted to nothing: every field is typed here before it reaches shared state.
 function cleanStep(s) {
@@ -49,15 +72,20 @@ function cleanStep(s) {
 
 export default class Feed extends View {
   init(_p, cx) {
+    // The role (props): "scan" is the scanner alone, mounted where no toggle hides it (layouts/vaultr.json);
+    // "draw" is the status-row segment alone, reading the published payload; "both" (the default) does each.
+    this.role = props()?.role ?? "both";
     this.res = {};      // mkey -> { ok, at, error, ms, data, stale }
     this.busy = new Set();
     this.last = "";
     this.sig = "";
     this.pubAt = 0;
+    this.beatAt = 0;
     this.pending = false;
     this.fixture = null;
     this.scriptError = null;
     this.w = 0;
+    if (this.role === "draw") return;
     cx.spawn(async (cx) => {
       try {
         this.script = await readTextFile(`${appHome()}/mods/ob-feed/scan_pi.py`);
@@ -123,7 +151,7 @@ export default class Feed extends View {
       }
       if (all || kick || this.due(m.name, now)) this.scan(m.name, cx);
     }
-    if (changed || this.pending) this.publish(cx);
+    if (changed || this.pending || publishDue({ same: true, now, beatAt: this.beatAt })) this.publish(cx);
   }
 
   scan(m, cx) {
@@ -158,7 +186,7 @@ export default class Feed extends View {
       return;
     }
     this.pending = false;
-    const runs = [], claude = [], ms = {}, terms = {};
+    const runs = [], claude = [], ms = {}, terms = {}, touches = {};
     for (const [k, r] of Object.entries(this.res)) {
       const m = k === "local" ? null : k;
       ms[k] = { ok: r.ok, at: r.at, ms: r.ms, error: r.error ?? null, ...(r.stale ? { stale: true } : {}) };
@@ -177,15 +205,22 @@ export default class Feed extends View {
           steps: arr(x.steps).map(cleanStep).filter(Boolean),
         });
       }
+      for (const [key, rows] of Object.entries(d.touches && typeof d.touches === "object" ? d.touches : {})) {
+        const gk = touchKey(key, k, m);
+        const list = arr(rows).map(cleanTouch).filter(Boolean);
+        if (gk && list.length) touches[gk] = list;
+      }
       for (const [term, info] of Object.entries(d.terms && typeof d.terms === "object" ? d.terms : {})) {
         if (!info || typeof info !== "object") continue;
         const addr = addrOn(m, term);
-        terms[addr] = { kind: str(info.kind, 20), pid: num(info.pid), cwd: str(info.cwd, 600), session: str(info.session, 600), sessionGuess: Boolean(info.guess), name: str(info.name, 120), transcript: str(info.transcript, 600) };
+        terms[addr] = { kind: str(info.kind, 20), pid: num(info.pid), cwd: str(info.cwd, 600), session: str(info.session, 600), sessionGuess: Boolean(info.guess), name: str(info.name, 120), transcript: str(info.transcript, 600), updatedAt: num(info.updatedAt),
+          lastTool: info.lastTool && typeof info.lastTool === "object" ? { tool: str(info.lastTool.tool, 40), args: str(info.lastTool.args, 40) } : null };
         for (const a of arr(info.agents)) {
           if (!a || typeof a.id !== "string") continue;
           claude.push({ key: `${k}:${a.id}`, machine: m, parent: addr, id: a.id, type: str(a.type, 60), desc: str(a.desc, 160), model: str(a.model, 60),
             updatedAt: num(a.updatedAt), lastTool: a.lastTool && typeof a.lastTool === "object" ? { tool: str(a.lastTool.tool, 40), args: str(a.lastTool.args, 120) } : null,
-            outTokens: num(a.outTokens), live: false, ended: Boolean(a.ended), transcript: str(a.transcript, 600) });
+            outTokens: num(a.outTokens), toolCount: num(a.toolCount), turns: num(a.turns),
+            live: Boolean(a.live) && !r.stale, ended: Boolean(a.ended), transcript: str(a.transcript, 600) });
         }
       }
     }
@@ -198,35 +233,80 @@ export default class Feed extends View {
       const hit = Object.entries(terms).find(([a, x]) => x.session === r.parentSession && (machineOf(a) ?? null) === r.machine);
       if (hit) { r.parent = hit[0]; r.parentGuess = true; }
     }
-    const body = { v: 1, machines: ms, runs, claude: claude.slice(0, 60), terms };
-    // Compare without the timestamps that change on every scan.
-    const sig = JSON.stringify({ runs, claude: body.claude, terms, ok: Object.fromEntries(Object.entries(ms).map(([k, v]) => [k, [v.ok, v.error, Boolean(v.stale)]])) });
-    if (sig === this.last) return;
+    // The newest TOUCH_TOTAL touches across every agent (each agent already kept its own 40).
+    const all = Object.entries(touches).flatMap(([gk, list]) => list.map((t) => ({ gk, t })));
+    all.sort((a, b) => (b.t.at ?? 0) - (a.t.at ?? 0));
+    const kept = {};
+    for (const { gk, t } of all.slice(0, TOUCH_TOTAL)) (kept[gk] ??= []).push(t);
+    const body = { v: 1, machines: ms, runs, claude: claude.slice(0, 60), terms, touches: kept, scriptError: this.scriptError };
+    // Compare without the timestamps that change on every scan. An unchanged payload is still published once a
+    // beat (kit/feed_age.js), so `at` says the scanner is alive: consumers call the feed paused when it goes stale.
+    const sig = JSON.stringify({ runs, claude: body.claude, terms, touches: kept, scriptError: body.scriptError, ok: Object.fromEntries(Object.entries(ms).map(([k, v]) => [k, [v.ok, v.error, Boolean(v.stale)]])) });
+    const same = sig === this.last;
+    if (!publishDue({ same, now, beatAt: this.beatAt })) return;
     this.last = sig;
     this.pubAt = now;
+    this.beatAt = now;
     setShared("ob.subagents", { ...body, at: now });
+  }
+
+  // What the ticker can say: each running agent on this computer, with its latest action (kit/ticker.js). Pi runs
+  // and Claude subagents come from the feed; a main Claude agent is a working agent in a pane of its terminal.
+  tickerItems() {
+    const f = feed();
+    const working = new Map(agents().filter((a) => a.status === "working").map((a) => [a.address, a]));
+    const items = [];
+    for (const r of f?.runs ?? []) {
+      if (r.machine || !r.live) continue;
+      const step = (r.steps ?? []).at(-1);
+      items.push({ key: r.key, title: step?.label || step?.agent || "pi", live: true, at: r.lastUpdate ?? 0, turns: r.turns,
+        tool: step?.tools?.at(-1) ?? null, target: { kind: "outline", key: r.key } });
+    }
+    for (const c of f?.claude ?? []) {
+      if (c.machine || !c.live) continue;
+      items.push({ key: c.key, title: c.desc || c.type || "Claude Code", live: true, at: c.updatedAt ?? 0, turns: c.turns,
+        tool: c.lastTool ?? null, target: { kind: "outline", key: c.key } });
+    }
+    for (const [addr, info] of Object.entries(f?.terms ?? {})) {
+      if (info?.kind !== "claude" || machineOf(addr) || !working.has(addr)) continue;
+      items.push({ key: `main:${addr}`, title: "Claude Code", live: true, at: mainAgentAt(info, f?.touches?.[`term:${addr}`], Date.now()), tool: info.lastTool ?? null, target: { kind: "pane", terminal: addr } });
+    }
+    return items;
+  }
+
+  // A click on a chip: a main agent's pane is focused; a subagent's card opens in Outline.
+  go(target) {
+    if (target?.kind === "pane") {
+      const p = panes().find((x) => x.terminal === target.terminal);
+      if (p) run("pane.focus", { pane: p.pane });
+    } else if (target?.kind === "outline") {
+      openView("ob-outline", `run:${target.key}`);
+    }
   }
 
   render() {
     const t = tc();
-    const c = subagentCounts();
-    const bad = Object.entries(this.res).filter(([, r]) => !r.ok);
+    if (this.role === "scan") return div().id("root").size_full();
+    // The segment reads the published payload, so it shows the same failures whichever copy scans.
+    const f = feed();
+    const bad = Object.entries(f?.machines ?? {}).filter(([, m]) => m && !m.ok);
+    // A missing scanner never publishes (tick returns first), so this copy's own error is shown too.
+    const scriptError = f?.scriptError ?? this.scriptError;
     const why = [
-      ...(this.scriptError ? [this.scriptError] : []),
-      ...bad.map(([k, r]) => `${machineLabel(k === "local" ? null : k)}: ${r.error ?? "scan failed"}${r.stale && r.data ? ` (showing data from ${ago(r.at)} ago)` : ""}`),
+      ...(scriptError ? [scriptError] : []),
+      ...bad.map(([k, m]) => `${machineLabel(k === "local" ? null : k)}: ${m.error ?? "scan failed"}${m.stale && m.at ? ` (showing data from ${ago(m.at)} ago)` : ""}`),
     ];
-    const wide = this.w === 0 || this.w >= 130;
-    const label = c.live ? `${c.live} running` : c.total ? `${c.total} subagent${c.total === 1 ? "" : "s"}` : "No subagents";
-    return h_flex().id("root").size_full().px(8).gap(6).items_center().justify_end().bg(t.chrome).border_t(1).border_color(t.border)
+    // Nothing running: nothing shown (no placeholder). Otherwise a chip per agent, newest first.
+    const chips = tickerChips(this.tickerItems());
+    return h_flex().id("root").size_full().min_w(0).overflow_hidden().px(8).gap(6).items_center().bg(t.chrome).border_t(1).border_color(t.border)
       .text_size(S.textXs).text_color(t.muted)
       .on_size_change((s, cx) => { const w = s.width / (settings().zoom || 1); if (Math.abs(w - this.w) > 1) { this.w = w; cx.notify(); } })
-      .child(h_flex().id("feed").h(20).px(6).gap(5).rounded(S.radius).items_center().cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .tooltip([c.live ? `${c.live} sub-agent${c.live === 1 ? "" : "s"} running` : "Sub-agents on every machine", ...why, "Click: Subagents"].join("\n"))
-        .on_click(() => openView("ob-subagents"))
-        .child(c.live ? statusMark("working", 11) : icon("subagents", S.iconXs, t.dim))
-        .when(wide, (e) => e.child(div().whitespace_nowrap().text_color(c.live ? t.foreground : t.muted).child(label)))
-        .when(!wide && c.live > 0, (e) => e.child(div().text_color(t.foreground).child(String(c.live))))
-        .when(why.length > 0, (e) => e.child(h_flex().gap(3).items_center().child(icon("alert", S.iconXs, t.blocked))
-          .when(wide && bad.length > 0, (x) => x.child(div().text_color(t.blocked).whitespace_nowrap().child(bad.length === 1 ? machineLabel(bad[0][0] === "local" ? null : bad[0][0]) : `${bad.length} machines`))))));
+      .children(chips.map((c) => h_flex().id(`tk-${c.key}`).h(20).px(6).min_w(0).flex_shrink(1).items_center().gap(5).rounded(S.radius).cursor_pointer()
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .tooltip(`${c.text}\nClick: ${c.target?.kind === "pane" ? "go to its pane" : "open it in Outline"}`)
+        .on_click(() => this.go(c.target))
+        .child(statusMark("working", 10))
+        .child(div().min_w(0).truncate().child(c.text))))
+      .when(why.length > 0, (e) => e.child(h_flex().id("feed-alert").flex_none().tooltip(why.join("\n")).child(icon("alert", S.iconXs, t.blocked))));
   }
 }

@@ -148,6 +148,14 @@ class MainAgents(ScanFixture):
         self.assertTrue(t["transcript"].endswith(SID + ".jsonl"))
         self.assertTrue(os.path.exists(t["transcript"]))
 
+    def test_a_main_agent_reports_when_its_transcript_last_changed(self):
+        # the ticker orders working main agents by this, not by "now"
+        main = os.path.join(self.home, ".claude", "projects", "proj-a", SID + ".jsonl")
+        with open(main, "w") as f:
+            f.write(line(asst("m1", [{"type": "text", "text": "Working."}], stop="end_turn", out=7)) + "\n")
+        os.utime(main, (1_700_000_000, 1_700_000_000))
+        self.assertEqual(self.result()["terms"][TERM]["updatedAt"], 1_700_000_000_000)
+
     def test_a_main_agent_without_a_session_file_has_no_transcript(self):
         t = self.result()["terms"][TERM]
         self.assertEqual(t["session"], SID)

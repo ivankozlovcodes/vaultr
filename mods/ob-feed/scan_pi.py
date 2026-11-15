@@ -521,6 +521,10 @@ def claude():
                 TOUCHES[f"a:{a['id']}"] = a.pop("touches")
             files = glob.glob(os.path.join(CHOME, ".claude", "projects", "*", sid + ".jsonl"))
             entry["transcript"] = files[0] if files else None
+            try:
+                entry["updatedAt"] = int(os.stat(files[0]).st_mtime * 1000) if files else None
+            except OSError:
+                entry["updatedAt"] = None
             recs = records_of(files[0]) if files else []
             entry["lastTool"] = last_tool_in(recs) if files else None
             TOUCHES[f"term:{p['term']}"] = touch_rows(file_touches(recs))
