@@ -7,6 +7,9 @@
 // written); only separators and the new/removed entries change. Every result is re-parsed and
 // compared with the intended meaning before it is returned: on any mismatch the edit throws.
 
+// The scope the Hotkeys tab opens on, every time (it is not remembered between openings).
+export const DEFAULT_SCOPE = "layout:vaultr";
+
 // ------------------------------------------------------------------ chords
 const MOD_WORDS = {
   ctrl: "ctrl", control: "ctrl", secondary: "ctrl",
@@ -184,6 +187,18 @@ export function effectivePairs(pairs) {
   return pairs.filter((p, i) => last.get(p.key) === i);
 }
 
+// Where else `action` is bound: [{section, chord}] for every section other than `scope`, in file order.
+// `sections` is name -> pairs (as the Hotkeys tab reads them). Used so a row can say where its command
+// really runs when the scope being shown has no key for it.
+export function boundElsewhere(sections, action, scope) {
+  const out = [];
+  for (const [name, pairs] of Object.entries(sections ?? {})) {
+    if (name === scope) continue;
+    for (const p of effectivePairs(pairs ?? [])) if (p.action === action) out.push({ section: name, chord: p.key });
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ edits on a pair list
 function newPair(chord, action) {
   const keyRaw = JSON.stringify(chord);
@@ -356,4 +371,72 @@ export function verify(parsed, next, scope, pairs) {
   if (!intLike && Object.keys(after[scope]).join("\n") !== Object.keys(want).join("\n")) {
     throw new Error("internal: key order changed; nothing was written");
   }
+}
+
+// ------------------------------------------------------------------ scopes: what each section means
+// Plain words for a section: where its keys work and when. "Vaultr layout — anywhere in this layout".
+const PANEL_NAMES = { obsidian: "Notes panel", "ob-sessions": "Sessions panel" };
+export function scopeInfo(scope) {
+  const s = String(scope ?? "");
+  let info;
+  if (s === "global") info = { title: "All layouts", when: "everywhere unless a layout overrides", where: "in all layouts" };
+  else if (s === "terminal") info = { title: "In terminals", when: "only while a terminal has focus", where: "in terminals" };
+  else if (s === DEFAULT_SCOPE) info = { title: "Vaultr layout", when: "anywhere in this layout", where: "in the Vaultr layout" };
+  else if (s.startsWith("layout:")) {
+    const name = s.slice(7);
+    info = { title: `Layout ${name}`, when: "anywhere in this layout", where: `in layout ${name}` };
+  } else if (s.startsWith("mod:")) {
+    const name = s.slice(4);
+    const panel = PANEL_NAMES[name] ?? `Mod ${name}`;
+    info = { title: `${panel} (mod:${name})`, when: "only while that panel has focus", where: `in the ${panel} (mod:${name})`, panel };
+  } else info = { title: s, when: `only where Herdr reads the "${s}" section`, where: `in ${s}` };
+  return { ...info, line: `${info.title} — ${info.when}`, panel: info.panel ?? info.title };
+}
+
+// The mod a `mod:<name>` section belongs to, or null for any other section.
+export function modNameOf(scope) {
+  const s = String(scope ?? "");
+  return s.startsWith("mod:") ? s.slice(4) : null;
+}
+
+// A command is a panel's own when its name is `<mod>.<something>` (the mod's own commands). Outside a
+// panel section every command counts as "own" (the rule only applies to panels).
+export function isOwnCommand(scope, action) {
+  const mod = modNameOf(scope);
+  if (mod === null) return true;
+  const name = String(action ?? "").split(":")[0];
+  return name.startsWith(`${mod}.`);
+}
+
+// A key added in a panel for a command that isn't the panel's own only works while the panel has focus.
+// -> null, or { text, to, button } for the row's warning.
+export function scopeWarning(scope, action) {
+  if (modNameOf(scope) === null || isOwnCommand(scope, action)) return null;
+  const { panel } = scopeInfo(scope);
+  return { text: `This key will only work while the ${panel} has focus. Add it to Vaultr layout instead?`, to: DEFAULT_SCOPE, button: "Add to Vaultr layout" };
+}
+
+// Whether a command row is listed in a scope: a panel lists its own commands, plus any command that
+// already has a key in that panel (so the key can be seen and moved); everything else needs showAll.
+export function listedIn(scope, action, hasKeyHere, showAll) {
+  if (modNameOf(scope) === null || showAll || hasKeyHere) return true;
+  return isOwnCommand(scope, action);
+}
+
+// A key of another command bound only in a panel section: { text, from } for its tag, else null.
+export function panelOnlyTag(section, action) {
+  const s = String(section ?? "");
+  if (modNameOf(s) === null || isOwnCommand(s, action)) return null;
+  return { text: `only in ${scopeInfo(s).panel}`, from: s };
+}
+
+// Move one key from one section to another in the file text: bind it in `to` (refused when `to`
+// already holds the chord for another command), then unbind it in `from`. Each step is verified by
+// applyEdit, so only those two sections change.
+// -> { text, changed, took?, conflict? }
+export function moveKey(text, from, to, chord, action) {
+  const first = applyEdit(text, to, { kind: "bind", chord, action });
+  if (first.conflict) return { text, changed: false, conflict: first.conflict };
+  const second = applyEdit(first.text, from, { kind: "unbind", chord, action });
+  return { text: second.text, changed: second.text !== text, took: first.took ?? [] };
 }

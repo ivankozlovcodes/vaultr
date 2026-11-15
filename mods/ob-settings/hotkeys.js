@@ -1,31 +1,30 @@
-// ob-hotkeys: Obsidian's Settings > Hotkeys for Herdr (a dialog, 900 x 0.86). Every command of the
-// Obsidian layout, the Sessions panel, Herdr itself and terminals, with its keys in the chosen
+// hotkeys.js: the Hotkeys tab of ob-settings. Obsidian's Settings > Hotkeys for Herdr. Every command
+// of the Vaultr layout, the Sessions panel, Herdr itself and terminals, with its keys in the chosen
 // keys.json section ("scope"): add (+, then press the keys), remove (x on a key), restore default,
 // conflicts in red, keys a terminal treats differently in amber, inherited keys dimmed.
-// A second tab ("Layout") holds the layout's own settings (window buttons) and the plain-Ctrl keys
-// this layout takes from terminal programs, each with a button to give it back.
+// A second sub-tab ("Layout") holds the window buttons and the plain-Ctrl keys this layout takes from
+// terminal programs, each with a button to give it back.
 //
 // keys.json is edited through keysfile.js: read, change only the scope's section, verify, write
 // atomically against the text just read (re-read and retry once if it changed), then check
 // keys.error and put the old text back if Herdr rejects it. An invalid file is never written.
 //
-// Commands (ob-hotkeys.<cmd>; also the test path, there is no keyboard in tests):
-//   scope:<section>  filter:<text>  assigned:<all|assigned|unassigned>  tab:<hotkeys|layout>
+// ob-settings passes this tab its commands (ob-settings.<cmd>; also the test path, there is no
+// keyboard in tests):
+//   scope:<section>  filter:<text>  assigned:<all|assigned|unassigned>  section:<hotkeys|layout>
 //   capture:<action>[@<chord>]   start "+" capture for that row (with a chord: also press it)
 //   key:<chord>                  a key press during capture (the same path as on_key_down)
 //   bind:<action>@<chord>  remove:<action>@<chord>  restore:<action>
 //   reassign  cancel             answer a conflict ("Ctrl+B is already X")
-//   window-buttons:<auto|always|never>   give-back:<chord>   close
+//   window-buttons:<auto|always|never>   give-back:<chord>   focus
 //   dump[:<section>]             log keys() for a section (what Herdr really uses) to stdout
 
-import { View, div } from "gpui-kit";
+import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle, Scrollbar } from "gpui-base";
-import {
-  props, closeOverlay, nextCommand, keys, appHome, readTextFile, writeTextFile, shared, setShared,
-  settings, window as appWindow,
-} from "herdr";
+import { keys, appHome, readTextFile, writeTextFile, shared, setShared, settings, window as appWindow } from "herdr";
 import { S, tc, alpha, icon, iconButton, chordParts, openMenu, tilde } from "./kit.js";
-import { parseKeys, applyEdit, effectivePairs, canon, writeForm } from "./keysfile.js";
+import { menuAnchor } from "./menu_anchor.js";
+import { parseKeys, applyEdit, moveKey, effectivePairs, canon, writeForm, boundElsewhere, DEFAULT_SCOPE, scopeInfo, scopeWarning, listedIn, panelOnlyTag } from "./keysfile.js";
 import { registry, GROUPS, LAYOUT_SCOPE, SESSIONS_SCOPE, defaultsIn, chainOf, scopeTitle, scopeShort, scopeWhere, titleFor } from "./registry.js";
 
 const FIXED_SCOPES = [LAYOUT_SCOPE, "global", "terminal", SESSIONS_SCOPE];
@@ -37,6 +36,8 @@ const SCOPE_ABOUT = {
 };
 const ASSIGNED = [["all", "All"], ["assigned", "Assigned"], ["unassigned", "Unassigned"]];
 const WINDOW_BUTTONS = [["auto", "Automatic"], ["always", "Always"], ["never", "Never"]];
+const VERBS = new Set(["focus", "section", "scope", "filter", "assigned", "capture", "key", "bind", "remove", "restore",
+  "reassign", "cancel", "window-buttons", "give-back", "dump"]);
 // Keys programs rely on (AGENTS.md "Keys"), named so a warning can say what is lost.
 const PROGRAM_CTRL = {
   a: "start of line", b: "cursor back / tmux prefix", c: "interrupt", d: "end of input", e: "end of line",
@@ -47,11 +48,6 @@ const PROGRAM_CTRL = {
 const KEYS_PATH = () => `${appHome()}/keys.json`;
 const ERROR_PATH = () => `${appHome()}/keys.error`;
 
-function splitCmd(c) {
-  const s = String(c ?? "");
-  const i = s.indexOf(":");
-  return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)];
-}
 // "ob-tabs.open:ob-sessions@reveal@ctrl-alt-r" -> ["ob-tabs.open:ob-sessions@reveal", "ctrl-alt-r"].
 // The chord is after the last "@" (a chord whose key is "@" keeps it: "x@ctrl-@").
 function splitAt(arg) {
@@ -70,13 +66,42 @@ function plainCtrl(chord) {
   return m ? m[1] : null;
 }
 const isModScope = (s) => s.startsWith("mod:");
+// One edit of the file text: a move of a key between two sections, or a change to one section.
+function applyOp(text, scope, op) {
+  if (op.kind === "move") return moveKey(text, scope, op.to, op.chord, op.action);
+  return applyEdit(text, scope, op);
+}
 
-export default class Hotkeys extends View {
-  init(_p, cx) {
-    this.tab = "hotkeys";
-    this.scope = ls("scope", LAYOUT_SCOPE);
+// The tab's state lives on the settings dialog: host.state.hotkeys.
+export function init(host, cx) {
+  host.state.hotkeys = new Hotkeys(host, cx);
+}
+
+// ob-settings sends the tab's commands here; true when this tab handled one.
+export function command(host, verb, arg, cx) {
+  const h = host.state.hotkeys;
+  if (!h || !VERBS.has(verb)) return false;
+  h.command(verb, arg, cx);
+  return true;
+}
+
+// Called when the person opens this tab: the filter takes the keyboard.
+export function focus(host) {
+  host.state.hotkeys?.focusFilter();
+}
+
+export function render(host, t, cx) {
+  return host.state.hotkeys.body(t, cx);
+}
+
+class Hotkeys {
+  constructor(host, cx) {
+    this.host = host;
+    this.section = "hotkeys"; // "hotkeys" | "layout" (sub-tabs)
+    this.scope = DEFAULT_SCOPE; // every opening starts on the Vaultr layout, never on a remembered panel
     this.filter = ls("filter", "");
     this.assigned = "all";
+    this.showAll = false;   // a panel scope lists every command (not remembered)
     this.text = null;       // keys.json as last read
     this.parsed = null;     // parseKeys(text) or null
     this.parseError = null; // why keys.json can't be parsed
@@ -99,15 +124,12 @@ export default class Hotkeys extends View {
     this.input.on("focus", (_e, cx) => { this.inputFocused = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.inputFocused = false; cx.notify(); });
     this.input.focus();
-    cx.timer.after(60, () => { if (!this.capture) this.input.focus(); });
+    cx.timer.after(120, () => { if (!this.capture) this.input.focus(); });
     cx.spawn(async (cx) => { await this.load(); cx.notify(); });
-    cx.spawn(async (cx) => {
-      for (;;) {
-        const c = await nextCommand();
-        try { this.command(c, cx); } catch (e) { console.log(`ob-hotkeys: ${c} failed: ${e?.stack ?? e}`); }
-        cx.notify();
-      }
-    });
+  }
+
+  focusFilter() {
+    if (!this.capture) this.input.focus();
   }
 
   // ---------------------------------------------------------------- data
@@ -189,11 +211,9 @@ export default class Hotkeys extends View {
   }
 
   // ---------------------------------------------------------------- commands
-  command(c, cx) {
-    const [verb, arg] = splitCmd(c);
-    if (verb === "close") return this.close();
+  command(verb, arg, cx) {
     if (verb === "focus") { if (this.capture) this.handle.focus(); else this.input.focus(); return; }
-    if (verb === "tab") { if (arg === "hotkeys" || arg === "layout") this.tab = arg; return; }
+    if (verb === "section") { if (arg === "hotkeys" || arg === "layout") this.section = arg; return; }
     if (verb === "scope") { if (arg) this.setScope(arg); return; }
     if (verb === "filter") { this.filter = arg; this.input.set_value(arg); lsSet("filter", arg); return; }
     if (verb === "assigned") { if (ASSIGNED.some(([k]) => k === arg)) this.assigned = arg; return; }
@@ -217,15 +237,12 @@ export default class Hotkeys extends View {
       const sec = arg || this.scope;
       let all = [];
       try { all = keys() ?? []; } catch { all = []; }
-      console.log(`ob-hotkeys: keys() ${sec}: ${JSON.stringify(all.filter((k) => k.section === sec).map((k) => [k.keys, k.action]))}`);
+      console.log(`ob-settings: keys() ${sec}: ${JSON.stringify(all.filter((k) => k.section === sec).map((k) => [k.keys, k.action]))}`);
     }
   }
 
-  close() { closeOverlay(props()?.overlay); }
-
   setScope(s) {
     this.scope = s;
-    lsSet("scope", s);
     this.capture = null;
     this.pending = null;
   }
@@ -234,7 +251,7 @@ export default class Hotkeys extends View {
     this.pending = null;
     this.capture = action;
     this.liveMods = null;
-    this.tab = "hotkeys";
+    this.section = "hotkeys";
     this.handle.focus();
     const idx = this.listIndexOf(action);
     if (idx >= 0) this.scroll.scroll_to_item(idx);
@@ -286,6 +303,10 @@ export default class Hotkeys extends View {
     this.pending = null;
     this.edit({ kind: "bind", action: p.action, chord: p.chord, force: true }, cx);
   }
+  // A key of a panel section moves to the Vaultr layout (queued like any edit).
+  moveToLayout(from, chord, action, cx) {
+    this.edit({ kind: "move", scope: from, to: LAYOUT_SCOPE, chord, action }, cx);
+  }
   restore(action, cx) {
     const row = registry().find((r) => r.action === action);
     const d = row ? defaultsIn(row, this.scope) : undefined;
@@ -319,7 +340,7 @@ export default class Hotkeys extends View {
         await this.write(op, scope, cx);
       } catch (e) {
         this.banner = { level: "error", text: String(e?.message ?? e) };
-        console.log(`ob-hotkeys: edit failed: ${e?.stack ?? e}`);
+        console.log(`ob-settings: edit failed: ${e?.stack ?? e}`);
       } finally {
         this.inflight--;
         done();
@@ -341,10 +362,15 @@ export default class Hotkeys extends View {
     for (;;) {
       prev = await readTextFile(path);
       try {
-        res = applyEdit(prev ?? "{}\n", scope, op);
+        res = applyOp(prev ?? "{}\n", scope, op);
       } catch (e) {
         if (/internal:/.test(String(e?.message))) throw e;
         this.banner = { level: "error", text: `keys.json has an error; fix it first (${e?.message ?? e}). Nothing was changed.` };
+        return;
+      }
+      if (res.conflict && op.kind === "move") {
+        const rows = registry();
+        this.banner = { level: "error", text: `${label(op.chord)} is already ${res.conflict.map((a) => this.titleOf(a, rows)).join(", ")} ${scopeWhere(op.to)}; nothing was moved.` };
         return;
       }
       if (res.conflict) {
@@ -384,6 +410,7 @@ export default class Hotkeys extends View {
     const t = this.titleOf(op.action, rows);
     const where = scopeTitle(scope);
     const tookText = took.length ? ` (taken from ${took.map((a) => this.titleOf(a, rows)).join(", ")})` : "";
+    if (op.kind === "move") return `Moved ${label(op.chord)} (${t}) from ${where} to ${scopeTitle(op.to)}`;
     if (op.kind === "bind") return `Saved: ${label(op.chord)} → ${t} · ${where}${tookText}`;
     if (op.kind === "unbind") return `Removed ${label(op.chord)} from ${t} · ${where}`;
     if (op.kind === "clear") return `Cleared the keys of ${t} · ${where}`;
@@ -399,8 +426,13 @@ export default class Hotkeys extends View {
     const out = [];
     for (const r of all) {
       const chips = this.chips(r, S, secs, all);
+      // Where else the command really runs (another section): shown under the row, unless this scope lists it.
+      const elsewhere = boundElsewhere(secs, r.action, S)
+        .filter((e) => !chips.some((c) => c.kind === "inherited" && c.from === e.section && canon(c.chord) === canon(e.chord)));
       // The row being captured or asked about stays listed whatever the filters say.
-      if (r.action === this.capture || r.action === this.pending?.action) { out.push({ ...r, chips }); continue; }
+      if (r.action === this.capture || r.action === this.pending?.action) { out.push({ ...r, chips, elsewhere }); continue; }
+      // A panel lists its own commands (and any that already have a key here) unless "show all" is on.
+      if (!listedIn(S, r.action, chips.some((c) => c.kind === "own"), this.showAll)) continue;
       const assigned = chips.some((c) => c.kind === "own" || (c.kind === "inherited" && !c.over));
       if (this.assigned === "assigned" && !assigned) continue;
       if (this.assigned === "unassigned" && assigned) continue;
@@ -408,7 +440,7 @@ export default class Hotkeys extends View {
         const hay = [r.title, r.action, r.group, ...chips.flatMap((c) => [c.chord, canon(c.chord), label(c.chord).replace(/ /g, "")])].join(" ").toLowerCase();
         if (!words.every((w) => hay.includes(w))) continue;
       }
-      out.push({ ...r, chips });
+      out.push({ ...r, chips, elsewhere });
     }
     return { rows: out, total: all.length, all };
   }
@@ -430,8 +462,8 @@ export default class Hotkeys extends View {
   }
 
   // ---------------------------------------------------------------- render
-  render(cx) {
-    const t = tc();
+  // The tab's content, drawn inside ob-settings' content area (which gives it the full height).
+  body(t, cx) {
     // keys() changed (Herdr reloaded keys.json, maybe edited by hand): read the file again.
     let sig = "";
     try { sig = JSON.stringify(keys()); } catch { sig = ""; }
@@ -440,12 +472,12 @@ export default class Hotkeys extends View {
       this.keysSig = sig;
       if (!first && !this.busy) cx.timer.after(0, (cx) => { cx.spawn(async (cx) => { await this.load(); cx.notify(); }); });
     }
-    return v_flex().id("root").track_focus(this.handle).size_full().min_h(0).bg(t.popover).text_color(t.foreground)
+    return v_flex().id("hk-body").flex_1().min_h(0).track_focus(this.handle).text_color(t.foreground)
       .on_size_change((s, cx) => { const w = s.width / (settings().zoom || 1); if (Math.abs(w - this.width) > 1) { this.width = w; cx.notify(); } })
       .on_key_down((e, cx) => this.onKey(e, cx))
       .on_modifiers_changed((e, cx) => { if (this.capture) { this.liveMods = e.modifiers; cx.notify(); } })
-      .child(this.header(t))
-      .child(this.tab === "hotkeys" ? this.hotkeysTab(t) : this.layoutTab(t));
+      .child(this.subnav(t))
+      .child(this.section === "hotkeys" ? this.hotkeysTab(t) : this.layoutTab(t));
   }
 
   onKey(e, cx) {
@@ -461,60 +493,20 @@ export default class Hotkeys extends View {
     if (e.key === "escape") {
       cx.stop_propagation();
       if (this.pending) { this.pending = null; cx.notify(); return; }
-      this.close();
+      this.host.dismiss();
     }
   }
 
-  header(t) {
+  subnav(t) {
     const seg = (id, items, cur, onPick) => h_flex().flex_none().h(26).p(2).gap(2).rounded(S.radiusLg).bg(t.background).border_1().border_color(t.input)
       .children(items.map(([k, text]) => h_flex().id(`${id}-${k}`).h_full().px(10).rounded(S.radius).items_center().text_size(S.textSm).cursor_pointer()
         .text_color(k === cur ? t.foreground : t.muted).when(k === cur, (el) => el.bg(t.selected).font_medium())
         .when(k !== cur, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
-        .on_click(() => onPick(k)).child(text)));
-    return h_flex().h(52).flex_none().px(20).gap(12).items_center().border_b(1).border_color(t.border)
-      .child(icon("keyboard", 18, t.muted))
-      .child(div().text_size(S.textLg + 1).font_semibold().child(this.tab === "hotkeys" ? "Hotkeys" : "Layout settings"))
-      .child(div().flex_1())
-      .child(seg("tabs", [["hotkeys", "Hotkeys"], ["layout", "Layout"]], this.tab, (k) => { this.tab = k; this.capture = null; this.pending = null; }))
-      .child(iconButton({ id: "hk-close", icon: "x", tip: "Close (Esc)", onClick: () => this.close() }));
-  }
-
-  hotkeysTab(t) {
-    const secs = this.sections();
-    const { rows, total, all } = this.rows(secs);
-    const items = this.listItems(rows);
-    const scopes = this.scopes(secs);
-    const seg = h_flex().flex_none().h(28).p(2).gap(2).rounded(S.radiusLg).bg(t.background).border_1().border_color(t.input)
-      .children(ASSIGNED.map(([k, text]) => h_flex().id(`as-${k}`).h_full().px(9).rounded(S.radius).items_center().text_size(S.textSm).cursor_pointer()
-        .text_color(k === this.assigned ? t.foreground : t.muted).when(k === this.assigned, (el) => el.bg(t.selected).font_medium())
-        .when(k !== this.assigned, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
-        .on_click((_e, cx) => { this.assigned = k; cx.notify(); }).child(text)));
-    const scopeBtn = h_flex().id("hk-scope").flex_none().h(28).px(10).gap(6).items_center().rounded(S.radiusLg).border_1().border_color(t.input)
-      .bg(t.background).text_size(S.textSm).cursor_pointer().hover((s) => s.bg(t.hover))
-      .tooltip("Which keys.json section you see and edit")
-      .on_click(() => openMenu(scopes.map((s) => ({ label: scopeTitle(s), hint: s, checked: s === this.scope, command: `ob-hotkeys.scope:${s}` })), { width: 300, title: "Keys for" }))
-      .child(icon("layers", S.iconSm, t.muted))
-      .child(div().text_color(t.foreground).child(scopeTitle(this.scope)))
-      .child(icon("chevron-down", S.iconXs, t.dim));
-    const filterBox = h_flex().id("hk-filter").flex_1().min_w(120).h(28).px(8).gap(6).items_center().rounded(S.radiusLg).bg(t.background)
-      .border_1().border_color(this.inputFocused && !this.capture ? alpha(t.accent, 0.8) : t.input)
-      .child(icon("search", S.iconSm, t.dim))
-      .child(div().flex_1().min_w(0).child(Input.new(this.input).h_full().text_size(S.text).text_color(t.foreground)))
-      .when(Boolean(this.filter), (el) => el.child(iconButton({ id: "hk-filter-clear", icon: "x", size: 20, iconSize: S.iconXs, tip: "Clear filter",
-        onClick: (_e, cx) => { this.filter = ""; this.input.set_value(""); lsSet("filter", ""); this.input.focus(); cx.notify(); } })));
-    const about = SCOPE_ABOUT[this.scope] ?? `Keys of the ${this.scope} section of keys.json. Dim keys are inherited.`;
-    return v_flex().flex_1().min_h(0)
-      .child(h_flex().flex_none().px(20).pt(14).pb(8).gap(8).items_center().child(filterBox).child(seg).child(scopeBtn))
-      .child(h_flex().flex_none().px(20).pb(10).gap(10).items_center().text_size(S.textSm).text_color(t.dim)
-        .child(div().flex_1().min_w(0).truncate().child(about))
-        .child(div().flex_none().text_color(t.muted).child(rows.length === total ? `${total} commands` : `Showing ${rows.length} of ${total}`)))
-      .when(Boolean(this.parseError || this.keysError || this.banner), (el) => el.child(this.bannerRow(t)))
-      .child(div().flex_none().h(1).bg(t.border))
-      .child(div().flex_1().min_h(0).relative()
-        .child(v_flex().id("hk-list").size_full().overflow_y_scroll().track_scroll(this.scroll).pb(8)
-          .children(items.length ? items.map((it) => (it.head ? this.groupHead(t, it) : this.row(t, it.row, all))) : [this.empty(t)]))
-        .child(Scrollbar.vertical("hk-list").absolute().inset_0()))
-      .child(this.footer(t));
+        .on_click((_e, cx) => onPick(k, cx)).child(text)));
+    return h_flex().flex_none().px(20).pt(12).items_center()
+      .child(seg("hk-sub", [["hotkeys", "Hotkeys"], ["layout", "Layout"]], this.section, (k, cx) => {
+        this.section = k; this.capture = null; this.pending = null; cx.notify();
+      }));
   }
 
   bannerRow(t) {
@@ -539,10 +531,60 @@ export default class Hotkeys extends View {
   }
 
   empty(t) {
+    const hint = isModScope(this.scope) && !this.showAll
+      ? "This panel has no commands of its own in the list. Show all commands to bind one here; it works only while the panel has focus."
+      : this.assigned !== "all" ? `Try All instead of ${this.assigned === "assigned" ? "Assigned" : "Unassigned"}, or another filter.` : "Try a shorter filter, a key like ctrl+b, or another scope.";
     return v_flex().w_full().py(48).gap(8).items_center()
       .child(icon("search", 28, t.dim))
       .child(div().text_size(S.text).font_medium().text_color(t.muted).child("No commands match"))
-      .child(div().text_size(S.textSm).text_color(t.dim).child(this.assigned !== "all" ? `Try All instead of ${this.assigned === "assigned" ? "Assigned" : "Unassigned"}, or another filter.` : "Try a shorter filter, a key like ctrl+b, or another scope."));
+      .child(div().text_size(S.textSm).text_color(t.dim).child(hint));
+  }
+
+  // ---------------------------------------------------------------- the Hotkeys sub-tab
+  hotkeysTab(t) {
+    const secs = this.sections();
+    const { rows, total, all } = this.rows(secs);
+    const items = this.listItems(rows);
+    const scopes = this.scopes(secs);
+    const seg = h_flex().flex_none().h(28).p(2).gap(2).rounded(S.radiusLg).bg(t.background).border_1().border_color(t.input)
+      .children(ASSIGNED.map(([k, text]) => h_flex().id(`as-${k}`).h_full().px(9).rounded(S.radius).items_center().text_size(S.textSm).cursor_pointer()
+        .text_color(k === this.assigned ? t.foreground : t.muted).when(k === this.assigned, (el) => el.bg(t.selected).font_medium())
+        .when(k !== this.assigned, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
+        .on_click((_e, cx) => { this.assigned = k; cx.notify(); }).child(text)));
+    const scopeBtn = h_flex().id("hk-scope").flex_none().h(28).px(10).gap(6).items_center().rounded(S.radiusLg).border_1().border_color(t.input)
+      .bg(t.background).text_size(S.textSm).cursor_pointer().hover((s) => s.bg(t.hover))
+      .tooltip("Which keys.json section you see and edit")
+      // The menu opens under this button (its bounds, taken on press), not at the pointer.
+      .on_mouse_down("left", (e) => { this.scopeBounds = e.bounds ?? null; })
+      .on_click(() => openMenu(scopes.map((s) => ({ label: scopeInfo(s).line, hint: s, checked: s === this.scope, command: `ob-settings.scope:${s}` })), { width: 380, title: "Keys for", at: menuAnchor(this.scopeBounds) }))
+      .child(icon("layers", S.iconSm, t.muted))
+      .child(div().text_color(t.foreground).child(scopeTitle(this.scope)))
+      .child(icon("chevron-down", S.iconXs, t.dim));
+    const filterBox = h_flex().id("hk-filter").flex_1().min_w(120).h(28).px(8).gap(6).items_center().rounded(S.radiusLg).bg(t.background)
+      .border_1().border_color(this.inputFocused && !this.capture ? alpha(t.accent, 0.8) : t.input)
+      .child(icon("search", S.iconSm, t.dim))
+      .child(div().flex_1().min_w(0).child(Input.new(this.input).h_full().text_size(S.text).text_color(t.foreground)))
+      .when(Boolean(this.filter), (el) => el.child(iconButton({ id: "hk-filter-clear", icon: "x", size: 20, iconSize: S.iconXs, tip: "Clear filter",
+        onClick: (_e, cx) => { this.filter = ""; this.input.set_value(""); lsSet("filter", ""); this.input.focus(); cx.notify(); } })));
+    const info = scopeInfo(this.scope);
+    const note = isModScope(this.scope)
+      ? (this.showAll ? "Every command is listed. A key for a command that isn't this panel's works only while the panel has focus."
+        : "Only this panel's own commands are listed. Show all commands to find others.")
+      : SCOPE_ABOUT[this.scope] ?? `Keys of the ${this.scope} section of keys.json. Dim keys are inherited.`;
+    return v_flex().flex_1().min_h(0)
+      .child(h_flex().flex_none().px(20).pt(10).pb(8).gap(8).items_center().child(filterBox).child(seg).child(scopeBtn))
+      .child(h_flex().flex_none().px(20).pb(10).gap(10).items_center().text_size(S.textSm).text_color(t.dim)
+        .child(div().flex_1().min_w(0).truncate().child(`${info.line}. ${note}`))
+        .when(isModScope(this.scope), (el) => el.child(this.smallButton(t, "hk-showall", this.showAll ? "Panel's own only" : "Show all commands", false,
+          (_e, cx) => { this.showAll = !this.showAll; cx.notify(); })))
+        .child(div().flex_none().text_color(t.muted).child(rows.length === total ? `${total} commands` : `Showing ${rows.length} of ${total}`)))
+      .when(Boolean(this.parseError || this.keysError || this.banner), (el) => el.child(this.bannerRow(t)))
+      .child(div().flex_none().h(1).bg(t.border))
+      .child(div().flex_1().min_h(0).relative()
+        .child(v_flex().id("hk-list").size_full().overflow_y_scroll().track_scroll(this.scroll).pb(8)
+          .children(items.length ? items.map((it) => (it.head ? this.groupHead(t, it) : this.row(t, it.row, all))) : [this.empty(t)]))
+        .child(Scrollbar.vertical("hk-list").absolute().inset_0()))
+      .child(this.footer(t));
   }
 
   row(t, r, all) {
@@ -563,6 +605,15 @@ export default class Hotkeys extends View {
       }
       else if (c.shadowed) warns.push({ tone: "blocked", text: `${label(c.chord)} is listed twice in keys.json; the later entry wins` });
       else if (c.over) warns.push({ tone: "dim", text: `${label(c.chord)} (${scopeShort(c.from)}) is used by ${c.overTitle} ${scopeWhere(c.over.section)}` });
+    }
+    // A key of another command that only lives in a panel: tagged, with a move to the Vaultr layout.
+    if (scopeWarning(S_, r.action) && (own.length || capturing || this.pending?.action === r.action)) {
+      warns.push({ tone: "warn", text: scopeWarning(S_, r.action).text, moveAll: editable ? own.map((c) => c.chord) : [], button: "Add to Vaultr layout" });
+    }
+    for (const e of r.elsewhere ?? []) {
+      const tag = panelOnlyTag(e.section, r.action);
+      if (tag) warns.push({ tone: "warn", text: `${label(e.chord)} · ${tag.text}`, moveFrom: editable ? { section: e.section, chord: e.chord } : null, button: "Move to Vaultr layout" });
+      else warns.push({ tone: "dim", text: `${label(e.chord)} also runs it ${scopeWhere(e.section)}` });
     }
     const narrow = this.width > 0 && this.width < 640;
     const shown = JSON.stringify(r.action).slice(1, -1); // control chars as \u0017, like keys.json
@@ -593,12 +644,20 @@ export default class Hotkeys extends View {
               tip: editable ? `Add a key ${scopeWhere(S_)}` : "keys.json can't be edited right now",
               onClick: (_e, cx) => { this.startCapture(r.action); cx.notify(); } }))))
       .children(warns.map((w, i) => h_flex().id(`hk-w-${r.action}-${i}`).gap(8).items_center().pl(0).text_size(S.textXs)
-        .text_color(w.tone === "blocked" ? t.blocked : t.dim)
-        .child(icon(w.tone === "blocked" ? "alert" : "info", S.iconXs, w.tone === "blocked" ? t.blocked : t.dim))
+        .text_color(w.tone === "blocked" ? t.blocked : w.tone === "warn" ? t.working : t.dim)
+        .child(icon(w.tone === "dim" ? "info" : "alert", S.iconXs, w.tone === "blocked" ? t.blocked : w.tone === "warn" ? t.working : t.dim))
         .child(div().min_w(0).truncate().child(w.text))
         .when(Boolean(w.pending), (el) => el
           .child(this.smallButton(t, `hk-reassign-${r.action}`, "Reassign", true, (_e, cx) => { this.reassign(cx); cx.notify(); }))
-          .child(this.smallButton(t, `hk-keep-${r.action}`, "Cancel", false, (_e, cx) => { this.pending = null; cx.notify(); })))));
+          .child(this.smallButton(t, `hk-keep-${r.action}`, "Cancel", false, (_e, cx) => { this.pending = null; cx.notify(); })))
+        .when(Boolean(w.moveAll?.length), (el) => el.child(this.smallButton(t, `hk-wm-${r.action}-${i}`, w.button, false, (_e, cx) => {
+          for (const c of w.moveAll) this.moveToLayout(S_, c, r.action, cx);
+          cx.notify();
+        })))
+        .when(Boolean(w.moveFrom), (el) => el.child(this.smallButton(t, `hk-wm-${r.action}-${i}`, w.button, false, (_e, cx) => {
+          this.moveToLayout(w.moveFrom.section, w.moveFrom.chord, r.action, cx);
+          cx.notify();
+        })))));
   }
 
   smallButton(t, id, text, primary, onClick) {
@@ -659,7 +718,7 @@ export default class Hotkeys extends View {
       .child(div().flex_none().child("Esc to close"));
   }
 
-  // ---------------------------------------------------------------- the Layout tab
+  // ---------------------------------------------------------------- the Layout sub-tab
   layoutTab(t) {
     const cur = shared("ob.settings");
     const wb = (cur && typeof cur === "object" && cur.windowButtons) || "auto";
@@ -680,7 +739,7 @@ export default class Hotkeys extends View {
       .bg(alpha(t.working, 0.1)).text_size(S.textXs).font_medium().text_color(t.working).child(label(chord));
     const layoutSwitch = rows.find((r) => r.action === "layout.switch");
     const nextLayout = effectivePairs(this.sections().global ?? []).find((p) => p.action === "layout.switch")?.key;
-    return v_flex().id("lt-body").flex_1().min_h(0).px(24).py(8).overflow_y_scroll()
+    return v_flex().id("lt-body").flex_1().min_h(0).px(20).py(8).overflow_y_scroll()
       .child(div().pt(10).pb(4).text_size(S.textXs).font_semibold().text_color(t.dim).child("WINDOW"))
       .child(rowEl("Window buttons", `Minimize, maximize and close in the top-right strip. Automatic follows Herdr: ${w?.buttons ? "shown" : "hidden"} on this computer${w?.buttons ? "" : " (the window manager draws none)"}.`, seg))
       .child(div().pt(18).pb(4).text_size(S.textXs).font_semibold().text_color(t.dim).child("KEYS TAKEN FROM TERMINAL PROGRAMS"))

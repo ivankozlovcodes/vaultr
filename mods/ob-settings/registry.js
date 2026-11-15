@@ -5,15 +5,16 @@
 // keys.json that the tables don't name, so nothing in the file is ever hidden).
 
 import { commands, keys } from "herdr";
+import { DEFAULT_SCOPE, scopeInfo } from "./keysfile.js";
 
-export const LAYOUT_SCOPE = "layout:vaultr";
+export const LAYOUT_SCOPE = DEFAULT_SCOPE;
 export const SESSIONS_SCOPE = "mod:ob-sessions";
 
 // The Obsidian layout's own commands (SPEC 6.1 order), with the Obsidian command each key mirrors
 // (the person's .obsidian/hotkeys.json overrides marked "yours").
 const OB = [
   ["mod.open:ob-switcher", "Open quick switcher", ["ctrl-p"], "Quick switcher: Open quick switcher (yours: Ctrl+P)"],
-  ["app.palette", "Open command palette", ["ctrl-shift-p"], "Command palette: Open command palette (yours: Ctrl+Shift+P)"],
+  ["ob-tabs.switcher:commands", "Open command palette", ["ctrl-shift-p"], "Command palette: Open command palette (yours: Ctrl+Shift+P)"],
   ["layout.toggle:ob-left", "Toggle left sidebar", ["ctrl-b"], "Toggle left sidebar (yours: Ctrl+B)"],
   ["layout.toggle:ob-right", "Toggle right sidebar", ["ctrl-shift-b"], "Toggle right sidebar (yours: Ctrl+Shift+B)"],
   ["pane.split:right", "Split right", ["ctrl-\\"], "Split vertically (yours: Ctrl+\\)"],
@@ -22,9 +23,9 @@ const OB = [
   ["ob-tabs.switcher:move", "Move tab to another space", ["ctrl-shift-m"], "Files: Move current file to another folder (yours: Ctrl+Shift+M)"],
   ["ob-tabs.copy-path", "Copy path", ["ctrl-shift-c", "ctrl-alt-c"], "Copy file path (yours: Ctrl+Shift+C)"],
   ["ob-tabs.daily", "Open today's daily note", ["ctrl-shift-d"], "Daily notes: Open today's daily note (yours: Ctrl+Shift+D)"],
-  ["ob-tabs.open:ob-search", "Search all sessions", ["ctrl-shift-f", "ctrl-alt-f"], "Search: Search in all files (Ctrl+Shift+F)"],
+  ["ob-tabs.open:ob-search", "Search all sessions", ["ctrl-shift-k", "ctrl-alt-f"], "Search: Search in all files (Ctrl+Shift+K)"],
   ["ob-tabs.open:ob-graph", "Open graph view", ["ctrl-shift-g"], "Graph view: Open graph view (Ctrl+G there; Ctrl+G stays with programs here)"],
-  ["ob-tabs.toggle:ob-subagents", "Toggle Subagents", ["ctrl-shift-a"], null],
+  ["ob-tabs.toggle:ob-outline", "Toggle Outline", ["ctrl-shift-a"], null],
   ["ob-tabs.open:ob-outline", "Open outline", ["ctrl-alt-o"], "Outline: Show outline"],
   ["ob-tabs.open:ob-props", "Show properties", ["ctrl-alt-i"], "Properties: Show file properties"],
   ["ob-tabs.open:ob-agents", "Show agents", ["ctrl-alt-a"], null],
@@ -32,7 +33,7 @@ const OB = [
   ["ob-tabs.back", "Navigate back", ["ctrl-alt-left"], "Navigate back (Ctrl+Alt+←)"],
   ["ob-tabs.forward", "Navigate forward", ["ctrl-alt-right"], "Navigate forward (Ctrl+Alt+→)"],
   ["ob-tabs.last", "Go to last tab", ["ctrl-9"], "Go to last tab (Ctrl+9)"],
-  ["mod.open:ob-hotkeys", "Open hotkeys", ["ctrl-alt-k"], "Settings: Hotkeys"],
+  ["ob-tabs.settings:hotkeys", "Open hotkeys", ["ctrl-alt-k"], "Settings: Hotkeys"],
   ["ob-tabs.tab-list", "Show tab list", ["ctrl-alt-t"], null],
   ["ob-tabs.zen", "Toggle Zen mode", ["ctrl-shift-z", "ctrl-alt-z"], "Zen mode: Toggle"],
   ["ob-tabs.open:ob-bookmarks", "Show bookmarks", [], "Bookmarks: Show bookmarks"],
@@ -223,23 +224,13 @@ export function chainOf(scope) {
   return ["global"];
 }
 
-// Scope names for the menu and chips.
+// Scope names for the menu and chips, and the sentence forms: see scopeInfo in keysfile.js.
 export function scopeTitle(scope) {
-  if (scope === LAYOUT_SCOPE) return "Vaultr layout";
-  if (scope === "global") return "All layouts";
-  if (scope === "terminal") return "In terminals";
-  if (scope === SESSIONS_SCOPE) return "Sessions panel";
-  if (scope.startsWith("layout:")) return `Layout: ${scope.slice(7)}`;
-  if (scope.startsWith("mod:")) return `Mod: ${scope.slice(4)}`;
-  return scope;
+  return scopeInfo(scope).title;
 }
 // "in the Vaultr layout", "in terminals": for sentences.
 export function scopeWhere(scope) {
-  if (scope === LAYOUT_SCOPE) return "in the Vaultr layout";
-  if (scope === "global") return "in all layouts";
-  if (scope === "terminal") return "in terminals";
-  if (scope === SESSIONS_SCOPE) return "in the Sessions panel";
-  return `in ${scopeTitle(scope)}`;
+  return scopeInfo(scope).where;
 }
 export function scopeShort(scope) {
   if (scope === LAYOUT_SCOPE) return "layout";
