@@ -4,7 +4,7 @@
 // invisible spring that makes a tab read as a small cluster, like a folder in Obsidian's graph. Pane names: paneLabel
 // (kit/names.js). Edges: containment and sub-agent -> parent session links, both 1 px solid (Obsidian's one style).
 // "Active only" (on by default, remembered per Local/Global view): the foreground agents placed in tabs, their live
-// sub-agents, and the machines and spaces holding them. Off shows every sub-agent, finished ones too (filter.js).
+// sub-agents, and every machine and space (always shown). Off shows every sub-agent, finished ones too (filter.js).
 // Modes: Local (Quartz's local graph: the focused session and what is within `depth` links of it) and Global (all).
 // Layout: sim.js (Quartz's forces on the vendored d3-force; tested by test/test_ob_graph.py). Positions are kept per
 // node, so a refresh does not move anything; a new node enters a link distance from its parent; the simulation
@@ -541,7 +541,7 @@ export default class Graph extends View {
         cx.stop_propagation(); cx.notify();
       });
     if (!g.nodes.size || (this.mode === "local" && !g.focus)) {
-      const words = emptyCopy(this.mode, this.activeNow());
+      const words = emptyCopy(this.mode);
       return root.child(v_flex().size_full().child(emptyState({ icon: "graph", title: words.title, body: words.body,
         action: this.mode === "local" ? { id: "to-global", label: "Show the global graph", onClick: (_e, cx) => { this.command("mode:global", cx); cx.notify(); } } : null })))
         .child(this.toolbar(t));

@@ -16,7 +16,7 @@
 // reshuffles Global.
 //
 // Active only (filterGraph, one switch per view, see activeState): on keeps each active foreground agent pane, every active
-// subagent that hangs (directly or through another kept subagent) off a kept agent, and the machines and spaces above them. An anchor (the focus) and its ancestors are always kept. Off keeps everything, finished subagents too.
+// subagent that hangs (directly or through another kept subagent) off a kept agent, and every machine and space (the frame, kept even with nothing active under them). An anchor (the focus) and its ancestors are always kept. Off keeps everything, finished subagents too.
 
 import { activityOf } from "./agents.js";
 
@@ -97,6 +97,9 @@ export function activeOnly(graph, anchor = null, now = Date.now()) {
   for (const n of graph.nodes) {
     if (TOUCHED.has(n.kind) && (adj.get(n.key) ?? []).some((o) => keep.has(o))) keep.add(n.key);
   }
+  // Machines and spaces are the graph's frame: always kept, with or without an active agent under them. Added only now, so
+  // a machine never anchors a subagent (an agent that hangs off no agent stays hidden).
+  for (const n of graph.nodes) if (n.kind === "m" || n.kind === "s") keep.add(n.key);
   // The machine and space of every kept node (and of the anchor).
   for (const k of [...keep]) {
     for (let p = byKey.get(k)?.parent; p && byKey.has(p) && !keep.has(p); p = byKey.get(p).parent) keep.add(p);
@@ -122,11 +125,9 @@ export function shownGraph(lists, { mode, focus = null, depth = 1, active = true
   return { nodes: shown.nodes, edges: shown.edges, focus: drawn };
 }
 
-// The words of the empty graph. In Global, Active only with nothing active is the one case where the filter, not the
-// absence of machines and agents, is what leaves the view empty: say so, and what to do.
-export function emptyCopy(mode, active) {
+// The words of the empty graph. (Active only keeps every machine and space, so Global is empty only with none to show.)
+export function emptyCopy(mode) {
   if (mode === "local") return { title: "No session focused", body: "The local graph follows the focused session. Switch to Global to see every machine." };
-  if (active) return { title: "Nothing is active", body: "Active only is on and no agent is working. Switch it off to see every machine, space and agent." };
   return { title: "Nothing to draw", body: "Machines, spaces, panes and agents appear here." };
 }
 

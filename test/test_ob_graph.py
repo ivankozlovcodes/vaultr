@@ -466,9 +466,9 @@ class ActiveOnly(unittest.TestCase):
         r = run('console.log(JSON.stringify(S.filterGraph(P.g, P.on)));', {"g": self.graph(), "on": on}, FILTER)
         return r
 
-    def test_on_keeps_the_foreground_agent_its_tab_space_and_machine_and_its_live_subagents(self):
+    def test_on_keeps_every_machine_and_space_the_foreground_agent_and_its_live_subagents(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}
-        self.assertEqual(keys, {"m:laptop", "s:A", "p:A1a", "r:sub", "c:sub", "h:bg"})
+        self.assertEqual(keys, {"m:laptop", "m:pi", "m:spare", "s:A", "s:B", "p:A1a", "r:sub", "c:sub", "h:bg"})
 
     def test_finished_subagents_are_hidden_and_live_ones_kept(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}
@@ -480,11 +480,19 @@ class ActiveOnly(unittest.TestCase):
         self.assertNotIn("p:A2a", keys)
         self.assertNotIn("p:A1b", keys)
 
-    def test_a_dormant_machine_is_hidden(self):
+    def test_machines_and_spaces_are_always_kept_even_with_nothing_active_under_them(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}
-        self.assertNotIn("m:spare", keys, "no agent under it")
-        self.assertNotIn("m:pi", keys, "its only live subagent hangs off no agent")
-        self.assertNotIn("h:orphan", keys)
+        self.assertIn("m:spare", keys, "no agent under it")
+        self.assertIn("m:pi", keys)
+        self.assertIn("s:B", keys, "a space with only idle panes")
+        self.assertNotIn("h:orphan", keys, "its only live subagent hangs off no agent, so it is still dropped")
+
+    def test_with_no_agent_active_the_frame_is_still_drawn(self):
+        r = run('console.log(JSON.stringify(S.filterGraph(P.g, true, null, 0).nodes.map((n) => n.key).sort()));',
+                {"g": {"nodes": [{"key": "m:a", "kind": "m"}, {"key": "s:1", "kind": "s", "parent": "m:a"},
+                                 {"key": "p:x", "kind": "p", "parent": "s:1", "status": "idle", "foreground": True}],
+                       "edges": [["m:a", "s:1", "contain"], ["s:1", "p:x", "contain"]]}}, FILTER)
+        self.assertEqual(r, ["m:a", "s:1"])
 
     def test_a_live_subagent_of_a_plain_terminal_is_hidden(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}
@@ -1270,18 +1278,12 @@ class ShownGraph(unittest.TestCase):
         self.assertIn("art:x", r["n"])
         self.assertEqual(r["focus"], "p:A1b")
 
-    def copy(self, mode, active):
-        return run("console.log(JSON.stringify(S.emptyCopy(P.mode, P.active)));", {"mode": mode, "active": active}, FILTER)
+    def copy(self, mode):
+        return run("console.log(JSON.stringify(S.emptyCopy(P.mode)));", {"mode": mode}, FILTER)
 
-    def test_an_empty_global_graph_says_when_active_only_is_what_hides_everything(self):
-        r = self.copy("global", True)
-        self.assertEqual(r["title"], "Nothing is active")
-        self.assertIn("Active only", r["body"])
-        self.assertIn("switch it off", r["body"].lower())
-
-    def test_the_other_empty_graphs_keep_their_words(self):
-        self.assertEqual(self.copy("global", False), {"title": "Nothing to draw", "body": "Machines, spaces, panes and agents appear here."})
-        r = self.copy("local", True)
+    def test_the_empty_graphs_say_what_they_are_waiting_for(self):
+        self.assertEqual(self.copy("global"), {"title": "Nothing to draw", "body": "Machines, spaces, panes and agents appear here."})
+        r = self.copy("local")
         self.assertEqual(r["title"], "No session focused")
         self.assertIn("Switch to Global", r["body"])
 
@@ -1289,7 +1291,7 @@ class ShownGraph(unittest.TestCase):
         src = MAIN.read_text(encoding="utf-8")
         self.assertIn("shownGraph(", src)
         self.assertNotIn("filterGraph(", src)
-        self.assertIn("emptyCopy(this.mode, this.activeNow())", src)
+        self.assertIn("emptyCopy(this.mode)", src)
 
 
 class TouchActiveOnly(unittest.TestCase):
@@ -1483,10 +1485,10 @@ class MenuCopy(unittest.TestCase):
 class EmptyCopy(unittest.TestCase):
     def test_the_empty_state_names_only_node_kinds_the_graph_has(self):
         """There is no tab node any more (shape.js): the empty graph must not promise tabs."""
-        for mode, active in (("global", False), ("global", True), ("local", False)):
-            body = run("console.log(JSON.stringify(S.emptyCopy(P.mode, P.active).body));", {"mode": mode, "active": active}, FILTER)
-            self.assertNotIn("tab", body.lower(), (mode, active))
-            self.assertIn("agent", body, (mode, active)) if mode == "global" else None
+        for mode in ("global", "local"):
+            body = run("console.log(JSON.stringify(S.emptyCopy(P.mode).body));", {"mode": mode}, FILTER)
+            self.assertNotIn("tab", body.lower(), mode)
+            self.assertIn("agent", body, mode) if mode == "global" else None
 
 
 class OpenArtifact(unittest.TestCase):
