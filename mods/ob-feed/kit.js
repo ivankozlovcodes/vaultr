@@ -460,7 +460,7 @@ export function bindingFor(action, inTerminal = false) {
 }
 
 // ---------------------------------------------------------------- machines, spaces, agents
-// Addresses: "t7" here, "minerva/t7" there. Ids of remote spaces/tabs/panes have the same prefix.
+// Addresses: "t7" here, "devbox/t7" there. Ids of remote spaces/tabs/panes have the same prefix.
 export const machineOf = (addr) => (String(addr ?? "").includes("/") ? String(addr).split("/")[0] : null);
 export const localId = (addr) => String(addr ?? "").split("/").pop();
 export const addrOn = (machine, id) => (machine ? `${machine}/${id}` : id);

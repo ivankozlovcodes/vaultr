@@ -3,3 +3,4 @@ mods/*/jsconfig.json
 mods/*/__pycache__/
 mods/*/runtime.json
 *.tmp
+__pycache__/
