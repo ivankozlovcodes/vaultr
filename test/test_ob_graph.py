@@ -106,10 +106,10 @@ class QuartzModel(unittest.TestCase):
         self.assertEqual(r["global"]["radial"], {"radius": 0.8 * min(W, max(H, 250)) / 2, "strength": 0.2})
         self.assertEqual(r["global"]["charge"], -50)
         self.assertEqual(r["global"]["center"], 0.2)
-        # d3-force defaults, which Quartz does not override
+        # Quartz keeps d3-force's alphaMin; the damping is Vaultr's: heavier than d3's (0.4, 0.0228) so the graph is not floaty
         self.assertEqual(r["alphaMin"], 0.001)
-        self.assertAlmostEqual(r["alphaDecay"], 1 - 0.001 ** (1 / 300), places=12)
-        self.assertEqual(r["velocityDecay"], 0.4)
+        self.assertEqual(r["alphaDecay"], 0.06)
+        self.assertEqual(r["velocityDecay"], 0.8)
         self.assertEqual(r["extent"], [0.25, 4])                # zoom scaleExtent (graph.inline.ts 506)
 
     def test_node_radius_is_two_plus_root_of_degree_and_grows_with_degree(self):
@@ -283,9 +283,28 @@ class Settling(unittest.TestCase):
             const ticks = S.settle(sim, 2000);
             console.log(JSON.stringify({ ticks, alpha: sim.d3.alpha(), min: sim.d3.alphaMin(), after: S.tick(sim) }));
         ''', {"g": world(), "W": W, "H": H})
-        self.assertLess(r["ticks"], 350, "alpha 1 decays to 0.001 in about 300 ticks at Quartz's alphaDecay")
+        self.assertLess(r["ticks"], 150, "alpha 1 decays to 0.001 in about 115 ticks (d3's own 0.0228 took about 300)")
         self.assertLess(r["alpha"], r["min"])
         self.assertFalse(r["after"], "a settled graph does not tick")
+
+    def test_a_dragged_node_pulls_the_rest_less_than_d3_defaults_would(self):
+        # "Floaty": dragging one node used to swing the others about. Same graph, same drag, with d3's own settings
+        # (velocityDecay 0.4, alphaTarget 1) as the yardstick: the others now move well under 70% as far.
+        r = run('''
+            const mean = (sim) => {
+              S.sync(sim, P.g, S.QUARTZ.global, P.W, P.H); S.settle(sim);
+              const before = new Map([...sim.pos].map(([k, o]) => [k, [o.x, o.y]]));
+              const p = sim.pos.get("p:a000"), tx = p.x + 150, ty = p.y;
+              for (let i = 0; i < 60; i++) { S.drag(sim, "p:a000", tx, ty); if (sim.heat != null) sim.d3.alphaTarget(sim.heat); S.tick(sim); }
+              let sum = 0, n = 0;
+              for (const [k, o] of sim.pos) { if (k === "p:a000") continue; sum += Math.hypot(o.x - before.get(k)[0], o.y - before.get(k)[1]); n++; }
+              return sum / n;
+            };
+            const ours = S.createSim();
+            const d3 = S.createSim(); d3.d3.velocityDecay(0.4).alphaDecay(1 - 0.001 ** (1 / 300)); d3.heat = 1;
+            console.log(JSON.stringify({ ours: mean(ours), d3: mean(d3) }));
+        ''', {"g": world(), "W": W, "H": H})
+        self.assertLess(r["ours"], 0.7 * r["d3"], r)
 
     def test_drag_sets_alphaTarget_pins_the_node_and_release_clears_it(self):
         r = run('''
@@ -302,7 +321,7 @@ class Settling(unittest.TestCase):
             console.log(JSON.stringify({ ok, target, fx, fy, x: at.x, y: at.y, whileDragging, released, ticks, after: S.tick(sim) }));
         ''', {"g": world(), "W": W, "H": H})
         self.assertTrue(r["ok"])
-        self.assertEqual(r["target"], 1, "dragging reheats: alphaTarget 1 (graph.inline.ts 459)")
+        self.assertEqual(r["target"], 0.2, "dragging reheats, but only to 0.2 (Quartz's 1 made the rest follow too freely)")
         self.assertEqual((r["fx"], r["fy"]), (300, -200))
         self.assertEqual((r["x"], r["y"]), (300, -200), "the dragged node stays where it is put")
         self.assertTrue(r["whileDragging"], "a drag keeps the simulation running after it has settled")

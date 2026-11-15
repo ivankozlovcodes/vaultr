@@ -30,6 +30,12 @@ export const FIT_MAX_SCALE = 1.6;
 export const FIT_PAD = { x: 44, top: 36, bottom: 30 };  // room for the toolbar and the footer
 const KEEP = 600;                                        // remembered positions of nodes that left
 const REHEAT = 0.2;                                      // alpha after a structural change (a gentle reheat)
+// Damping. d3's defaults (velocityDecay 0.4, alphaDecay 0.0228) and Quartz's drag heat (alphaTarget 1) leave the graph
+// floaty: it keeps drifting for about five seconds, and dragging one node swings the rest. Heavier damping, a faster
+// cool-down and a cooler drag keep the nodes where they are put: neighbours of a dragged node move about 40% less (measured on the test graph).
+const VELOCITY_DECAY = 0.8;                             // share of a node's speed lost each tick
+const ALPHA_DECAY = 0.06;                                // alpha 1 reaches alphaMin in about 115 ticks (d3: 300)
+const DRAG_HEAT = 0.2;                                   // alphaTarget while a node is dragged (Quartz: 1)
 const COLLIDE_ITERATIONS = 3;
 const SIBLING_FACTOR = 0.5;                              // a sibling spring is half the link distance
 // Machines and spaces push each other less than panes do (charge -60 x repelForce against -100), the push stops at
@@ -154,7 +160,7 @@ export function hash01(s) {
 
 export function createSim() {
   // d3-force's constructor would start d3-timer, which needs setTimeout; the stepper is inert (see vendor/d3-force).
-  return { d3: forceSimulation([]), pos: new Map(), sig: null, settings: null, dragKey: null };
+  return { d3: forceSimulation([]).velocityDecay(VELOCITY_DECAY).alphaDecay(ALPHA_DECAY), pos: new Map(), sig: null, settings: null, dragKey: null };
 }
 
 // Undirected neighbours of every key.
@@ -303,14 +309,14 @@ export function settle(sim, max = 2000) {
 }
 
 // The node being dragged follows the pointer (world units) and holds still while the rest relaxes around it
-// (Quartz: fx/fy while dragging, alphaTarget 1 on start; graph.inline.ts 458-488).
+// (Quartz: fx/fy while dragging, graph.inline.ts 458-488; the heat is DRAG_HEAT, not Quartz's 1).
 export function drag(sim, key, x, y) {
   const o = sim.pos.get(key);
   if (!o || !sim.d3.nodes().includes(o)) return false;
   o.x = x; o.y = y; o.vx = 0; o.vy = 0;
   o.fx = x; o.fy = y;
   sim.dragKey = key;
-  sim.d3.alphaTarget(1);
+  sim.d3.alphaTarget(DRAG_HEAT);
   return true;
 }
 

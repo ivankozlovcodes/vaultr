@@ -3,7 +3,9 @@
 The Graph panel (`sim.js`, `main.js`) is a port of the graph view in Quartz v4 (https://github.com/jackyzha0/quartz),
 at commit `d25a6eab` (package version 4.5.2): `quartz/components/Graph.tsx` (defaults) and
 `quartz/components/scripts/graph.inline.ts` (forces, hover, labels, zoom, drag). Its defaults and formulas are used
-as data; the drawing is Herdr's own (gpui), not Quartz's Pixi renderer.
+as data; the drawing is Herdr's own (gpui), not Quartz's Pixi renderer. Vaultr's own changes to the simulation: machines and
+spaces push less and machines are drawn gently to the middle; and heavier damping (velocityDecay 0.8, alphaDecay 0.06, drag
+heat 0.2 where d3 has 0.4 and 0.0228 and Quartz drags at 1) so the graph is not floaty.
 
 ## Quartz (MIT)
 
