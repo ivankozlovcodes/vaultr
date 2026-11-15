@@ -1,11 +1,12 @@
-# ob-subagents transcript reader: one JSONL transcript -> compact turns, as one JSON line.
+# ob-outline transcript reader: one JSONL transcript -> compact turns, as one JSON line.
 # Run through exec("python3", ["-c", <this text>, <path>, <max entries>], { on: machine }). Read-only.
 # Formats: pi session.jsonl (type "message"), pi-subagents *_transcript.jsonl (recordType), and Claude
 # Code transcripts (type "user"/"assistant"). Reads at most the last 3 MiB (first partial line dropped).
+# `--find <agent id>` (argv[1]) prints { path } for a Claude Code background agent's transcript instead.
 import json, os, sys
 
 PATH = sys.argv[1] if len(sys.argv) > 1 else ""
-MAX = int(sys.argv[2]) if len(sys.argv) > 2 else 250
+MAX = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[1] != "--find" and sys.argv[2].isdigit() else 250
 CAP = 3 * 1024 * 1024
 
 
@@ -155,6 +156,23 @@ def main():
     out["entries"] = E[-MAX:]
     return out
 
+
+def find(agent_id):
+    """A Claude Code background agent's transcript by its id: ~/.claude/projects/*/<session>/subagents/agent-<id>.jsonl.
+    -> { path } (null when none is written yet). Read-only."""
+    import glob
+    hits = sorted(glob.glob(os.path.join(os.path.expanduser("~"), ".claude", "projects", "*", "*", "subagents", "agent-" + agent_id + ".jsonl")),
+                  key=lambda x: os.path.getmtime(x), reverse=True)
+    return {"path": hits[0] if hits else None}
+
+
+if len(sys.argv) > 2 and sys.argv[1] == "--find":
+    try:
+        res = find(sys.argv[2]) if sys.argv[2].isalnum() else {"path": None}
+    except Exception as e:
+        res = {"path": None, "error": f"{e.__class__.__name__}: {e}"}
+    print(json.dumps(res, separators=(",", ":")))
+    raise SystemExit(0)
 
 try:
     res = main()

@@ -3,7 +3,7 @@
 // "machine / space / tab / pane" centered (left-aligned when narrow), and on the right the
 // sub-agent badge, the status (or "Needs you"), split / zoom / close on hover and "more" (⋮).
 // Every breadcrumb segment opens a menu of its siblings. A click on the header focuses the pane;
-// focus follows the pointer like the user's iv-pane (follow.js).
+// focus follows the pointer (follow.js).
 // Mod panes (no terminal) show only their name and a close button.
 //
 // Commands (ob-pane.<cmd>; every copy gets them, only the one whose pane matches acts):
@@ -16,7 +16,7 @@ import {
   S, tc, alpha, icon, iconButton, statusMark, needsYou, paneName, tabLabel, machineLabel, programIcon, openMenu,
   subagentsOf, isBookmarked, toggleBookmark, bindingFor, chordLabel, tilde, stop,
 } from "./kit.js";
-import { follow, DELAY } from "./follow.js"; // focus-to-hover, as in the user's iv-pane
+import { follow, DELAY } from "./follow.js"; // focus-to-hover
 
 const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
 
@@ -124,7 +124,7 @@ export default class PaneHeader extends View {
       { label: marked ? "Remove bookmark" : "Bookmark", icon: marked ? "bookmark" : "bookmark-plus", command: `ob-pane.bookmark:${p.pane}` },
       { separator: true },
       { label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${addr}` },
-      { label: "Show subagents", icon: "subagents", command: `ob-tabs.open:ob-subagents@term:${addr}` },
+      { label: "Show subagents", icon: "subagents", command: `ob-tabs.open:ob-outline@term:${addr}` },
       { label: "Copy address", icon: "copy", copy: addr, hint: addr },
       p.cwd ? { label: "Copy path", icon: "copy", copy: p.cwd, hint: tilde(p.cwd) } : null,
       agent ? { label: agent.pinned ? "Unpin agent" : "Pin agent to the top", icon: agent.pinned ? "pin-off" : "pin", command: "terminal.pin", args: { terminal: addr, pinned: !agent.pinned } } : null,
@@ -186,7 +186,7 @@ export default class PaneHeader extends View {
           .hover((s) => s.bg(live ? alpha(t.working, 0.22) : t.hover))
           .tooltip(live ? `${live} sub-agent${live === 1 ? "" : "s"} running, ${total} in all` : `${total} finished sub-agent${total === 1 ? "" : "s"}`)
           .on_mouse_down("left", stop)
-          .on_click((_e, cx) => { cx.stop_propagation(); run(`ob-tabs.open:ob-subagents@term:${addr}`); })
+          .on_click((_e, cx) => { cx.stop_propagation(); run(`ob-tabs.open:ob-outline@term:${addr}`); })
           .child(icon("subagents", S.iconXs))
           .child(live ? `${live} live` : String(total)));
       }

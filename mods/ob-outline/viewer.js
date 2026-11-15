@@ -1,20 +1,26 @@
-// The log / transcript viewer of ob-subagents: a window overlay (or a pane after "Pin as pane").
+// The log / transcript viewer and the attach view of ob-outline: a popup over the window (or a pane
+// after "Move to main window").
 // props: { view: "log"|"transcript", machine, path, title, live, runKey, overlay? }
+//   view "attach": a header only, for a popup whose layout puts the live terminal block below it:
+//      { view: "attach", title, parent, machine, terminal, overlay }. Its header: name, parent, machine,
+//      "Move to main window" (terminal.keep: the terminal gets a pane or tab) and close.
 // log: `tail -n 400 <path>` on that machine, every 1.5 s while the run is live; follows the end
 //      unless you scroll up (Follow button / viewer-follow:on brings it back).
 // transcript: transcript.py parses the jsonl there (pi session, pi-subagents transcript, Claude Code)
 //      into prompts, replies (markdown) and tool calls (click one to see its result); refreshed every
 //      4 s while live.
-// Commands (only viewers act on them): viewer-follow:<on|off>, viewer-pin, viewer-copy, viewer-close,
+// Commands (only viewers act on them): viewer-follow:<on|off>, viewer-move, viewer-copy, viewer-close,
 //      viewer-tool:<index> (expand/collapse a tool call), viewer-refresh.
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex, TextView, v_virtual_list, VirtualListScrollHandle, ScrollHandle, Scrollbar } from "gpui-base";
-import { props, exec, readTextFile, appHome, run, closeOverlay, settings } from "herdr";
+import { props, exec, readTextFile, appHome, run, closeOverlay, settings, focused } from "herdr";
 import { S, tc, icon, iconButton, alpha, ago, machineLabel, tilde, base, feed, statusMark, stop } from "./kit.js";
 import { MONO, splitCmd, copied } from "./obc.js";
+import { escapeOwner, moveTarget } from "./actions.js";
 
 const LOG_MS = 1500, TX_MS = 4000;
+const POPUP_H = 560;   // a popup sizes to its content: the viewer sets its own height there
 
 export class Viewer {
   init(cx) {
@@ -32,9 +38,13 @@ export class Viewer {
     this.vscroll = VirtualListScrollHandle.new();
     this.scroll = ScrollHandle.new();
     this.w = 0;
+    this.handle = cx.focus_handle();
+    if (this.isAttach()) return;   // attach: a header; the terminal is its layout block
+    // Keyboard here so Escape reaches this viewer (a popup over the window, or a pane).
+    cx.timer.after(0, () => { try { this.handle.focus(); } catch { /* not focusable yet: Herdr's Escape still closes it */ } });
     cx.spawn(async (cx) => {
       if (this.p.view === "transcript") {
-        try { this.script = await readTextFile(`${appHome()}/mods/ob-subagents/transcript.py`); } catch (e) { this.err = `transcript.py: ${e?.message ?? e}`; }
+        try { this.script = await readTextFile(`${appHome()}/mods/ob-outline/transcript.py`); } catch (e) { this.err = `transcript.py: ${e?.message ?? e}`; }
       }
       await this.load(cx);
     });
@@ -59,8 +69,10 @@ export class Viewer {
   }
 
   on() { return this.p.machine ? { on: this.p.machine } : {}; }
+  isAttach() { return this.p.view === "attach"; }
 
   async load(cx) {
+    if (this.isAttach()) return;
     if (this.busy || !this.p.path) { if (!this.p.path) { this.err = "No file to show"; this.loading = false; cx.notify(); } return; }
     this.busy = true;
     try {
@@ -97,7 +109,7 @@ export class Viewer {
   command(c, cx) {
     const [verb, arg] = splitCmd(c);
     if (verb === "viewer-follow") { this.follow = arg !== "off"; if (this.follow) this.needEnd = 2; }
-    else if (verb === "viewer-pin") this.pin();
+    else if (verb === "viewer-move") this.moveToMain();
     else if (verb === "viewer-copy") copied(cx, "path", this.p.path);
     else if (verb === "viewer-close") this.close();
     else if (verb === "viewer-refresh") this.load(cx);
@@ -109,13 +121,45 @@ export class Viewer {
     else if (this.entries.length) this.scroll.scroll_to_item(this.entries.length);
   }
 
-  // Pin as pane: the same view as a mod pane to the right of the focused pane (structural).
-  pin() {
+  // Move to main window (structural), then the popup closes. An attached terminal gets a pane or a tab
+  // of its own (terminal.keep); a viewer becomes the same view as a mod pane beside the focused pane
+  // (a new tab when no pane has the focus).
+  moveToMain() {
     const { overlay, ...rest } = this.p;
-    run("pane.split", { direction: "right", mod: "ob-subagents", props: rest });
+    if (this.isAttach()) {
+      if (overlay) closeOverlay(overlay);
+      run("terminal.keep", { terminal: rest.terminal });
+      return;
+    }
+    const mv = moveTarget(Boolean(focused()?.pane), rest);
+    run(mv.verb, mv.args);
     if (overlay) closeOverlay(overlay);
   }
   close() { if (this.p.overlay) closeOverlay(this.p.overlay); }
+
+  moveButton(t) {
+    return h_flex().id("v-move").h(24).px(8).gap(5).flex_none().items_center().rounded(S.radius).cursor_pointer()
+      .border_1().border_color(t.input).text_size(S.textXs).text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(this.isAttach() ? "Move this terminal to the main window (a pane or tab there); closes this popup" : "Move to the main window as a pane; closes this popup")
+      .on_mouse_down("left", stop)
+      .on_click((_e, cx) => { cx.stop_propagation(); this.moveToMain(); })
+      .child(icon("split-right", S.iconXs))
+      .child(div().whitespace_nowrap().child("Move to main window"));
+  }
+
+  // The header of an attach popup (the terminal itself is the block below it).
+  attachHeader(t) {
+    const p = this.p;
+    const where = [p.parent ? `started by ${p.parent}` : null, p.machine ? machineLabel(p.machine) : null, p.terminal].filter(Boolean).join(" · ");
+    return h_flex().id("vtitle").h(36).flex_none().pl(12).pr(6).gap(8).items_center().bg(t.chrome).border_b(1).border_color(t.border)
+      .child(icon("terminal", S.icon, t.muted))
+      .child(div().flex_none().max_w(260).truncate().text_size(S.text).font_semibold().text_color(t.foreground).child(p.title || p.terminal))
+      .child(h_flex().flex_none().gap(4).items_center().child(statusMark("working", 11)).child(div().text_size(S.textXs).text_color(t.working).child("live")))
+      .child(div().flex_1().min_w(0).truncate().text_size(S.textXs).text_color(t.dim).child(where))
+      .child(this.moveButton(t))
+      .child(iconButton({ id: "v-close", icon: "x", tip: "Close", onClick: () => this.close() }));
+  }
 
   // ---------------------------------------------------------------- render
   titleBar(t) {
@@ -132,7 +176,7 @@ export class Viewer {
       .child(iconButton({ id: "v-refresh", icon: "refresh", tip: "Read again", onClick: (_e, cx) => this.load(cx) }))
       .child(iconButton({ id: "v-copy", icon: "copy", tip: `Copy path\n${p.path}`, onClick: (_e, cx) => copied(cx, "path", p.path) }))
       .when(Boolean(p.overlay), (e) => e
-        .child(iconButton({ id: "v-pin", icon: "split-right", tip: "Pin as a pane to the right", onClick: () => this.pin() }))
+        .child(this.moveButton(t))
         .child(iconButton({ id: "v-close", icon: "x", tip: "Close", onClick: () => this.close() })));
   }
 
@@ -220,6 +264,7 @@ export class Viewer {
   render(cx) {
     const t = tc();
     this.p = props() ?? this.p;
+    if (this.isAttach()) return v_flex().id("root").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).child(this.attachHeader(t));
     const has = this.p.view === "log" ? this.lines.length > 0 : this.entries.length > 0;
     // Scroll requests are consumed after layout: ask on this frame and the next (the list may be new).
     if (has && this.needEnd > 0) {
@@ -227,6 +272,11 @@ export class Viewer {
       if (--this.needEnd > 0) cx.timer.after(0, (cx) => cx.notify());
     }
     return v_flex().id("root").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+      .when(Boolean(this.p.overlay), (e) => e.h(POPUP_H))
+      .track_focus(this.handle)
+      .on_key_down((e, cx) => {
+        if (e.key === "escape" && escapeOwner(this.p.view) === "close") { cx.stop_propagation(); this.close(); }
+      })
       .on_size_change((s, cx) => { const w = s.width / (settings().zoom || 1); if (Math.abs(w - this.w) > 1) { this.w = w; cx.notify(); } })
       .child(this.titleBar(t))
       .child(has ? (this.p.view === "log" ? this.logBody(t) : this.transcriptBody(t)) : this.stateBody(t))

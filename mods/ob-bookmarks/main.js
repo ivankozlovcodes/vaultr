@@ -123,7 +123,7 @@ export default class Bookmarks extends View {
       const chain = (r?.steps ?? []).map((s) => s.agent).filter(Boolean).join(" → ");
       // A run the feed dropped (older than a day) can still be opened by key in Subagents' history.
       return { label: chain || b.label || b.id, status: r ? (r.live ? "working" : r.state) : null, gone: !r, lead: icon("subagents", S.iconSm, t.dim),
-        machine: r?.machine ?? b.machine, meta: r && !r.live ? ago(r.endedAt ?? r.lastUpdate) : "", go: () => openView("ob-subagents", `run:${b.id}`) };
+        machine: r?.machine ?? b.machine, meta: r && !r.live ? ago(r.endedAt ?? r.lastUpdate) : "", go: () => openView("ob-outline", `run:${b.id}`) };
     }
     return { gone: true, lead: icon("bookmark", S.iconSm, t.dim) };
   }

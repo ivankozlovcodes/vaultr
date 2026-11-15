@@ -1,284 +1,731 @@
-// ob-outline: an outline of the active tab's panes, processes, and agent tasks.
-// Lists each pane in the current tab with its title, command/program, working directory,
-// status, and any active subagents or tasks. Clicking a pane focuses it.
+// ob-outline: the one panel for what runs in each tab (Subagents folded in). Two views picked by props:
+//   { slot }            the panel (right sidebar, bottom group, next to Graph)          this file
+//   { view, path, ... } a log / transcript viewer (popup, or pane after "Move to main window")  viewer.js
+//   { view: "attach", terminal, ... } a header for a live hc child terminal in a popup         viewer.js
 //
-// Commands (herdr-app do ob-outline.<cmd>): focus, next, prev, open.
+// The panel lists the active tab's panes. Under each pane: the sub-agents that run in its terminal (pi
+// background runs, Claude Code agents, child terminals), each with state, tools and tokens; a click expands
+// it into steps and actions (Follow log, Transcript, Open child session, Bookmark). A pinned session outside
+// this tab is shown after the panes. "All" groups every machine by session, with "Unattached" background
+// terminals last. Live only and the machine filter apply to both.
+// Logs, transcripts and live terminals open in a popup (openViewer / openAttach in obc.js); "Move to main
+// window" in the popup puts them on screen. Data: kit.feed() (ob-feed's scan) + terminals().records (live
+// Claude agents) + hc children.
+//
+// Commands (ob-outline.<cmd>; keys and tests): focus, next, prev, open, expand:<key>, collapse:<key>,
+//   live-only:<on|off>, log:<runKey>, transcript:<runKey|claudeKey>[#<step>], copy-id:<key>,
+//   open-session:<runKey>[#<step>], attach:<address>, bookmark:<runKey>, menu:<key>, scope:<tab|all>,
+//   machine:<name|local|all>, inspect:<address>, unpin, up, down, enter, refresh. Viewer copies take viewer-*.
+// Router intents: run:<key> (expand + scroll to it), term:<address> (inspect that session).
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
-import { panes, spaces, focused, run, theme, props, nextCommand, settings } from "herdr";
+import { props, run, nextCommand, settings, exec, hc, machines, spaces, panes, layout, focused, terminals, notify, readTextFile, appHome } from "herdr";
 import {
-  S, alpha, icon, programIcon, iconButton, treeRow, sectionHeader, emptyState, statusMark,
-  takeFocus, paneName, tabLabel, subagentsOf, openView,
+  S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, treeRow, emptyState, openMenu,
+  programIcon, feed, machineLabel, machineOf, ago, dur, fmtTokens, fmtCost, takeFocus, isBookmarked, toggleBookmark,
+  isShown, base, stop, kbd, feedLine, paneLabelOf, tabLabel,
 } from "./kit.js";
+import {
+  MONO, splitCmd, sessionOf, inspected, inspect, revealTerminal, runTitle, runModels, shortModel, runWhen, currentStep, lastTool,
+  runMeta, stepTranscript, claudeAll, recordRuns, openViewer, openAttach, copied, lines,
+} from "./obc.js";
+import { Viewer } from "./viewer.js";
+import { rowClick } from "./rows.js";
+import { listedTerminals } from "./terminals.js";
+import { paneAgents, onMachine } from "./tree.js";
+import { resolveKey, transcriptPlan, attachPlan, attachStep, ATTACH_WAIT } from "./actions.js";
+
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable: keep in memory */ } };
 
 function shortenPath(p) {
   if (!p) return "";
   const s = String(p);
-  const home = typeof process !== "undefined" && process?.env?.HOME ? process.env.HOME : "/home/iv";
-  return s.startsWith(home) ? "~" + s.slice(home.length) : s;
+  const home = typeof process !== "undefined" ? process?.env?.HOME : undefined;
+  return home && s.startsWith(home) ? "~" + s.slice(home.length) : s;
+}
+
+class Panel {
+  init(cx) {
+    this.handle = cx.focus_handle();
+    this.scroll = ScrollHandle.new();
+    this.open = new Set(load("open", []));
+    const f = load("filter", {});
+    this.liveOnly = Boolean(f.liveOnly);
+    this.machine = typeof f.machine === "string" ? f.machine : null;   // null = all
+    this.scope = load("scope", "tab") === "all" ? "all" : "tab";
+    this.folded = new Set(load("folded", []));
+    this.cursor = null;     // item key under the keyboard cursor
+    this.w = 0;
+    this.piSession = {};    // machine key -> true/false: pi accepts --session there (U7)
+    this.index = new Map(); // item key -> row index (for scroll_to_item)
+    cx.timer.every(1000, (cx) => {
+      // Elapsed times of live runs (data, not animation): only while something runs and the panel shows.
+      const f = feed();
+      if ((f?.runs ?? []).some((r) => r.live) && isShown(layout(), props()?.slot ?? "ob-outline")) cx.notify();
+    });
+  }
+
+  persist() {
+    save("open", [...this.open].slice(-80));
+    save("filter", { liveOnly: this.liveOnly, machine: this.machine });
+    save("scope", this.scope);
+    save("folded", [...this.folded]);
+  }
+
+  // ---------------------------------------------------------------- lookups
+  runOf(key) { return feed()?.runs.find((r) => r.key === key) ?? null; }
+  claudeOf(key) { return claudeAll().find((c) => c.key === key) ?? null; }
+
+  // Does pi on that machine know --session? Checked once per machine (read-only `pi --help`).
+  checkPi(machine, cx) {
+    const k = machine ?? "local";
+    if (k in this.piSession) return;
+    this.piSession[k] = false;
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("pi", ["--help"], { ...(machine ? { on: machine } : {}), timeout: 15000 });
+        this.piSession[k] = /--session\s/.test(`${r.stdout}\n${r.stderr}`);
+      } catch { this.piSession[k] = false; }
+      cx.notify();
+    });
+  }
+
+  // ---------------------------------------------------------------- actions
+  toggle(key, on) {
+    const want = on ?? !this.open.has(key);
+    if (want) this.open.add(key); else this.open.delete(key);
+    this.persist();
+  }
+
+  // A short notice (info or error). Nothing in the panel fails silently.
+  notice(title, body, level = "info") {
+    notify({ title, body: String(body ?? "").slice(0, 160), level, timeout: level === "error" ? 4000 : 2500 });
+  }
+
+  // Open a popup. A failure shows an error notice.
+  showViewer(what, p) {
+    const fail = (e) => this.notice(`Couldn't open the ${what}`, e?.message ?? e, "error");
+    try {
+      Promise.resolve(openViewer(p)).catch(fail);
+    } catch (e) { fail(e); }
+  }
+
+  follow(r) {
+    if (!r) return;
+    if (!r.log) { this.notice("No log", "This run has no log file to follow"); return; }
+    this.showViewer("log", { view: "log", machine: r.machine, path: r.log, title: `${runTitle(r)} · log`, live: r.live, key: `log-${r.key}`, runKey: r.key });
+  }
+
+  // Transcript of a run step or a Claude agent. A Claude agent seen only through a live record has no path in the
+  // feed: its transcript is found by agent id (transcript.py --find). Failures say why in a notice.
+  async transcript(key) {
+    const hit = resolveKey(key, { runs: (feed()?.runs ?? []).map((r) => r.key), claude: claudeAll().map((c) => c.key) });
+    if (!hit) { this.notice("No transcript", "That agent is no longer in the feed", "error"); return; }
+    const r = this.runOf(hit.key);
+    if (r) {
+      const step = hit.step != null ? r.steps[hit.step] : (stepTranscript(currentStep(r)) ? currentStep(r) : r.steps.find(stepTranscript));
+      const plan = transcriptPlan({ path: stepTranscript(step), title: `${step?.agent ?? "run"}${step?.label ? " · " + step.label : ""} · transcript` });
+      if (!plan.open) { this.notice("No transcript", "No transcript is recorded for this run yet"); return; }
+      this.showViewer("transcript", { view: "transcript", machine: r.machine, path: plan.path, title: plan.title, live: r.live, key: `tx-${r.key}-${r.steps.indexOf(step)}`, runKey: r.key });
+      return;
+    }
+    const c = this.claudeOf(hit.key);
+    if (!c) { this.notice("No transcript", "That agent is no longer in the feed", "error"); return; }
+    let path = c.transcript;
+    if (!path && c.id) path = await this.findTranscript(c);
+    const plan = transcriptPlan({ transcript: path, desc: c.desc, type: c.type });
+    if (!plan.open) { this.notice("No transcript", "No transcript file for this agent yet: Claude Code writes it as the agent runs"); return; }
+    this.showViewer("transcript", { view: "transcript", machine: c.machine, path: plan.path, title: plan.title, live: c.live, key: `tx-${c.key}`, runKey: c.live ? null : c.key });
+  }
+
+  // The transcript file of a Claude Code background agent, found by its id on that machine. null when none.
+  async findTranscript(c) {
+    try {
+      const script = await readTextFile(`${appHome()}/mods/ob-outline/transcript.py`);
+      const r = await exec("python3", ["-c", script, "--find", c.id], { ...(c.machine ? { on: c.machine } : {}), timeout: 15000 });
+      const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
+      return line.startsWith("{") ? JSON.parse(line).path ?? null : null;
+    } catch (e) {
+      this.notice("Couldn't find the transcript", e?.message ?? e, "error");
+      return null;
+    }
+  }
+
+  // A click or Enter on a card head: expand in place or collapse (rows.js). A starting run says why.
+  click(key, cx, pending = false) {
+    if (key.startsWith("pane:")) { this.cursor = key; this.focusPane(key.slice(5)); cx.notify(); return; }
+    const { expanded, notice } = rowClick(key, this.open, { pending });
+    this.open = expanded;
+    this.cursor = key;
+    this.persist();
+    if (notice) this.notice("Not yet", notice);
+    cx.notify();
+  }
+
+  // Open a step's child session: pi --session in a new terminal started as a child of the run's parent
+  // (so it shows under the parent), attached in a popup. Local runs only; it reaches the main window
+  // only through the popup's "Move to main window".
+  async openSession(key, cx = null) {
+    const hit = resolveKey(key, { runs: (feed()?.runs ?? []).map((x) => x.key) });
+    const r = hit ? this.runOf(hit.key) : null;
+    if (!r || r.machine) return;
+    const step = hit.step != null ? r.steps[hit.step] : currentStep(r);
+    if (!step?.session || !this.piSession.local) return;
+    const parentLocal = r.parent && !machineOf(r.parent) ? r.parent : null;
+    const args = ["run", "--json", ...(r.cwd ? ["--cwd", r.cwd] : []),
+      ...(parentLocal ? ["--parent", parentLocal, "--outlive-parent"] : ["--no-parent"]),
+      "--", "pi", "--session", step.session];
+    try {
+      const res = await hc(args);
+      const address = JSON.parse(String(res.stdout).trim().split("\n").pop())?.address;
+      if (!address) throw new Error(res.stderr || "no address");
+      this.attach(address, `${step.agent} ${r.short}`, cx);
+    } catch (e) {
+      notify({ title: "Couldn't open the child session", body: String(e?.message ?? e).slice(0, 160), level: "error", timeout: 4000 });
+    }
+  }
+
+  // Attach: a popup with a live hc child terminal (local, live), typeable. Nothing enters the main window.
+  // A terminal not live yet is looked for again a few ticks later (with cx); then a notice says why not.
+  attach(address, title, cx = null, tries = 0) {
+    const t = terminals().find((x) => x.address === address);
+    const step = attachStep(address, t, tries, Boolean(cx));
+    if (step.do === "retry") {
+      try { cx.timer.after(ATTACH_WAIT, (cx) => this.attach(address, title, cx, tries + 1)); return; } catch { step.do = "fail"; step.why = `No live terminal ${address}`; }
+    }
+    if (step.do === "fail") { this.notice("Couldn't attach", step.why, "error"); return; }
+    const parent = t.parent ? sessionOf(t.parent) : null;
+    openAttach({ terminal: address, title: title ?? (t.name || t.title || t.program?.name || address), parent: parent?.label ?? t.parent ?? null, machine: null });
+  }
+
+  bookmark(r) { toggleBookmark({ kind: "run", id: r.key, label: runTitle(r), machine: r.machine }); }
+
+  menu(key, cx) {
+    const r = this.runOf(key);
+    if (r) {
+      const step = currentStep(r);
+      const canOpen = Boolean(step?.session) && !r.machine && Boolean(this.piSession.local);
+      openMenu([
+        { label: this.open.has(key) ? "Collapse" : "Expand", icon: this.open.has(key) ? "chevron-up" : "chevron-down", command: `ob-outline.${this.open.has(key) ? "collapse" : "expand"}:${key}` },
+        { label: "Follow log", icon: "scroll", command: `ob-outline.log:${key}`, disabled: !r.log },
+        { label: "Transcript", icon: "file-text", command: `ob-outline.transcript:${key}`, disabled: !r.steps.some(stepTranscript) },
+        { label: "Open child session", icon: "play", command: `ob-outline.open-session:${key}`, disabled: !canOpen, hint: canOpen ? "popup" : null },
+        { separator: true },
+        ...(r.parent ? [{ label: "Go to parent session", icon: "locate", command: "agent.focus", args: { terminal: r.parent } },
+          { label: "Show parent's properties", icon: "info", command: `ob-tabs.open:ob-props@term:${r.parent}` }] : []),
+        { label: "Copy run id", icon: "copy", copy: r.id },
+        ...(r.dir ? [{ label: "Copy run folder", icon: "folder", copy: r.dir }] : []),
+        { label: isBookmarked("run", r.key) ? "Remove bookmark" : "Bookmark", icon: "bookmark", command: `ob-outline.bookmark:${key}` },
+      ], { width: 240, title: `${runTitle(r)} · ${r.short}` });
+      return;
+    }
+    const c = this.claudeOf(key);
+    if (c) {
+      openMenu([
+        { label: "Transcript", icon: "file-text", command: `ob-outline.transcript:${key}` },
+        { label: "Attach", icon: "terminal", disabled: true, hint: "no terminal" },
+        { label: "Go to parent session", icon: "locate", command: "agent.focus", args: { terminal: c.parent } },
+        { label: "Show parent's properties", icon: "info", command: `ob-tabs.open:ob-props@term:${c.parent}` },
+        { separator: true },
+        { label: "Copy agent id", icon: "copy", copy: c.id },
+        ...(c.transcript ? [{ label: "Copy transcript path", icon: "copy", copy: c.transcript }] : []),
+      ], { width: 240, title: c.desc || c.type });
+    }
+  }
+
+  async command(c, cx) {
+    const [verb, arg] = splitCmd(c);
+    switch (verb) {
+      case "focus": this.handle.focus(); break;
+      case "next": this.move(1); break;
+      case "prev": this.move(-1); break;
+      case "open": if (this.cursor) this.click(this.cursor, cx); break;
+      case "expand": this.toggle(arg, true); this.reveal(arg); break;
+      case "collapse": this.toggle(arg, false); break;
+      case "live-only": this.liveOnly = arg !== "off"; this.persist(); break;
+      case "scope": this.scope = arg === "all" ? "all" : "tab"; this.persist(); break;
+      case "machine": this.machine = !arg || arg === "all" ? null : arg; this.persist(); break;
+      case "log": this.follow(this.runOf(arg)); break;
+      case "transcript": await this.transcript(arg); break;
+      case "open-session": await this.openSession(arg, cx); break;
+      case "attach": this.attach(arg, undefined, cx); break;
+      case "copy-id": { const r = this.runOf(arg) ?? this.claudeOf(arg); if (r) copied(cx, r.short ? "run id" : "agent id", r.id); break; }
+      case "bookmark": { const r = this.runOf(arg); if (r) this.bookmark(r); break; }
+      case "menu": this.menu(arg, cx); break;
+      case "inspect": inspect(arg || null); this.persist(); break;
+      case "unpin": inspect(null); break;
+      case "refresh": run("ob-feed.refresh"); break;
+      case "down": case "up": this.move(verb === "down" ? 1 : -1); break;
+      case "enter": if (this.cursor) this.click(this.cursor, cx); break;
+      default: break;
+    }
+  }
+
+  // Router intents (ob-tabs.open:ob-outline@<intent>).
+  intent(intent) {
+    if (!intent) return;
+    if (intent.startsWith("run:")) {
+      const key = intent.slice(4);
+      const r = this.runOf(key), c = r ? null : this.claudeOf(key);
+      const parent = r?.parent ?? c?.parent ?? null;
+      if (parent !== inspected().address) this.scope = "all";
+      const mk = r ? (r.machine ?? "local") : c ? (c.machine ?? "local") : null;
+      if (mk && this.machine && this.machine !== mk) this.machine = null;
+      if (this.liveOnly && r && !r.live) this.liveOnly = false;
+      this.open.add(key);
+      this.persist();
+      this.reveal(key);
+    } else if (intent.startsWith("term:")) {
+      inspect(intent.slice(5));
+      this.scope = "tab";
+      this.persist();
+    }
+  }
+
+  reveal(key) {
+    this.cursor = key;
+    this.pendingScroll = key;
+  }
+
+  move(d) {
+    const keys = this.order ?? [];
+    if (!keys.length) return;
+    const i = keys.indexOf(this.cursor);
+    this.cursor = keys[Math.max(0, Math.min(keys.length - 1, i < 0 ? (d > 0 ? 0 : keys.length - 1) : i + d))];
+    this.pendingScroll = this.cursor;
+  }
+
+  // ---------------------------------------------------------------- model
+  // Items of one parent (or of "no parent" on a machine): runs, Claude agents, hc children.
+  build() {
+    const f = feed();
+    const runs = [...recordRuns(), ...(f?.runs ?? [])].filter((r) => !this.liveOnly || r.live);
+    const claude = claudeAll().filter((c) => !this.liveOnly || c.live);
+    const kids = listedTerminals(terminals(), panes());
+    return { f, runs, claude, kids };
+  }
+
+  // ---------------------------------------------------------------- rendering pieces
+  compact() { return this.w > 0 && this.w < 260; }
+
+  stepBlock(t, r, s, i) {
+    const now = Date.now();
+    const st = normStatus(s.status);
+    const end = s.endedAt ?? (st === "working" ? now : null);
+    const meta = [shortModel(s.model), s.startedAt && end ? dur(end - s.startedAt) : null, s.tokens != null ? `${fmtTokens(s.tokens)} tok` : null, s.cost ? fmtCost(s.cost) : null, s.turns ? `${s.turns} turn${s.turns === 1 ? "" : "s"}` : null].filter(Boolean).join(" · ");
+    const chars = Math.max(20, Math.floor(((this.w || 360) - 60) / 6.3));
+    const id = `st-${r.key}-${i}`;
+    const tx = stepTranscript(s);
+    return v_flex().id(id).flex_none().gap(3).pl(10).pr(2).py(5).border_l(2).border_color(st === "working" ? t.working : st === "failed" ? t.blocked : t.border)
+      .child(h_flex().h(20).gap(6).items_center()
+        .child(statusMark(s.status, 11))
+        .child(div().min_w(0).flex_shrink(1).truncate().text_size(S.textSm).font_medium().text_color(t.foreground).child(s.label ? `${s.agent} · ${s.label}` : s.agent))
+        .when(r.steps.length > 1, (e) => e.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child(`${i + 1}/${r.steps.length}`)))
+        .child(div().flex_1())
+        .when(Boolean(s.status) && !this.compact(), (e) => e.child(badge(s.status, st === "working" ? "working" : st === "failed" ? "blocked" : st === "ok" ? "ansi2" : null)))
+        .when(Boolean(tx), (e) => e.child(iconButton({ id: `${id}-tx`, icon: "file-text", size: 20, iconSize: 12, tip: "Transcript of this step", onClick: () => this.transcript(`${r.key}#${i}`) }))))
+      .children(s.task ? lines(s.task, chars, 2).map((l, j) => div().id(`${id}-task-${j}`).truncate().text_size(S.textSm).text_color(t.muted).child(l)) : [])
+      .when(Boolean(meta), (e) => e.child(div().truncate().text_size(S.textXs).text_color(t.dim).child(meta)))
+      .when((s.tools?.length ?? 0) > 0, (e) => e.child(v_flex().gap(1).children(s.tools.map((x, j) =>
+        h_flex().id(`${id}-tool-${j}`).gap(6).font_family(MONO).text_size(11).min_w(0)
+          .child(div().flex_none().text_color(t.muted).child(x.tool))
+          .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(x.args ?? ""))))))
+      .when((s.out?.length ?? 0) > 0, (e) => e.child(v_flex().mt(1).px(7).py(4).rounded(S.radius).bg(t.chrome).border_1().border_color(t.border)
+        .children(s.out.map((x, j) => div().id(`${id}-out-${j}`).truncate().font_family(MONO).text_size(11).text_color(t.dim).child(x)))))
+      .when(Boolean(s.error), (e) => e.child(h_flex().gap(5).items_start().child(icon("alert", S.iconXs, t.blocked)).child(div().flex_1().min_w(0).whitespace_normal().text_size(S.textXs).text_color(t.blocked).child(s.error))));
+  }
+
+  // opts.disabled: dimmed (nothing recorded yet); a click still runs onClick, which says why.
+  actionButton(t, id, ic, label, tip, onClick, opts = {}) {
+    const narrow = this.w > 0 && this.w < 330;
+    return h_flex().id(id).h(24).px(narrow ? 5 : 8).gap(5).flex_none().items_center().rounded(S.radius).cursor_pointer()
+      .border_1().border_color(t.input).text_size(S.textXs).text_color(opts.active ? t.accent : opts.disabled ? t.dim : t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(tip)
+      .on_mouse_down("left", stop)
+      .on_click((e, cx) => { cx.stop_propagation(); onClick(e, cx); })
+      .child(icon(ic, S.iconXs))
+      .when(!narrow, (e) => e.child(div().whitespace_nowrap().child(label)));
+  }
+
+  runCard(t, r, depth) {
+    const now = Date.now();
+    const open = !r.pending && this.open.has(r.key);
+    const cur = this.cursor === r.key;
+    const compact = this.compact();
+    const live = r.live;
+    const tool = live ? lastTool(r) : null;
+    const step = currentStep(r);
+    const id = `run-${r.key}`;
+    if (open) this.needPi.add(r.machine ?? "local");
+    const canOpen = Boolean(step?.session) && !r.machine && Boolean(this.piSession.local);
+    const anyTx = r.steps.some(stepTranscript);
+    return v_flex().id(id).relative().flex_none().ml(S.pad + depth * 10).mr(S.pad).mb(6).rounded(S.radiusLg).overflow_hidden()
+      .border_1().border_color(cur ? alpha(t.accent, 0.7) : live ? alpha(t.working, 0.45) : t.border)
+      .when(live, (e) => e.bg(t.background))
+      .when(open && !live, (e) => e.bg(alpha(t.background, 0.55)))
+      .child(v_flex().id(`${id}-head`).pl(live ? 10 : 9).pr(8).py(6).gap(2).cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.click(r.key, cx, r.pending))
+        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.cursor = r.key; this.menu(r.key, cx); })
+        .child(h_flex().h(18).gap(6).items_center()
+          .child(statusMark(r.state, 12))
+          .child(div().min_w(0).flex_shrink(1).truncate().text_size(S.text).font_medium().text_color(live || open ? t.foreground : t.muted).child(runTitle(r)))
+          .when(isBookmarked("run", r.key), (e) => e.child(icon("bookmark", 11, t.accent)))
+          .child(div().flex_1().min_w(4))
+          .child(div().flex_none().text_size(S.textXs).text_color(live ? t.working : t.dim).child(runWhen(r, now))))
+        .child(div().truncate().text_size(S.textXs).text_color(t.dim).child(r.pending ? "starting · waiting for the next scan" : runMeta(r, compact) || r.short))
+        .when(Boolean(tool) && !open, (e) => e.child(h_flex().gap(5).min_w(0).font_family(MONO).text_size(11)
+          .child(div().flex_none().text_color(t.working).child("▸")).child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(tool))))
+        .when(!open && !live && Boolean(r.error), (e) => e.child(div().truncate().text_size(S.textXs).text_color(t.blocked).child(r.error))))
+      .when(live, (e) => e.child(div().absolute().left(0).top(0).bottom(0).w(2).bg(t.working)))
+      .when(open, (e) => e.child(v_flex().px(9).pb(8).pt(2).gap(6)
+        .children(r.steps.map((s, i) => this.stepBlock(t, r, s, i)))
+        .when(r.steps.length === 0, (x) => x.child(div().text_size(S.textXs).text_color(t.dim).child("No steps recorded for this run.")))
+        .when(Boolean(r.error) && !r.steps.some((s) => s.error === r.error), (x) => x.child(div().whitespace_normal().text_size(S.textXs).text_color(t.blocked).child(r.error)))
+        .child(h_flex().gap(5).flex_wrap().pt(2)
+          .when(Boolean(r.log), (x) => x.child(this.actionButton(t, `${id}-log`, "scroll", "Follow log", `Follow ${base(r.log)} (tail, refreshed while live)`, () => this.follow(r))))
+          .child(this.actionButton(t, `${id}-tx`, "file-text", "Transcript", anyTx ? "Read the transcript of the current step" : "No transcript recorded for this run yet", () => this.transcript(r.key), { disabled: !anyTx }))
+          .child(this.actionButton(t, `${id}-copy`, "copy", "Copy id", `Copy run id ${r.id}`, (_e, cx) => copied(cx, "run id", r.id)))
+          .when(canOpen, (x) => x.child(this.actionButton(t, `${id}-open`, "play", "Open session", "Open this step's child session (pi --session) in a popup, a new terminal shown there", (_e, cx) => this.openSession(r.key, cx))))
+          .child(this.actionButton(t, `${id}-bm`, isBookmarked("run", r.key) ? "bookmark" : "bookmark-plus", isBookmarked("run", r.key) ? "Bookmarked" : "Bookmark", "Bookmark this run", () => this.bookmark(r), { active: isBookmarked("run", r.key) }))
+          .child(div().flex_1())
+          .child(div().flex_none().font_family(MONO).text_size(10.5).text_color(t.dim).child(r.short)))));
+  }
+
+  claudeCard(t, c, depth) {
+    const open = this.open.has(c.key);
+    const cur = this.cursor === c.key;
+    const id = `cl-${c.key}`;
+    const meta = [c.type, shortModel(c.model), c.toolCount ? `${c.toolCount} tool${c.toolCount === 1 ? "" : "s"}` : null, c.outTokens ? `${fmtTokens(c.outTokens)} out` : null, c.updatedAt ? `${ago(c.updatedAt)}${ago(c.updatedAt) === "now" ? "" : " ago"}` : null].filter(Boolean).join(" · ");
+    const tool = c.lastTool ? `${c.lastTool.tool ?? ""} ${c.lastTool.args ?? ""}`.trim() : null;
+    const st = c.live ? (c.state === "blocked" ? "blocked" : "working") : "ok";
+    return v_flex().id(id).relative().flex_none().ml(S.pad + depth * 10).mr(S.pad).mb(6).rounded(S.radiusLg).overflow_hidden()
+      .border_1().border_color(cur ? alpha(t.accent, 0.7) : c.live ? alpha(t.working, 0.45) : t.border)
+      .when(c.live, (e) => e.bg(t.background))
+      .child(v_flex().id(`${id}-head`).pl(c.live ? 10 : 9).pr(8).py(6).gap(2).cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.click(c.key, cx))
+        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.cursor = c.key; this.menu(c.key, cx); })
+        .child(h_flex().h(18).gap(6).items_center()
+          .child(statusMark(st, 12))
+          .child(div().min_w(0).flex_shrink(1).truncate().text_size(S.text).font_medium().text_color(c.live || open ? t.foreground : t.muted).child(c.desc || c.type || c.id))
+          .child(div().flex_1().min_w(4))
+          .child(icon("bot", S.iconXs, t.dim)))
+        .when(Boolean(meta), (e) => e.child(div().truncate().text_size(S.textXs).text_color(t.dim).child(meta)))
+        .when(Boolean(tool) && (c.live || open), (e) => e.child(h_flex().gap(5).min_w(0).font_family(MONO).text_size(11)
+          .child(div().flex_none().text_color(c.live ? t.working : t.dim).child("▸")).child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(tool)))))
+      .when(c.live, (e) => e.child(div().absolute().left(0).top(0).bottom(0).w(2).bg(t.working)))
+      .when(open, (e) => e.child(h_flex().px(9).pb(8).pt(2).gap(5).flex_wrap()
+        .child(this.actionButton(t, `${id}-tx`, "file-text", "Transcript", "Read this agent's transcript", () => this.transcript(c.key)))
+        .child(this.actionButton(t, `${id}-attach`, "terminal", "Attach", attachPlan({ kind: "claude" }).tip, () => {}, { disabled: true }))
+        .child(this.actionButton(t, `${id}-copy`, "copy", "Copy id", `Copy agent id ${c.id}`, (_e, cx) => copied(cx, "agent id", c.id)))
+        .child(div().flex_1())
+        .child(div().flex_none().font_family(MONO).text_size(10.5).text_color(t.dim).child(c.id.slice(0, 10)))));
+  }
+
+  childRow(t, k, depth) {
+    const st = typeof k.status === "string" ? k.status : k.status?.state ?? null;
+    const name = k.name || k.title || k.program?.name || k.address;
+    const local = !machineOf(k.address);
+    const plan = attachPlan({ kind: "terminal", address: k.address, state: k.state });
+    return treeRow({
+      id: `hc-${k.address}`, depth, height: S.rowSm, selected: false, cursor: this.cursor === `h:${k.address}`,
+      lead: h_flex().gap(5).items_center().child(statusMark(st, 11)).child(programIcon(k.program, S.iconXs)),
+      label: name, dim: true,
+      after: [this.compact() ? null : div().flex_none().text_size(S.textXs).text_color(t.dim).child(k.address)],
+      right: [
+        plan.show ? this.actionButton(t, `hc-${k.address}-attach`, "terminal", "Attach", plan.tip, () => this.attach(k.address, name), { disabled: !plan.enabled }) : null,
+        div().text_size(S.textXs).text_color(t.dim).child("peek")],
+      onClick: () => run("terminal.peek", { terminal: k.address }),
+      onRight: () => openMenu([
+        plan.show ? { label: "Attach", icon: "terminal", command: plan.enabled ? `ob-outline.attach:${k.address}` : undefined, disabled: !plan.enabled, hint: plan.enabled ? null : "this computer only" } : null,
+        { label: "Peek", icon: "eye", command: "terminal.peek", args: { terminal: k.address } },
+        k.parent ? { label: "Go to parent session", icon: "locate", command: "agent.focus", args: { terminal: k.parent } } : null,
+        k.parent ? { label: "Show parent's properties", icon: "info", command: `ob-tabs.open:ob-props@term:${k.parent}` } : null,
+        { separator: true },
+        { label: "Copy address", icon: "copy", copy: k.address },
+      ].filter(Boolean), { width: 230, title: name }),
+    });
+  }
+
+  parentRow(t, key, s, counts) {
+    const unattached = !s;
+    return treeRow({
+      id: `par-${key}`, depth: 0, chevron: !this.folded.has(key), onToggle: (_e, cx) => { this.folded.has(key) ? this.folded.delete(key) : this.folded.add(key); this.persist(); cx.notify(); },
+      lead: unattached ? icon("layers", S.iconSm, t.dim) : programIcon(s.program, S.iconSm),
+      label: unattached ? "Unattached" : s.label, bold: !unattached, dim: unattached,
+      after: [!unattached && !this.compact() ? div().flex_none().text_size(S.textXs).text_color(t.dim).child(s.address) : null],
+      right: [counts.live ? badge(`${counts.live} live`, "working") : null, !counts.live ? div().text_size(S.textXs).text_color(t.dim).child(String(counts.total)) : null],
+      onClick: unattached ? (_e, cx) => { this.folded.has(key) ? this.folded.delete(key) : this.folded.add(key); this.persist(); cx.notify(); } : () => revealTerminal(s.address),
+      onRight: unattached ? null : () => openMenu([
+        { label: "Go to session", icon: "locate", command: "agent.focus", args: { terminal: s.address } },
+        { label: "Show only this session", icon: "filter", command: `ob-outline.inspect:${s.address}` },
+        { label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${s.address}` },
+        { label: "Copy address", icon: "copy", copy: s.address },
+      ], { width: 230, title: s.label }),
+    });
+  }
+
+  // Rows for one parent's items. Pushes [key, element] pairs.
+  items(t, rows, runs, claude, kids, depth) {
+    const sorted = [
+      ...runs.map((r) => ({ live: r.live, at: r.lastUpdate ?? 0, el: () => this.runCard(t, r, depth), key: r.key })),
+      ...claude.map((c) => ({ live: c.live, at: c.updatedAt ?? Date.now(), el: () => this.claudeCard(t, c, depth), key: c.key })),
+    ].sort((a, b) => (b.live - a.live) || (b.at - a.at));
+    for (const x of sorted) rows.push([x.key, x.el()]);
+    for (const k of kids) rows.push([`h:${k.address}`, this.childRow(t, k, depth + 1)]);
+  }
+
+  toolbar(t, pinned) {
+    const seg = (id, label, on, onClick) => h_flex().id(id).h(22).px(this.compact() ? 6 : 9).items_center().rounded(S.radius).cursor_pointer()
+      .text_size(S.textXs).font_medium().text_color(on ? t.foreground : t.dim).when(on, (e) => e.bg(t.selected))
+      .when(!on, (e) => e.hover((s) => s.bg(t.hover).text_color(t.muted)))
+      .on_click((_e, cx) => { onClick(); this.persist(); cx.notify(); }).child(label);
+    const ms = machines().map((m) => m.name ?? null);
+    return h_flex().id("tb").h(S.toolbar).flex_none().px(S.pad).gap(4).items_center()
+      .child(h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.raised, 0.7)).border_1().border_color(t.border)
+        .child(seg("seg-tab", this.compact() ? "Tab" : "This tab", this.scope === "tab", () => { this.scope = "tab"; }))
+        .child(seg("seg-all", "All", this.scope === "all", () => { this.scope = "all"; })))
+      .child(div().flex_1())
+      .when(pinned, (e) => e.child(iconButton({ id: "unpin", icon: "pin", active: true, tip: "Showing a pinned session. Click: follow the focused one", onClick: () => inspect(null) })))
+      .child(iconButton({ id: "live-only", icon: "zap", active: this.liveOnly, tip: this.liveOnly ? "Live only (click: show finished too)" : "Show live only", onClick: (_e, cx) => { this.liveOnly = !this.liveOnly; this.persist(); cx.notify(); } }))
+      .child(iconButton({ id: "machines", icon: "filter", active: this.machine != null, tip: this.machine ? `Only ${machineLabel(this.machine === "local" ? null : this.machine)}` : "Filter by machine",
+        onClick: () => openMenu([
+          { label: "All machines", checked: this.machine == null, command: "ob-outline.machine:all" },
+          { separator: true },
+          ...ms.map((m) => ({ label: machineLabel(m), icon: m ? "server" : "monitor", checked: this.machine === (m ?? "local"), command: `ob-outline.machine:${m ?? "local"}` })),
+        ], { width: 210, title: "Machines" }) }))
+      .child(iconButton({ id: "refresh", icon: "refresh", tip: "Scan every machine now", onClick: () => run("ob-feed.refresh") }));
+  }
+
+  machineHeader(t, mk, f, n, live) {
+    const st = f?.machines?.[mk];
+    const folded = this.folded.has(`m:${mk}`);
+    const m = mk === "local" ? null : mk;
+    const warn = st && !st.ok;
+    return sectionHeader({
+      id: `mh-${mk}`, title: machineLabel(m).toUpperCase(), count: n, open: !folded,
+      onToggle: (_e, cx) => { folded ? this.folded.delete(`m:${mk}`) : this.folded.add(`m:${mk}`); this.persist(); cx.notify(); },
+      right: [
+        live ? badge(`${live} live`, "working") : null,
+        warn ? h_flex().id(`mh-${mk}-warn`).gap(4).items_center().tooltip(`${st.error ?? "Scan failed"}${st.stale ? "\nShowing the last result" : ""}`)
+          .child(icon("alert", S.iconXs, t.blocked)).when(!this.compact(), (e) => e.child(div().font_normal().text_color(t.blocked).child(st.stale ? "offline" : "scan failed"))) : null,
+      ].filter(Boolean),
+    });
+  }
+
+  // The active tab's panes, each followed by the agents that run in its terminal. A pinned session outside the
+  // tab comes after them, as the Subagents panel showed it. The machine filter applies here as in "All".
+  tabView(t, rows, data0) {
+    const data = onMachine(data0, this.machine);
+    const f = focused();
+    const sp = spaces(), ps = panes();
+    const curSpace = sp.find((x) => x.id === f?.space) ?? sp[0];
+    const curTab = curSpace?.tabs?.find((x) => x.id === f?.tab) ?? curSpace?.tabs?.[0];
+    const tabPanes = curTab ? ps.filter((p) => p.tab === curTab.id) : [];
+    const { address: pinnedAddr, pinned } = inspected();
+    let live = 0;
+    if (tabPanes.length) {
+      rows.push(["hdr:tab", sectionHeader({ id: `tab-sec-${curTab.id}`, title: `${curSpace?.name ?? "Space"} / ${tabLabel(curTab, ps)}`.toUpperCase(), count: tabPanes.length, open: true })]);
+    }
+    const tree = paneAgents(tabPanes, data);
+    tabPanes.forEach((p, i) => {
+      const g = tree.groups[i];
+      const addr = p.terminal ?? null;
+      live += g.runs.filter((r) => r.live).length + g.claude.filter((c) => c.live).length + g.kids.length;
+      rows.push([`pane:${p.pane}`, this.paneRow(t, p, Boolean(pinned) && pinnedAddr === addr && addr != null, tabLabel(curTab, ps))]);
+      this.items(t, rows, g.runs, g.claude, g.kids, 1);
+    });
+    const outside = pinnedAddr && !tabPanes.some((p) => p.terminal === pinnedAddr);
+    if (outside) {
+      const r = this.pinnedView(t, rows, data);
+      if (r?.live) live += r.live;
+      if (r?.empty && !tabPanes.length) return r;
+    }
+    if (!tabPanes.length && !outside) {
+      return { empty: emptyState({ icon: "list", title: "No panes in active tab", body: "Panes and the agents running in them show up here." }) };
+    }
+    return { live };
+  }
+
+  // One pane of the tab: its title, cwd, branch and status. Click focuses it; right-click pins its agents.
+  paneRow(t, p, pinnedHere, tabName) {
+    const f = focused();
+    const key = `pane:${p.pane}`;
+    const isSelected = p.focused || p.pane === f?.pane;
+    const pTitle = paneLabelOf(p, tabName);
+    const cwdStr = shortenPath(p.cwd);
+    const after = [];
+    if (p.branch && !this.compact()) after.push(h_flex().flex_none().gap(3).items_center().text_size(10).text_color(t.dim).child(icon("git-branch", 10, t.dim)).child(p.branch));
+    if (cwdStr && this.w >= 240) after.push(div().min_w(0).flex_shrink(100).truncate().text_size(S.textXs).text_color(t.dim).child(cwdStr));
+    const right = [];
+    if (p.zoomed) right.push(icon("maximize", S.iconXs, t.accent));
+    if (p.status && p.status !== "idle") right.push(statusMark(p.status, S.iconSm));
+    if (pinnedHere) right.push(icon("pin", S.iconXs, t.accent));
+    const lead = p.program ? programIcon(p.program, S.iconSm, t.muted) : icon(p.terminal ? "terminal" : "file-text", S.iconSm, t.muted);
+    return treeRow({
+      id: `pane-row-${p.pane}`, depth: 0, selected: isSelected, cursor: this.cursor === key, lead, label: pTitle,
+      labelColor: isSelected ? t.foreground : t.muted,
+      after: after.length ? after : undefined, right: right.length ? right : undefined,
+      onClick: (_e, cx) => { this.click(key, cx); },
+      onRight: p.terminal ? () => openMenu([
+        pinnedHere ? { label: "Unpin", icon: "pin-off", command: "ob-outline.unpin" } : { label: "Show only this pane's agents", icon: "pin", command: `ob-outline.inspect:${p.terminal}` },
+        { label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${p.terminal}` },
+      ], { width: 230, title: pTitle }) : null,
+    });
+  }
+
+  focusPane(paneId) {
+    if (!paneId) return;
+    run("pane.focus", { pane: paneId });
+  }
+
+  pinnedView(t, rows, data) {
+    const { address, pinned } = inspected();
+    const s = address ? sessionOf(address) : null;
+    if (!s) return {};
+    const runs = data.runs.filter((r) => r.parent === address);
+    const claude = data.claude.filter((c) => c.parent === address);
+    const kids = data.kids.filter((k) => k.parent === address);
+    const live = runs.filter((r) => r.live).length + claude.filter((c) => c.live).length + kids.length;
+    // The session itself, like a note's title row.
+    rows.push([`s:${address}`, treeRow({
+      id: "sess", depth: 0, height: 30, lead: programIcon(s.program, S.iconSm), label: s.label, bold: true,
+      after: [this.compact() ? null : div().flex_none().text_size(S.textXs).text_color(t.dim).child(address)],
+      right: [statusMark(s.status, 12)],
+      onClick: () => revealTerminal(address),
+      onRight: () => openMenu([
+        { label: "Go to session", icon: "locate", command: "agent.focus", args: { terminal: address } },
+        { label: pinned ? "Unpin" : "Pin this session", icon: pinned ? "pin-off" : "pin", command: pinned ? "ob-outline.unpin" : `ob-outline.inspect:${address}` },
+        { label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${address}` },
+      ], { width: 220 }),
+    })]);
+    const total = runs.length + claude.length + kids.length;
+    if (!total) {
+      const f = data.f;
+      return { empty: emptyState({ icon: this.liveOnly ? "zap" : "subagents", title: this.liveOnly ? "Nothing running here" : "No sub-agents yet",
+        body: f ? `pi background runs (last ${48} h), Claude Code agents and terminals this session starts show up here.` : "Scanning machines…",
+        action: { id: "to-all", label: "Show all machines", onClick: (_e, cx) => { this.scope = "all"; this.persist(); cx.notify(); } } }) };
+    }
+    const piN = runs.length, clN = claude.length;
+    if (piN) {
+      rows.push(["hdr:pi", sectionHeader({ id: "h-pi", title: "PI RUNS", count: piN, right: [runs.some((r) => r.live) ? badge(`${runs.filter((r) => r.live).length} live`, "working") : null].filter(Boolean) })]);
+      this.items(t, rows, runs, [], [], 0);
+    }
+    if (clN) {
+      rows.push(["hdr:cl", sectionHeader({ id: "h-cl", title: "CLAUDE AGENTS", count: clN, right: [claude.some((c) => c.live) ? badge(`${claude.filter((c) => c.live).length} live`, "working") : null].filter(Boolean) })]);
+      this.items(t, rows, [], claude, [], 0);
+    }
+    if (kids.length) {
+      rows.push(["hdr:hc", sectionHeader({ id: "h-hc", title: "TERMINALS", count: kids.length })]);
+      for (const k of kids) rows.push([`h:${k.address}`, this.childRow(t, k, 0)]);
+    }
+    return { live };
+  }
+
+  allView(t, rows, data) {
+    const f = data.f;
+    const order = [null, ...machines().map((m) => m.name ?? null).filter((m) => m !== null)];
+    for (const k of Object.keys(f?.machines ?? {})) { const m = k === "local" ? null : k; if (!order.includes(m)) order.push(m); }
+    const ps = panes(), sp = spaces();
+    let shown = 0;
+    for (const m of order) {
+      const mk = m ?? "local";
+      if (this.machine && this.machine !== mk) continue;
+      const runs = data.runs.filter((r) => (r.machine ?? null) === m);
+      const claude = data.claude.filter((c) => (c.machine ?? null) === m);
+      const kids = data.kids.filter((k) => machineOf(k.address) === m);
+      const n = runs.length + claude.length + kids.length;
+      const st = f?.machines?.[mk];
+      if (!n && !(st && !st.ok)) continue;
+      shown += n;
+      const live = runs.filter((r) => r.live).length + claude.filter((c) => c.live).length + kids.length;
+      rows.push([`m:${mk}`, this.machineHeader(t, mk, f, n, live)]);
+      if (this.folded.has(`m:${mk}`)) continue;
+      // Parents: every address that owns something, live ones first, then by newest activity.
+      const parents = new Map();
+      const slot = (p) => { if (!parents.has(p)) parents.set(p, { runs: [], claude: [], kids: [], live: 0, at: 0 }); return parents.get(p); };
+      for (const r of runs) { const x = slot(r.parent ?? null); x.runs.push(r); x.live += r.live ? 1 : 0; x.at = Math.max(x.at, r.lastUpdate ?? 0); }
+      for (const c of claude) { const x = slot(c.parent ?? null); x.claude.push(c); x.live += c.live ? 1 : 0; x.at = Math.max(x.at, c.updatedAt ?? 0); }
+      for (const k of kids) { const x = slot(k.parent); x.kids.push(k); x.live += 1; x.at = Date.now(); }
+      const list = [...parents.entries()].sort(([a, x], [b, y]) => (a === null) - (b === null) || (y.live - x.live) || (y.at - x.at));
+      for (const [p, x] of list) {
+        const key = `p:${mk}:${p ?? "-"}`;
+        const s = p ? sessionOf(p, ps, sp) : null;
+        rows.push([key, this.parentRow(t, key, p ? s : null, { live: x.live, total: x.runs.length + x.claude.length + x.kids.length })]);
+        if (this.folded.has(key)) continue;
+        this.items(t, rows, x.runs, x.claude, x.kids, 0);
+      }
+    }
+    if (!shown && !rows.length) {
+      return { empty: emptyState({ icon: this.liveOnly ? "zap" : "subagents", title: this.liveOnly ? "Nothing running" : f ? "No sub-agents" : "Scanning machines…",
+        body: this.liveOnly ? "No pi run, Claude agent or child terminal is working right now." : f ? "pi background runs from the last 48 h, Claude Code agents and child terminals of every machine show up here." : "Reading pi-subagents runs and Claude Code agents on every machine.",
+        action: this.liveOnly ? { id: "show-finished", label: "Show finished too", onClick: (_e, cx) => { this.liveOnly = false; this.persist(); cx.notify(); } } : null }) };
+    }
+    return {};
+  }
+
+  render(cx) {
+    const t = tc();
+    takeFocus(this, cx, props()?.slot ?? "ob-outline", this.handle, (_cx, intent) => this.intent(intent));
+    const data = this.build();
+    const rows = [];
+    this.needPi = new Set();
+    const res = this.scope === "all" ? this.allView(t, rows, data) : this.tabView(t, rows, data);
+    this.index = new Map(rows.map(([k], i) => [k, i]));
+    this.order = rows.map(([k]) => k).filter((k) => this.runOf(k) || this.claudeOf(k) || k.startsWith("h:") || k.startsWith("pane:"));
+    if (this.pendingScroll && this.index.has(this.pendingScroll)) {
+      this.scroll.scroll_to_item(this.index.get(this.pendingScroll));
+      this.pendingScroll = null;
+    }
+    const need = [...this.needPi].filter((m) => !(m in this.piSession));
+    this.needPi.clear();
+    if (need.length) cx.timer.after(0, (cx) => { for (const m of need) this.checkPi(m === "local" ? null : m, cx); });
+    const pinned = inspected().pinned;
+    return v_flex().id("root").track_focus(this.handle).size_full().min_h(0).bg(t.chrome).text_color(t.foreground)
+      .on_size_change((s, cx) => { const w = s.width / (settings().zoom || 1); if (Math.abs(w - this.w) > 1) { this.w = w; cx.notify(); } })
+      .on_key_down((e, cx) => {
+        if (e.key === "down" || e.key === "j") this.move(1);
+        else if (e.key === "up" || e.key === "k") this.move(-1);
+        else if ((e.key === "enter" || e.key === "space") && this.cursor) {
+          if (this.cursor.startsWith("h:")) run("terminal.peek", { terminal: this.cursor.slice(2) }); else this.click(this.cursor, cx);
+        } else if (e.key === "l" && this.cursor) this.follow(this.runOf(this.cursor));
+        else if (e.key === "t" && this.cursor) this.transcript(this.cursor);
+        else if (e.key === "escape") { this.cursor = null; const f = focused(); if (f?.pane) run("pane.focus", { pane: f.pane }); }
+        else return;
+        cx.stop_propagation();
+        cx.notify();
+      })
+      .child(this.toolbar(t, pinned))
+      .child(div().h(1).flex_none().bg(t.border))
+      .when(Boolean(feedLine(feed()?.at)), (e) => e.child(div().id("feed-paused").px(S.pad).py(3).text_size(S.textXs).text_color(t.dim).child(feedLine(feed()?.at))))
+      .child(div().id("list-wrap").relative().flex_1().min_h(0)
+        .child(v_flex().id("list").size_full().pt(4).overflow_y_scroll().track_scroll(this.scroll)
+          .children(rows.map(([, el]) => el))
+          .when(Boolean(res.empty), (e) => e.child(res.empty))
+          .child(div().id("list-end").h(8).flex_none()))
+        .child(Scrollbar.vertical("list").absolute().inset_0()));
+  }
 }
 
 export default class Outline extends View {
   init(_p, cx) {
-    this.w = 300;
-    this.handle = cx.focus_handle();
-    this.scroll = ScrollHandle.new();
-    this.cursor = 0;
-    this.kbd = false;
-    this.items = []; // [{ kind: 'pane'|'task', id, pane }]
-
+    const p = props() ?? {};
+    this.view = p.view ? new Viewer() : new Panel();
+    this.isViewer = Boolean(p.view);
+    this.view.init(cx);
     cx.spawn(async (cx) => {
       for (;;) {
-        const c = await nextCommand();
-        try { this.command(c); } catch (e) { console.log(`ob-outline: ${c} failed: ${e}`); }
+        const c = String(await nextCommand());
+        try {
+          const viewerCmd = c.startsWith("viewer-");
+          if (this.isViewer && viewerCmd) this.view.command(c, cx);
+          else if (!this.isViewer && !viewerCmd) await this.view.command(c, cx);
+        } catch (e) { notify({ title: `Couldn't do ${c.split(":")[0]}`, body: String(e?.message ?? e).slice(0, 160), level: "error", timeout: 4000 }); }
         cx.notify();
       }
     });
   }
-
-  command(c) {
-    const s = String(c ?? "").trim();
-    switch (s) {
-      case "focus":
-        this.handle.focus();
-        this.kbd = true;
-        if (this.cursor < 0 && this.items.length) this.cursor = 0;
-        break;
-      case "next": this.step(1); break;
-      case "prev": this.step(-1); break;
-      case "open":
-        if (this.items[this.cursor]) this.openItem(this.items[this.cursor]);
-        break;
-      default:
-        console.log(`ob-outline: unknown command ${c}`);
-    }
-  }
-
-  step(d) {
-    if (!this.items.length) return;
-    this.cursor = this.cursor < 0 ? 0 : Math.max(0, Math.min(this.items.length - 1, this.cursor + d));
-    this.kbd = true;
-    const ri = this.rowIndex?.get(this.cursor);
-    if (ri != null) this.scroll.scroll_to_item(ri);
-  }
-
-  openItem(it) {
-    if (!it) return;
-    if (it.kind === "pane" && it.pane) {
-      this.focusPane(it.pane);
-    } else if (it.kind === "run" && it.id) {
-      openView("ob-subagents", `run:${it.id}`);
-    } else if (it.kind === "claude" && it.id) {
-      openView("ob-subagents", `claude:${it.id}`);
-    }
-  }
-
-  focusPane(p) {
-    const paneId = typeof p === "string" ? p : p?.pane;
-    if (!paneId) return;
-    if (typeof app !== "undefined" && typeof app.focusPane === "function") {
-      try { app.focusPane(paneId); } catch {}
-    }
-    run("pane.focus", { pane: paneId });
-  }
-
-  render(cx) {
-    const t = theme();
-    takeFocus(this, cx, props()?.slot ?? "ob-outline", this.handle, () => {
-      this.kbd = true;
-      if (this.cursor < 0 && this.items.length) this.cursor = 0;
-    });
-
-    const f = focused();
-    const sp = spaces(), ps = panes();
-    const curSpace = sp.find((s) => s.id === f?.space) ?? sp[0];
-    const curTab = curSpace?.tabs?.find((x) => x.id === f?.tab) ?? curSpace?.tabs?.[0];
-
-    const tabPanes = curTab ? ps.filter((p) => p.tab === curTab.id) : [];
-    const items = [];
-    const rows = [];
-    this.rowIndex = new Map();
-
-    const compact = this.w < 220;
-
-    if (curTab && tabPanes.length) {
-      const headerTitle = `${curSpace?.name ?? "Space"} / ${tabLabel(curTab, ps)}`;
-      rows.push(
-        sectionHeader({
-          id: `tab-sec-${curTab.id}`,
-          title: headerTitle.toUpperCase(),
-          count: tabPanes.length,
-          open: true,
-        })
-      );
-
-      for (const p of tabPanes) {
-        const itemIndex = items.length;
-        items.push({ kind: "pane", id: p.pane, pane: p });
-        this.rowIndex.set(itemIndex, rows.length);
-
-        const isCur = this.kbd && this.cursor === itemIndex;
-        const isSelected = p.focused || p.pane === f?.pane;
-        const pTitle = paneName(p) || p.title || (p.terminal ? "Terminal" : "Pane");
-        const progName = p.program?.name || (p.terminal ? "shell" : "pane");
-        const cwdStr = shortenPath(p.cwd);
-
-        const after = [];
-        if (p.branch && !compact) {
-          after.push(
-            h_flex().flex_none().gap(3).items_center().text_size(10).text_color(t.dim)
-              .child(icon("git-branch", 10, t.dim))
-              .child(p.branch)
-          );
-        }
-        if (cwdStr && this.w >= 240) {
-          after.push(
-            div().min_w(0).flex_shrink(100).truncate().text_size(S.textXs).text_color(t.dim).child(cwdStr)
-          );
-        }
-
-        const right = [];
-        if (p.zoomed) {
-          right.push(icon("maximize", S.iconXs, t.accent));
-        }
-        if (p.status && p.status !== "idle") {
-          right.push(statusMark(p.status, S.iconSm));
-        }
-
-        const lead = p.program
-          ? programIcon(p.program, S.iconSm, t.muted)
-          : icon(p.terminal ? "terminal" : "file-text", S.iconSm, t.muted);
-
-        rows.push(
-          treeRow({
-            id: `pane-row-${p.pane}`,
-            depth: 0,
-            selected: isSelected,
-            cursor: isCur,
-            lead,
-            label: pTitle,
-            labelColor: isSelected ? t.foreground : t.muted,
-            after: after.length ? after : undefined,
-            right: right.length ? right : undefined,
-            onClick: (_e, cx) => {
-              this.cursor = itemIndex;
-              this.kbd = false;
-              this.focusPane(p);
-              cx.notify();
-            },
-          })
-        );
-
-        // Subagents or runs under this pane's terminal
-        if (p.terminal) {
-          const sa = subagentsOf(p.terminal);
-          for (const r of sa.runs) {
-            const taskIndex = items.length;
-            items.push({ kind: "run", id: r.key, pane: p });
-            this.rowIndex.set(taskIndex, rows.length);
-
-            const isTaskCur = this.kbd && this.cursor === taskIndex;
-            const chain = (r.steps ?? []).map((s) => s.agent).filter(Boolean);
-            const rLabel = chain.length > 2 ? `${r.mode ?? "workflow"} (${chain.length})` : chain.join(" → ") || r.mode || "run";
-            const lastTask = (r.steps ?? []).at(-1)?.task;
-
-            rows.push(
-              treeRow({
-                id: `run-row-${r.key}`,
-                depth: 1,
-                height: S.rowSm,
-                cursor: isTaskCur,
-                lead: icon("subagents", S.iconXs, t.dim),
-                label: rLabel,
-                labelColor: t.muted,
-                after: lastTask && this.w >= 260
-                  ? [div().min_w(0).flex_shrink(100).truncate().text_size(S.textXs).text_color(t.dim).child(lastTask)]
-                  : undefined,
-                right: [statusMark(r.live ? "working" : r.state ?? "idle", S.iconXs)],
-                onClick: (_e, cx) => {
-                  this.cursor = taskIndex;
-                  this.openItem(items[taskIndex]);
-                  cx.notify();
-                },
-              })
-            );
-          }
-
-          for (const c of sa.claude) {
-            const claudeIndex = items.length;
-            items.push({ kind: "claude", id: c.key, pane: p });
-            this.rowIndex.set(claudeIndex, rows.length);
-
-            const isClaudeCur = this.kbd && this.cursor === claudeIndex;
-            rows.push(
-              treeRow({
-                id: `claude-row-${c.key}`,
-                depth: 1,
-                height: S.rowSm,
-                cursor: isClaudeCur,
-                lead: icon("bot", S.iconXs, t.dim),
-                label: c.desc || c.type || "agent",
-                labelColor: t.muted,
-                right: [statusMark(c.live ? "working" : "idle", S.iconXs)],
-                onClick: (_e, cx) => {
-                  this.cursor = claudeIndex;
-                  this.openItem(items[claudeIndex]);
-                  cx.notify();
-                },
-              })
-            );
-          }
-        }
-      }
-    }
-
-    this.items = items;
-    if (this.cursor >= items.length) this.cursor = items.length - 1;
-
-    const body = !tabPanes.length
-      ? emptyState({
-          icon: "list",
-          title: "No panes in active tab",
-          body: "Panes, processes, and agent tasks in your current tab show up here.",
-        })
-      : div().relative().flex_1().min_h(0)
-          .child(
-            v_flex().id("list").size_full().px(4).pb(10).overflow_y_scroll().track_scroll(this.scroll).children(rows)
-          )
-          .child(Scrollbar.vertical("list").absolute().inset_0());
-
-    return v_flex().id("root").track_focus(this.handle).size_full().min_h(0).bg(t.chrome).text_size(S.text)
-      .on_size_change((s, cx) => {
-        const w = s.width / (settings().zoom ?? 1);
-        if (Math.abs(w - this.w) > 1) {
-          this.w = w;
-          cx.notify();
-        }
-      })
-      .on_key_down((e, cx) => {
-        if (e.key === "down") this.step(1);
-        else if (e.key === "up") this.step(-1);
-        else if (e.key === "enter") {
-          if (this.items[this.cursor]) this.openItem(this.items[this.cursor]);
-        } else if (e.key === "escape") {
-          this.kbd = false;
-        } else {
-          return;
-        }
-        cx.stop_propagation();
-        cx.notify();
-      })
-      .child(
-        h_flex().h(28).flex_none().pl(S.pad + 4).pr(S.pad).items_center().text_size(S.textXs).text_color(t.dim)
-          .child(
-            div().flex_1().min_w(0).truncate().child(
-              tabPanes.length
-                ? `${tabPanes.length} pane${tabPanes.length === 1 ? "" : "s"} in tab`
-                : "Outline"
-            )
-          )
-      )
-      .child(body);
-  }
+  render(cx) { return this.view.render(cx); }
 }
