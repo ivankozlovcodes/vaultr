@@ -1,8 +1,8 @@
 # ob scan: pi-subagents runs + Claude Code subagents on THIS machine, as one JSON line.
 # Run by ob-feed through exec("python3", ["-c", <this file's text>, <options json>], { on: machine }).
-# Read-only: it only reads /proc, ~/.pi, ~/.claude and the pi-subagents temp folder.
+# Read-only: it only reads /proc (on macOS: ps and lsof), ~/.pi, ~/.claude and the pi-subagents temp folder.
 # Output: see SPEC.md section 7 ("scan JSON"). Never raises: errors go into "errors".
-import json, os, sys, time, glob, tempfile, socket, datetime
+import json, os, re, sys, time, glob, tempfile, socket, datetime, subprocess
 
 T0 = time.time()
 NOW = int(T0 * 1000)
@@ -23,6 +23,8 @@ HOME = os.path.expanduser("~")
 CHOME = str(OPT.get("claudeHome") or HOME)
 PHOME = str(OPT.get("piHome") or HOME)          # test hook: a fixture home for ~/.pi
 FIXTURE_PROCS = OPT.get("procs") if isinstance(OPT.get("procs"), list) else None
+# Test hook (test/test_scan_pi.py): the output of the macOS process commands ({list, env, cwd}), forcing that path.
+PS_FIXTURE = OPT.get("psOutput") if isinstance(OPT.get("psOutput"), dict) else None
 ERRORS = []
 
 
@@ -252,7 +254,75 @@ def processes():
     return out
 
 
-PROCS = {int(p["pid"]): p for p in FIXTURE_PROCS if isinstance(p, dict) and "pid" in p and "term" in p} if FIXTURE_PROCS is not None else processes()
+# ---- the same on macOS (no /proc): ps for start time, name and arguments, ps -E for the environment, lsof for cwd ----
+AGENT_NAMES = ("pi", "claude")
+
+
+def ps_out(key, args):
+    if PS_FIXTURE is not None:
+        return str(PS_FIXTURE.get(key) or "")
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=5).stdout
+    except Exception as e:
+        ERRORS.append(f"{args[0]}: {e}")
+        return ""
+
+
+def agent_name(ucomm, argv):
+    """pi or claude, from the accounting name, else the program a node process runs (pi is a node script)."""
+    if ucomm in AGENT_NAMES:
+        return ucomm
+    for word in argv[:2]:
+        base = os.path.basename(word)
+        if base in AGENT_NAMES:
+            return base
+        if ucomm == "node" and "/pi/" in word:
+            return "pi"
+    return None
+
+
+def processes_ps():
+    found = {}
+    for line in ps_out("list", ["ps", "-axww", "-o", "pid=,lstart=,ucomm=,args="]).splitlines():
+        f = line.split()
+        if len(f) < 7 or not f[0].isdigit():
+            continue
+        name = agent_name(f[6], f[7:])
+        if not name:
+            continue
+        try:
+            start = int(time.mktime(time.strptime(" ".join(f[1:6]), "%a %b %d %H:%M:%S %Y")) * 1000)
+        except Exception:
+            start = None
+        found[int(f[0])] = {"comm": name, "start": start}
+    if not found:
+        return {}
+    pids = ",".join(str(p) for p in found)
+    terms = {}
+    for line in ps_out("env", ["ps", "-E", "-ww", "-o", "pid=,command=", "-p", pids]).splitlines():
+        f = line.split(None, 1)
+        m = re.search(r"(?:^|\s)HC_TERMINAL_ID=(\S+)", f[1]) if len(f) == 2 and f[0].isdigit() else None
+        if m:
+            terms[int(f[0])] = m.group(1)
+    cwds, cur = {}, None
+    for line in ps_out("cwd", ["lsof", "-a", "-d", "cwd", "-Fn", "-p", pids]).splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            cur = int(line[1:])
+        elif line.startswith("n") and cur is not None:
+            cwds[cur] = line[1:]
+    out = {}
+    for pid, p in found.items():
+        if pid in terms:
+            out[pid] = {"term": terms[pid], "comm": p["comm"], "cwd": cwds.get(pid, ""), "start": p["start"]}
+    return out
+
+
+if FIXTURE_PROCS is not None:
+    PROCS = {int(p["pid"]): p for p in FIXTURE_PROCS if isinstance(p, dict) and "pid" in p and "term" in p}
+elif PS_FIXTURE is not None or not os.path.isdir("/proc"):
+    PROCS = processes_ps()
+else:
+    PROCS = processes()
 
 # ---- pi-subagents async runs ----
 ROOT = os.path.join(os.environ.get("PI_SUBAGENTS_TEMP_ROOT") or os.path.join(tempfile.gettempdir(), f"pi-subagents-uid-{os.getuid()}"), "async-subagent-runs")

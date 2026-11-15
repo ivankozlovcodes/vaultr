@@ -162,6 +162,45 @@ class MainAgents(ScanFixture):
         self.assertIsNone(t["transcript"])
 
 
+class MacProcesses(ScanFixture):
+    """macOS has no /proc: the scan finds pi and claude terminals with ps (start time, name, arguments), ps -E (the
+    HC_TERMINAL_ID in each one's environment) and lsof (its folder). `psOutput` stands in for those three commands."""
+
+    PS = {
+        "list": "\n".join([
+            f"  {PID} Sat Nov 14 10:41:08 2026 claude           claude --resume",
+            "  5150 Sat Nov 14 09:00:00 2026 node             node /usr/local/lib/node_modules/pi/dist/cli.js",
+            "  5151 Sat Nov 14 09:00:00 2026 node             node /srv/app/server.js",
+            "  5152 Sat Nov 14 09:00:00 2026 claude           claude",
+            "",
+        ]),
+        "env": "\n".join([
+            f"{PID} claude --resume PATH=/usr/bin HC_TERMINAL_ID={TERM} TERM=xterm-256color",
+            "5150 node /usr/local/lib/node_modules/pi/dist/cli.js HC_TERMINAL_ID=tpi9 HOME=/Users/someone",
+            "5152 claude PATH=/usr/bin",
+        ]),
+        "cwd": "\n".join([f"p{PID}", "fcwd", "n/srv/example", "p5150", "fcwd", "n/srv/pi-work", ""]),
+    }
+
+    def result(self):
+        return json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home, "limit": 40,
+                                     "psOutput": self.PS}))
+
+    def test_a_claude_terminal_is_found_from_ps(self):
+        t = self.result()["terms"][TERM]
+        self.assertEqual(t["kind"], "claude")
+        self.assertEqual(t["session"], SID)
+
+    def test_pi_running_under_node_is_found_with_its_folder(self):
+        t = self.result()["terms"]["tpi9"]
+        self.assertEqual(t["kind"], "pi")
+        self.assertEqual(t["cwd"], "/srv/pi-work")
+
+    def test_a_process_without_a_terminal_id_or_not_an_agent_is_left_out(self):
+        terms = self.result()["terms"]
+        self.assertEqual(sorted(terms), sorted([TERM, "tpi9"]))
+
+
 class ShortToolArgument(ScanFixture):
     """The last tool of an agent names what it touches, briefly: a file's basename, or the first 40 characters of a
     command. Never the tool's output."""
