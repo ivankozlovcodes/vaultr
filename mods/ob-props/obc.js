@@ -1,9 +1,9 @@
-// obc.js: helpers shared by package C's mods (ob-subagents, ob-graph, ob-props, ob-outline).
+// obc.js: helpers shared by package C's mods (ob-outline, ob-graph, ob-props, ob-outline).
 // MASTER: $S/C-common/obc.js, copied into each of those folders (mods can't import across folders).
 // Kit request: move these into kit.js (they only use kit and herdr).
 
 import { terminals, agents, panes, spaces, run, openOverlay, shared, setShared, focused, notify } from "herdr";
-import { machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, feed, liveRecords, base } from "./kit.js";
+import { machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, feed, liveRecords, base, followTarget } from "./kit.js";
 
 export const MONO = "JetBrains Mono";
 
@@ -31,11 +31,17 @@ export function sessionOf(address, ps = panes(), sp = spaces()) {
   return { address, machine: machineOf(address), term, agent, pane, tab, space, label, program, status, live: term ? term.state === "live" : Boolean(pane) };
 }
 
-// The session the right sidebar is about: ob.inspect when that terminal is live, else the focused one.
+// The session the right sidebar is about: the pinned one (ob.inspect) while it is live, else the last focused
+// main-window pane that holds a terminal (kit/follow_target.js). The last one this panel followed is kept in shared "ob.follow".
 export function inspected() {
+  const f = focused();
+  const focus = f ? { pane: f.pane, terminal: f.terminal, agent: Boolean(f.terminal && agents().some((a) => a.address === f.terminal)) } : null;
   const pin = shared("ob.inspect");
-  if (pin?.terminal && terminals().some((t) => t.address === pin.terminal && t.state === "live")) return { address: pin.terminal, pinned: true };
-  return { address: focused()?.terminal ?? null, pinned: false };
+  const follow = shared("ob.follow") ?? {};
+  const last = follow["props"] ?? null;
+  const r = followTarget({ pinned: pin?.terminal ?? null, focused: focus, last, terminals: terminals(), wantAgent: false });
+  if (r.last !== last) setShared("ob.follow", { ...follow, props: r.last });
+  return { address: r.terminal, pinned: Boolean(pin?.terminal) && r.terminal === pin.terminal };
 }
 export function inspect(address) { setShared("ob.inspect", address ? { terminal: address, at: Date.now() } : null); }
 
@@ -100,7 +106,8 @@ export function claudeAll() {
   const recs = liveRecords();
   const out = (f?.claude ?? []).map((c) => {
     const r = recs.get(c.parent)?.[c.id];
-    return { ...c, live: Boolean(r && (r.state === "working" || r.state === "blocked")), state: r?.state ?? null, desc: c.desc || r?.title || c.type };
+    // Live: the scan's transcript says it is running, or the terminal's live record says so (as ob-outline).
+    return { ...c, live: Boolean(c.live) || Boolean(r && (r.state === "working" || r.state === "blocked")), state: r?.state ?? null, desc: c.desc || r?.title || c.type };
   });
   for (const [addr, rs] of recs) {
     for (const [id, r] of Object.entries(rs)) {
@@ -116,11 +123,10 @@ export function hcChildren(address) {
   return terminals().filter((t) => t.parent && t.state === "live" && (address == null || t.parent === address));
 }
 
-// ---------------------------------------------------------------- viewer windows (ob-subagents)
+// ---------------------------------------------------------------- viewer windows (ob-outline)
 // props: { view: "log"|"transcript", machine, path, title, live, runKey }
 export function openViewer(p) {
-  const key = `ob-view-${String(p.key ?? p.path).replace(/[^A-Za-z0-9_.:-]+/g, "-").slice(-60)}`;
-  return openOverlay({ kind: "window", key, mod: "ob-subagents", width: 760, height: 0.7, props: { view: p.view, machine: p.machine ?? null, path: p.path, title: p.title ?? base(p.path), live: Boolean(p.live), runKey: p.runKey ?? null } });
+  return openOverlay({ kind: "popup", mod: "ob-outline", width: 760, props: { view: p.view, machine: p.machine ?? null, path: p.path, title: p.title ?? base(p.path), live: Boolean(p.live), runKey: p.runKey ?? null } });
 }
 
 export function copied(cx, what, text) {

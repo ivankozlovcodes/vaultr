@@ -1,6 +1,7 @@
-// ob-props: Obsidian's Properties for a session (SPEC 8.C3). Target: ob.inspect's terminal (pinned)
-// else the focused terminal, else the focused mod pane (pane facts only).
-// Sections: Session, Location, Process, Labels, Relations, Session file. Key column 96 px; hover a
+// ob-props: Obsidian's Properties for a session (SPEC 8.C3). Target: ob.inspect's terminal while pinned, else the
+// last focused main pane that holds a terminal (kit/follow_target.js); before any, the focused mod pane (pane facts only).
+// Sections: Session, Location, Process, Labels, Relations, Usage, Session file. Usage reads the followed agent's
+// transcript with usage.py (exec, off the UI path) on target change and every 10 s; usage.js does the arithmetic. Key column 96 px; hover a
 // row for its copy button. `hc get <addr> --json` adds what terminals() lacks (status time, exit,
 // notify), on target change and every 10 s while the view shows.
 // Commands (ob-props.<cmd>): inspect:<address>, unpin, pin (pin the focused session), copy:<field>
@@ -10,11 +11,12 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
-import { props, run, nextCommand, settings, hc, layout, focused, panes, spaces, shared } from "herdr";
+import { props, run, nextCommand, settings, hc, layout, focused, panes, spaces, shared, exec, readTextFile, appHome } from "herdr";
 import {
   S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, emptyState, programIcon, feed,
-  machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts,
+  machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts, feedLine,
 } from "./kit.js";
+import { summarize, usageLines, subagentsLine } from "./usage.js";
 import { MONO, splitCmd, sessionOf, inspected, inspect, revealTerminal, claudeAll, hcChildren, openViewer, copied } from "./obc.js";
 
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
@@ -31,7 +33,9 @@ export default class Props extends View {
     this.hover = null;
     this.w = 0;
     this.lastTarget = null;
-    cx.timer.every(10000, (cx) => { if (this.target() && isShown(layout(), props()?.slot ?? "ob-props")) this.fetch(this.target(), cx); });
+    this.usage = {};      // address -> { summary, format, truncated, size, error, at }
+    this.usageBusy = new Set();
+    cx.timer.every(10000, (cx) => { if (this.target() && isShown(layout(), props()?.slot ?? "ob-props")) { this.fetch(this.target(), cx); this.fetchUsage(this.target(), cx); } });
     cx.spawn(async (cx) => {
       for (;;) {
         const c = String(await nextCommand());
@@ -60,6 +64,39 @@ export default class Props extends View {
     });
   }
 
+  // The followed agent's token usage: usage.py over its transcript (exec, time-boxed), summed by usage.js.
+  // Only a Claude Code or pi session has a transcript; a plain shell has none and gets no section.
+  fetchUsage(addr, cx) {
+    const path = this.transcriptOf(addr);
+    if (!path || this.usageBusy.has(addr)) return;
+    this.usageBusy.add(addr);
+    cx.spawn(async (cx) => {
+      const machine = machineOf(addr);
+      try {
+        // Read once: it is the same file every 10 s (a missing one is looked for again next time).
+        this.usageScript ||= await readTextFile(`${appHome()}/mods/ob-props/usage.py`);
+        const script = this.usageScript;
+        if (!script) throw new Error("usage.py is missing");
+        const r = await exec("python3", ["-c", script, path], { ...(machine ? { on: machine } : {}), timeout: 8000 });
+        const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
+        if (!line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());
+        const d = JSON.parse(line);
+        this.usage[addr] = { summary: summarize(d.turns), format: d.format, truncated: Boolean(d.truncated), size: d.size, error: d.error ?? null, at: Date.now() };
+      } catch (e) {
+        this.usage[addr] = { summary: null, error: String(e?.message ?? e).slice(0, 200), at: Date.now() };
+      }
+      this.usageBusy.delete(addr);
+      cx.notify();
+    });
+  }
+
+  // The session file the feed knows for a terminal (Claude Code: transcript; pi: its session file), or null.
+  transcriptOf(addr) {
+    const term = feed()?.terms?.[addr];
+    if (!term) return null;
+    return term.transcript ?? (term.kind === "pi" ? term.session : null) ?? null;
+  }
+
   // The value of a copyable field for the current target.
   field(name) {
     const a = this.target();
@@ -83,7 +120,7 @@ export default class Props extends View {
     else if (verb === "copy") { const v = this.field(arg); if (v) copied(cx, arg, v); }
     else if (verb === "transcript") this.openTranscript();
     else if (verb === "fold") { this.folded.has(arg) ? this.folded.delete(arg) : this.folded.add(arg); save("folded", [...this.folded]); }
-    else if (verb === "refresh") { const a = this.target(); if (a) this.fetch(a, cx); run("ob-feed.refresh"); }
+    else if (verb === "refresh") { const a = this.target(); if (a) { this.fetch(a, cx); this.fetchUsage(a, cx); } run("ob-feed.refresh"); }
     else if (verb === "focus") this.handle.focus();
   }
 
@@ -133,14 +170,14 @@ export default class Props extends View {
         .child(div().truncate().text_size(S.text).font_semibold().text_color(t.foreground).child(s?.label ?? "Properties"))
         .child(div().truncate().text_size(S.textXs).text_color(t.dim).child(s ? `${machineLabel(s.machine)} · ${s.address}${pinned ? " · pinned" : ""}` : "")))
       .child(iconButton({ id: "pin", icon: "pin", active: pinned, tip: pinned ? "Pinned: click to follow the focused session again" : "Pin: keep showing this session", onClick: () => (pinned ? inspect(null) : s && inspect(s.address)) }))
-      .child(iconButton({ id: "refresh", icon: "refresh", tip: "Read again", onClick: (_e, cx) => { if (s) this.fetch(s.address, cx); } }));
+      .child(iconButton({ id: "refresh", icon: "refresh", tip: "Read again", onClick: (_e, cx) => { if (s) { this.fetch(s.address, cx); this.fetchUsage(s.address, cx); } } }));
   }
 
   render(cx) {
     const t = tc();
     takeFocus(this, cx, props()?.slot ?? "ob-props", this.handle, (_cx, intent) => { if (intent?.startsWith("term:")) inspect(intent.slice(5)); });
     const { address, pinned } = inspected();
-    if (address !== this.lastTarget) { this.lastTarget = address; if (address) cx.timer.after(0, (cx) => this.fetch(address, cx)); }
+    if (address !== this.lastTarget) { this.lastTarget = address; if (address) cx.timer.after(0, (cx) => { this.fetch(address, cx); this.fetchUsage(address, cx); }); }
     const root = v_flex().id("root").track_focus(this.handle).size_full().min_h(0).bg(t.chrome).text_color(t.foreground)
       .on_size_change((s, cx) => { const w = s.width / (settings().zoom || 1); if (Math.abs(w - this.w) > 1) { this.w = w; cx.notify(); } });
     const ps = panes(), sp = spaces();
@@ -216,9 +253,10 @@ export default class Props extends View {
     this.section(t, rows, "relations", "RELATIONS", null, [
       this.kv(t, "parent", "Parent", parent ? sessionOf(parent)?.label ?? parent : "None", { color: parent ? t.accent : t.dim, onClick: parent ? () => revealTerminal(parent) : null, copy: parent ? "parent" : null, after: [parent ? div().text_size(S.textXs).text_color(t.dim).child(parent) : null] }),
       ...kids.map((k, i) => this.kv(t, `kid-${i}`, i === 0 ? "Terminals" : "", k.name || k.title || k.address, { lead: statusMark(typeof k.status === "string" ? k.status : k.status?.state, 11), color: t.accent, onClick: () => run("terminal.peek", { terminal: k.address }), tip: "Peek", after: [div().text_size(S.textXs).text_color(t.dim).child(k.address)] })),
-      this.kv(t, "pi", "pi runs", runs.length ? `${runs.length} run${runs.length === 1 ? "" : "s"}` : "None", { color: runs.length ? t.accent : t.dim, onClick: runs.length ? () => openView("ob-subagents", `term:${address}`) : null, after: [liveRuns ? badge(`${liveRuns} live`, "working") : null], tip: runs.length ? "Open in Subagents" : undefined }),
-      this.kv(t, "claude", "Claude agents", claude.length ? `${claude.length} agent${claude.length === 1 ? "" : "s"}` : "None", { color: claude.length ? t.accent : t.dim, onClick: claude.length ? () => openView("ob-subagents", `term:${address}`) : null, after: [liveCl ? badge(`${liveCl} live`, "working") : null], tip: claude.length ? "Open in Subagents" : undefined }),
+      this.kv(t, "pi", "pi runs", runs.length ? `${runs.length} run${runs.length === 1 ? "" : "s"}` : "None", { color: runs.length ? t.accent : t.dim, onClick: runs.length ? () => openView("ob-outline", `term:${address}`) : null, after: [liveRuns ? badge(`${liveRuns} live`, "working") : null], tip: runs.length ? "Open in Subagents" : undefined }),
+      this.kv(t, "claude", "Claude agents", claude.length ? `${claude.length} agent${claude.length === 1 ? "" : "s"}` : "None", { color: claude.length ? t.accent : t.dim, onClick: claude.length ? () => openView("ob-outline", `term:${address}`) : null, after: [liveCl ? badge(`${liveCl} live`, "working") : null], tip: claude.length ? "Open in Subagents" : undefined }),
     ]);
+    if (this.transcriptOf(address)) this.usageSection(t, rows, address, now);
     if (fterm) {
       const path = fterm.transcript ?? (fterm.kind === "pi" ? fterm.session : null);
       this.section(t, rows, "file", "SESSION FILE", null, [
@@ -237,6 +275,25 @@ export default class Props extends View {
       .child(div().id("plist-wrap").relative().flex_1().min_h(0)
         .child(v_flex().id("plist").size_full().py(4).overflow_y_scroll().track_scroll(this.scroll).children(rows).child(div().h(8).flex_none()))
         .child(Scrollbar.vertical("plist").absolute().inset_0()));
+  }
+
+  // Usage: the agent's tokens over its session (usage.js), and its subagents' output tokens from the feed.
+  usageSection(t, rows, address, now) {
+    const u = this.usage[address];
+    const body = [];
+    if (!u) body.push(this.kv(t, "usage-wait", "Usage", "Reading…", { color: t.dim }));
+    else if (u.error) body.push(this.kv(t, "usage-err", "Usage", `Couldn't read it: ${u.error}`, { color: t.blocked }));
+    else if (!u.summary) body.push(this.kv(t, "usage-none", "Usage", "No turns yet", { color: t.dim }));
+    else {
+      for (const r of usageLines(u.summary)) body.push(this.kv(t, `u-${r.id}`, r.key, r.value, { mono: true, copy: null }));
+      body.push(this.kv(t, "u-subs", "Subagents", subagentsLine(claudeAll().filter((c) => c.parent === address)) ?? "None", { color: null }));
+      const paused = feedLine(feed()?.at, now);
+      if (paused) body.push(div().id("u-paused").px(S.pad + 4).pb(4).text_size(S.textXs).text_color(t.dim).child(paused));
+      const ago_ = u.at ? ago(u.at, now) : "";
+      body.push(div().px(S.pad + 4).pb(4).text_size(S.textXs).text_color(t.dim).whitespace_normal()
+        .child(`${u.truncated ? "Last 32 MiB of the file" : "Whole file"}${ago_ ? ` · read ${ago_}${ago_ === "now" ? "" : " ago"}` : ""}`));
+    }
+    this.section(t, rows, "usage", "USAGE", null, body);
   }
 
   button(t, id, ic, label, onClick) {
