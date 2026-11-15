@@ -121,7 +121,7 @@ export default class Bookmarks extends View {
     if (b.kind === "run") {
       const r = (feed()?.runs ?? []).find((x) => x.key === b.id);
       const chain = (r?.steps ?? []).map((s) => s.agent).filter(Boolean).join(" → ");
-      // A run the feed dropped (older than a day) can still be opened by key in Subagents' history.
+      // A run the feed dropped (older than a day) can still be opened by key in Outline's history.
       return { label: chain || b.label || b.id, status: r ? (r.live ? "working" : r.state) : null, gone: !r, lead: icon("subagents", S.iconSm, t.dim),
         machine: r?.machine ?? b.machine, meta: r && !r.live ? ago(r.endedAt ?? r.lastUpdate) : "", go: () => openView("ob-outline", `run:${b.id}`) };
     }

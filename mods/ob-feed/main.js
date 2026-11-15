@@ -2,7 +2,7 @@
 // machine at a time: exec("python3", ["-c", script, opts], { on })), merges the results and publishes
 // shared "ob.subagents" (SPEC.md 7.3) only when its content changed. Lives in the always-shown status
 // row, so it is alive whenever the layout is. Draws the status-bar segment: live sub-agent count, a
-// warning per machine that couldn't be scanned (tooltip says why); click opens the Subagents view.
+// warning per machine that couldn't be scanned (tooltip says why); click opens Outline.
 //
 // Commands (ob-feed.<cmd>):
 //   refresh                 scan every machine now

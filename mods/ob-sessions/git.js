@@ -1,4 +1,4 @@
-// ob-sessions git tail: branch, ahead/behind and repo per space place (carried over from iv-spaces).
+// ob-sessions git tail: branch, ahead/behind and repo per space place (carried over from the earlier spaces mod).
 // One look at a time per place; local repos are watched (watchFolder); remote ones are looked at
 // again on the fallback. Never throws: a machine that is away just leaves the place "unsure".
 
@@ -20,7 +20,7 @@ export class Git {
     this.ready = {}; // machine -> layout ready at the last look
   }
 
-  // Places whose git could have changed (see iv-spaces `due`).
+  // Places whose git could have changed (see `due` in the earlier spaces mod).
   due(now, sp, ps, machinesNow, active, skipMachine) {
     const at = {};
     for (const s of sp) at[s.id] = where(s, ps);

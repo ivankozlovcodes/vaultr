@@ -1,5 +1,5 @@
-// obc.js: helpers shared by package C's mods (ob-outline, ob-graph, ob-props, ob-outline).
-// MASTER: $S/C-common/obc.js, copied into each of those folders (mods can't import across folders).
+// obc.js: helpers shared by package C's mods (ob-outline, ob-graph, ob-props).
+// One copy in each of those folders (mods can't import across folders): change all three together.
 // Kit request: move these into kit.js (they only use kit and herdr).
 
 import { terminals, agents, panes, spaces, run, openOverlay, shared, setShared, focused, notify } from "herdr";

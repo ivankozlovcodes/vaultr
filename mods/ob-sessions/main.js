@@ -1,5 +1,5 @@
 // ob-sessions: the Obsidian file explorer, for sessions. machine > space > tab > pane > sub-agents.
-// Carries iv-spaces forward (machine groups, connection state, hide/fold machines, Connect for
+// Carries the earlier spaces mod forward (machine groups, connection state, hide/fold machines, Connect for
 // rebuilt machines, login guidance, colored avatars, git tail, worktrees under their repo, drag to
 // reorder, "skip a level with one child", fold state per id) and adds Obsidian's toolbar (new tab,
 // new space, sort, auto-reveal, collapse/expand all), a fuzzy filter, indent guides, sub-agent
@@ -19,10 +19,11 @@ import {
 } from "herdr";
 import {
   S, alpha, icon, programIcon, normStatus, RANK, statusMark, needsYou, iconButton, badge, treeRow,
-  avatar, emptyState, inputFrame, openMenu, ago, dur, tilde, fuzzy, highlight, takeFocus, bindingFor,
-  chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneName, place, openView,
+  avatar, emptyState, inputFrame, openMenu, ago, dur, tilde, highlight, takeFocus, bindingFor,
+  chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneLabelOf, paneSecondary, place, openView,
 } from "./kit.js";
 import { Git } from "./git.js";
+import { matchQ } from "./match.js";
 
 const SORTS = [
   ["manual", "Manual (drag to reorder)"],
@@ -39,16 +40,6 @@ function load(k, d) { try { const v = localStorage.getItem(k); return v == null 
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage off */ } }
 function splitCmd(c) { const s = String(c ?? ""); const i = s.indexOf(":"); return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)]; }
 const keyLabel = (action) => { const k = bindingFor(action); return k ? ` (${chordLabel(k)})` : ""; };
-
-// A fuzzy match that stays readable: letters in order, not spread over the whole label.
-function matchQ(q, text) {
-  const f = fuzzy(q, text);
-  if (!f) return null;
-  const n = q.replace(/\s+/g, "").length;
-  if (!f.hits.length) return f;
-  const span = f.hits[f.hits.length - 1] - f.hits[0] + 1;
-  return span <= n * 3 + 2 ? f : null;
-}
 
 function machineColor(m, t) {
   if (!m) return t.accent ?? t.ansi4 ?? "#8b7cf6";
@@ -226,7 +217,8 @@ export default class Sessions extends View {
     const byKey = new Map();
     const add = (n, parent) => { n.parent = parent ?? null; n.children ??= []; byKey.set(n.key, n); if (parent) parent.children.push(n); return n; };
     const paneNode = (w, tab, p, parent) => {
-      const n = add({ key: `p:${p.pane}`, kind: "pane", label: paneName(p), text: paneName(p), space: w, tab, pane: p,
+      const name = paneLabelOf(p, tab ? tabLabel(tab, ps) : "");
+      const n = add({ key: `p:${p.pane}`, kind: "pane", label: name, text: name, space: w, tab, pane: p,
         reps: { machine: w.machine ?? null, space: w.id, tab: tab?.id ?? null, pane: p.pane, terminal: p.terminal ?? null } }, parent);
       n.defaultOpen = false;
       return n;
@@ -240,6 +232,8 @@ export default class Sessions extends View {
       } else if (mine.length === 1) {
         Object.assign(n.reps, { pane: mine[0].pane, terminal: mine[0].terminal ?? null });
         n.pane = mine[0];
+        // The tab row stands for its one pane: the pane's label shows under the tab's name when they differ.
+        n.secondary = paneSecondary(label, paneLabelOf(mine[0], label));
       }
       n.defaultOpen = Boolean(w.active && tab.active);
       return n;
@@ -409,7 +403,7 @@ export default class Sessions extends View {
       case "space": run("space.select", { id: r.space }); break;
       case "tab": run("space.select", { id: r.space }); run("tab.select", { id: r.tab }); break;
       case "pane": run("space.select", { id: r.space }); run("tab.select", { id: r.tab }); run("pane.focus", { pane: r.pane }); break;
-      case "run": case "claude": openView("ob-subagents", `run:${n.sub.id}`); break;
+      case "run": case "claude": openView("ob-outline", `run:${n.sub.id}`); break;
       case "child": run("terminal.peek", { terminal: n.sub.id }); break;
       default: break;
     }
@@ -417,7 +411,7 @@ export default class Sessions extends View {
   activateRow(r) {
     if (!r) return;
     if (r.node) return this.activate(r.node);
-    if (r.kind === "more") openView("ob-subagents", `term:${r.addr}`);
+    if (r.kind === "more") openView("ob-outline", `term:${r.addr}`);
     else if (r.kind === "new") run("space.new", { machine: r.machine.machineName ?? "" });
   }
   rename(n) {
@@ -549,13 +543,14 @@ export default class Sessions extends View {
   }
 
   // ------------------------------------------------------------------ context menus
+  // The same popup as ob-outline' openViewer: "Move to main window" in its header makes it a pane.
   viewer(view, key, machine, path, title, live) {
-    return { mod: "ob-subagents", kind: "window", key: `ob-view-${key}`, width: 760, height: 0.7, props: { view, machine: machine ?? null, path, title, live: Boolean(live) } };
+    return { mod: "ob-outline", kind: "popup", width: 760, props: { view, machine: machine ?? null, path, title, live: Boolean(live), runKey: key ?? null } };
   }
   menu(key) {
     const n = this.byKey?.get(key);
     const r = this.rows.find((x) => x.key === key);
-    if (!n && r?.kind === "more") { openView("ob-subagents", `term:${r.addr}`); return; }
+    if (!n && r?.kind === "more") { openView("ob-outline", `term:${r.addr}`); return; }
     if (!n) return;
     const items = this.menuItems(n);
     if (items.length) openMenu(items, { title: n.kind === "machine" ? n.label : n.label, width: 250 });
@@ -570,7 +565,7 @@ export default class Sessions extends View {
       if (!addr) return out;
       const agent = agents().find((a) => a.address === addr);
       out.push({ label: "Show properties", icon: "info", command: me(`inspect:${addr}`) });
-      out.push({ label: "Show subagents", icon: "subagents", command: `ob-tabs.open:ob-subagents@term:${addr}` });
+      out.push({ label: "Show subagents", icon: "subagents", command: `ob-tabs.open:ob-outline@term:${addr}` });
       if (agent) out.push({ label: agent.pinned ? "Unpin agent" : "Pin agent to the top", icon: agent.pinned ? "pin-off" : "pin", command: "terminal.pin", args: { terminal: addr, pinned: !agent.pinned } });
       out.push({ label: "Peek", icon: "eye", command: "terminal.peek", args: { terminal: addr } });
       out.push({ label: "Copy address", icon: "copy", copy: addr });
@@ -653,7 +648,7 @@ export default class Sessions extends View {
       const r = n.sub.item;
       const last = (r.steps ?? []).at(-1);
       const tr = last?.transcript || last?.session;
-      items.push({ label: "Open in Subagents", icon: "subagents", command: `ob-tabs.open:ob-subagents@run:${r.key}` });
+      items.push({ label: "Open in Outline", icon: "subagents", command: `ob-tabs.open:ob-outline@run:${r.key}` });
       if (r.log) items.push({ label: "Follow log", icon: "scroll", overlay: this.viewer("log", r.key, r.machine, r.log, `${n.label} · log`, r.live) });
       if (tr) items.push({ label: "Transcript", icon: "file-text", overlay: this.viewer("transcript", r.key, r.machine, tr, `${n.label} · transcript`, r.live) });
       items.push({ label: "Copy run id", icon: "copy", copy: r.id });
@@ -662,7 +657,7 @@ export default class Sessions extends View {
     }
     if (n.kind === "claude") {
       const c = n.sub.item;
-      items.push({ label: "Open in Subagents", icon: "subagents", command: `ob-tabs.open:ob-subagents@run:${c.key}` });
+      items.push({ label: "Open in Outline", icon: "subagents", command: `ob-tabs.open:ob-outline@run:${c.key}` });
       if (c.transcript) items.push({ label: "Transcript", icon: "file-text", overlay: this.viewer("transcript", c.key, c.machine, c.transcript, `${n.label} · transcript`, n.sub.live) });
       items.push({ label: "Copy agent id", icon: "copy", copy: c.id });
       return items;
@@ -778,6 +773,7 @@ export default class Sessions extends View {
       o.lead = programIcon(leadProgram(n.space, n.tab, n.pane, ps), S.iconSm, selected ? t.foreground : t.muted);
       o.labelColor = selected ? t.foreground : t.muted;
       o.after.push(bmMark("tab", tab.id));
+      if (n.secondary) o.after.push(div().min_w(0).flex_shrink(1).truncate().text_size(S.textXs).text_color(t.dim).child(n.secondary));
       if (tab.settled && !compact) o.right.push(this.tag("settled", t));
       if (tab.status === "working" && tab.working_since && now - tab.working_since > 60000 && !compact) o.right.push(this.tag(ago(tab.working_since, now), t));
       o.right.push(this.status(n.pane ? n.pane.status : tab.status, Boolean(n.pane?.program?.agent), t));
@@ -853,7 +849,7 @@ export default class Sessions extends View {
       return treeRow({ id: `row-${r.key}`, depth: r.depth, height: S.rowSm, cursor: cur, lead: icon("more-h", S.iconXs, t.dim),
         label: h_flex().text_size(S.textSm).child(`${r.count} earlier`), labelColor: t.dim,
         right: [icon("arrow-right", S.iconXs, t.dim)],
-        onClick: (_e, cx) => { this.cursor = r.key; openView("ob-subagents", `term:${r.addr}`); cx.notify(); } }).tooltip("Show them all in Subagents");
+        onClick: (_e, cx) => { this.cursor = r.key; openView("ob-outline", `term:${r.addr}`); cx.notify(); } }).tooltip("Show them all in Outline");
     }
     if (r.kind === "new") {
       const m = r.machine.machineName;

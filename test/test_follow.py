@@ -1,7 +1,7 @@
-"""The right-hand panels' target (Properties, Subagents): kit/follow_target.js, a pure function run here through node.
+"""The right-hand panels' target (Properties, Outline): kit/follow_target.js, a pure function run here through node.
 
 Rule: a pin wins while its terminal is live. Otherwise the panel shows the last focused main-window pane that holds a
-terminal (Properties) or an agent (Subagents). Focus on anything else keeps the previous target. A closed target gives
+terminal (Properties) or an agent (Outline). Focus on anything else keeps the previous target. A closed target gives
 an empty state. The old "right pane follows" setting (ob.settings.paneFollows) is no longer read by any mod.
 """
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
