@@ -71,3 +71,20 @@ export function editorArgv(editor, path) {
 export const TOOLBAR_WIDE = 430;
 export function toolbarRows(width) { return width > 0 && width < TOOLBAR_WIDE ? 2 : 1; }
 export function toolbarBottom(rows) { return 6 + 26 + (rows === 2 ? 30 : 0) + 4; }
+
+// How machines and spaces are drawn so they stand out from the dots (panes, agents) and squares (artifacts): a diamond for a
+// machine, a hexagon for a space (`scale`: how far the corners reach beyond the node's radius, so the shapes weigh about as
+// much as a dot), a stronger colour (`tone`: the opacity of the foreground colour; null: the node's usual colour), and a
+// label that is always shown rather than fading in with zoom.
+export function framePaint(kind) {
+  if (kind === "m") return { shape: "diamond", scale: 1.3, tone: 0.9, label: true };
+  if (kind === "s") return { shape: "hexagon", scale: 1.1, tone: 0.7, label: true };
+  return { shape: null, scale: 1, tone: null, label: false };
+}
+
+// The corners of a shape around (x, y), `r` from the centre to a corner: [[x, y], ...] (empty for no shape).
+export function shapePoints(shape, x, y, r) {
+  if (shape === "diamond") return [[x, y - r], [x + r, y], [x, y + r], [x - r, y]];
+  if (shape === "hexagon") return Array.from({ length: 6 }, (_, i) => { const a = (Math.PI / 3) * i - Math.PI / 2; return [x + r * Math.cos(a), y + r * Math.sin(a)]; });
+  return [];
+}

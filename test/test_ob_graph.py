@@ -1204,6 +1204,60 @@ class EditorArgv(unittest.TestCase):
         self.assertIn("own.editor", src)
 
 
+class FrameShapes(unittest.TestCase):
+    """Machines and spaces are the graph's frame: a different shape (a diamond, a hexagon), a stronger colour and an
+    always-shown label, so they stand out from the dots (panes, agents) and squares (artifacts) without being bigger."""
+
+    def radius(self, degree, kind):
+        return run("console.log(JSON.stringify(S.radiusOf(P.d, P.kind)));", {"d": degree, "kind": kind}, SIM)
+
+    def test_machines_and_spaces_have_a_fixed_size_whatever_hangs_off_them(self):
+        for kind in ("m", "s"):
+            self.assertEqual(self.radius(1, kind), self.radius(40, kind), kind)
+        self.assertLess(self.radius(1, "s"), 6, "not a big dot: the shape is the highlight")
+        self.assertLessEqual(self.radius(1, "m"), 6)
+
+    def paint(self, kind):
+        return run("console.log(JSON.stringify(S.framePaint(P.kind)));", {"kind": kind}, SHAPE)
+
+    def test_machines_are_diamonds_spaces_are_hexagons_and_others_are_not_framed(self):
+        self.assertEqual(self.paint("m")["shape"], "diamond")
+        self.assertEqual(self.paint("s")["shape"], "hexagon")
+        for kind in ("p", "r", "c", "h", "n", "a"):
+            self.assertIsNone(self.paint(kind)["shape"], kind)
+
+    def test_machines_and_spaces_are_drawn_stronger_and_always_labelled(self):
+        m, s, p = self.paint("m"), self.paint("s"), self.paint("p")
+        self.assertTrue(m["label"] and s["label"])
+        self.assertFalse(p["label"])
+        self.assertGreater(m["tone"], s["tone"])
+        self.assertGreater(s["tone"], 0.55)
+        self.assertIsNone(p["tone"], "other nodes keep their own colour rules")
+
+    def points(self, shape, r=10):
+        return run("console.log(JSON.stringify(S.shapePoints(P.shape, 100, 200, P.r)));", {"shape": shape, "r": r}, SHAPE)
+
+    def test_a_diamond_has_four_points_on_the_axes(self):
+        pts = self.points("diamond", 10)
+        self.assertEqual(sorted(map(tuple, pts)), sorted([(100, 190), (110, 200), (100, 210), (90, 200)]))
+
+    def test_a_hexagon_has_six_points_all_the_same_distance_from_the_centre(self):
+        pts = self.points("hexagon", 10)
+        self.assertEqual(len(pts), 6)
+        for x, y in pts:
+            self.assertAlmostEqual(((x - 100) ** 2 + (y - 200) ** 2) ** 0.5, 10, places=6)
+        self.assertEqual(len({(round(x, 6), round(y, 6)) for x, y in pts}), 6)
+
+    def test_an_unknown_shape_has_no_points(self):
+        self.assertEqual(self.points(None), [])
+
+    def test_main_draws_the_shapes_with_the_pure_helpers(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertIn("framePaint(n.kind)", src)
+        self.assertIn("shapePoints(", src)
+        self.assertIn("add_polygon(", src)
+
+
 class ToolbarRows(unittest.TestCase):
     """shape.js toolbarRows: the toolbar is Local/Global/Active only, Notes/Artifacts and the zoom buttons, about 415 px in
     one row. A narrower panel (the right sidebar is about 320 px) puts the zoom buttons on a second row instead of

@@ -46,7 +46,9 @@ const MAX_CHARGE_DISTANCE = 250;                         // the charge reaches n
 const MACHINE_GRAVITY = 0.2;                             // pull of each machine toward the centre
 
 // Quartz: 2 + sqrt(number of links) (graph.inline.ts 208-213).
-export const radiusOf = (degree) => 2 + Math.sqrt(degree);
+// Machines and spaces have a fixed size (drawn as a diamond and a hexagon, shape.js): what hangs off them does not grow them.
+const FRAME_RADIUS = { m: 5, s: 4.5 };
+export const radiusOf = (degree, kind) => FRAME_RADIUS[kind] ?? 2 + Math.sqrt(degree);
 
 // Quartz: labels fade in with zoom (graph.inline.ts 513-514): alpha = max((k * opacityScale - 1) / 3.75, 0), capped at 1.
 export function labelOpacity(k, opacityScale = 1) {
@@ -210,7 +212,7 @@ export function sync(sim, graph, cfg, W, H) {
     if (!o) { o = { key, x: NaN, y: NaN, vx: 0, vy: 0 }; sim.pos.set(key, o); }
     o.kind = n.kind;
     o.parent = n.parent ?? null;
-    o.r = radiusOf(deg.get(key) ?? 0);
+    o.r = radiusOf(deg.get(key) ?? 0, n.kind);
     list.push(o);
   }
   if (sim.pos.size > KEEP) for (const k of [...sim.pos.keys()]) if (!seen.has(k)) sim.pos.delete(k);

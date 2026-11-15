@@ -34,7 +34,7 @@ import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, to
 import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
-import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom } from "./shape.js";
+import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, shapePoints } from "./shape.js";
 import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
 import {
   QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
@@ -439,8 +439,9 @@ export default class Graph extends View {
     if (n.kind === "n") return alpha(t.foreground, 0.55);   // a note: a light dot (Obsidian's note)
     if (n.kind === "a") return t.done;                     // an artifact: a square in the theme's done colour
     if (activityOf(n, Date.now())) return t.working;
-    if (n.kind === "m" && n.down) return t.dim;     // an offline machine: a dimmer fill, still a dot
-    return t.muted;
+    if (n.kind === "m" && n.down) return t.dim;     // an offline machine: a dimmer fill, still a diamond
+    const tone = framePaint(n.kind).tone;           // machines and spaces: a stronger colour than the rest
+    return tone == null ? t.muted : alpha(t.foreground, tone);
   }
 
   toolbar(t) {
@@ -565,31 +566,40 @@ export default class Graph extends View {
     const links = g.edges.filter(([, , k]) => k !== "sibling")
       .map(([a, b]) => ({ seg: [pt(a), pt(b)], alpha: this.alphaNow(linkId(a, b), now) }));
     const linkEls = linkBatches(links).map((b, i) => layer(`e-${i}`, b.segs, 1, alpha(t.muted, b.alpha)));
-    const nodes = [], labels = [];
+    const nodes = [], labels = [], shapes = [];
     const L = labelLayout(k, this.cfg.scale);
     for (const n of g.nodes.values()) {
       const p = this.sim.pos.get(n.key);
       if (!p || !Number.isFinite(p.x)) continue;
       const [x, y] = pt(n.key);
       if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
-      const rs = p.r * k;
+      const fp = framePaint(n.kind);
+      const rs = p.r * k * fp.scale;            // a diamond's or hexagon's corners reach this far from the centre
       const na = this.alphaNow(nodeId(n.key), now);
       const color = this.nodeColor(t, n, g.focus);
       // The halo: a filled ring under the dot, same hue, radius + 4 px; pulsing when working, steady when blocked.
       const ha = haloDrawAlpha({ state: this.stateOf.get(n.key) }, now, na);
       if (ha != null) nodes.push(div().id(`${nodeId(n.key)}-halo`).absolute().left(x - rs - 4).top(y - rs - 4).size((rs + 4) * 2).rounded_full().bg(alpha(color, ha)));
       const tip = [n.label, n.kind === "p" ? n.program?.name : null, n.status ? `${n.status}` : null, n.address ?? null].filter(Boolean).join(" · ");
-      const dot = div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).bg(color)
-        .opacity(na).cursor_pointer().tooltip(tip);
-      nodes.push(n.kind === "a" ? dot : dot.rounded_full());     // artifacts are squares, notes and agents dots
+      if (fp.shape) {
+        // Machines (diamonds) and spaces (hexagons) are painted polygons in the links' coordinates, under the dots; the
+        // dot here is an invisible target for the tooltip and the cursor.
+        shapes.push(div().id(`${nodeId(n.key)}-shape`).absolute().left(0).top(0).w(W).h(H)
+          .child(window.paint_path(PathBuilder.fill().add_polygon(shapePoints(fp.shape, x, y, rs), true).build(), alpha(color, na))));
+        nodes.push(div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).cursor_pointer().tooltip(tip));
+      } else {
+        const dot = div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).bg(color)
+          .opacity(na).cursor_pointer().tooltip(tip);
+        nodes.push(n.kind === "a" ? dot : dot.rounded_full());   // artifacts are squares, notes and agents dots
+      }
       // Labels: the hovered node and its neighbours always; the rest fade in with zoom (Quartz's opacityScale formula).
-      const shown = this.near.has(n.key) || this.labelsAll ? 1 : labelOpacity(k, this.cfg.opacityScale);
+      const shown = this.near.has(n.key) || this.labelsAll || fp.label ? 1 : labelOpacity(k, this.cfg.opacityScale);
       const la = shown * na;
       if (la > 0.01) {
         const lw = 120;
         labels.push(div().id(`${nodeId(n.key)}-l`).absolute().left(x - lw / 2).top(y + rs + LABEL_GAP).w(lw).h(L.height).text_center().truncate()
           .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium()
-          .text_color(this.hover === n.key || this.selected === n.key ? t.foreground : t.muted).opacity(la)
+          .text_color(this.hover === n.key || this.selected === n.key || fp.label ? t.foreground : t.muted).opacity(la)
           .child(n.label));
       }
     }
@@ -680,6 +690,7 @@ export default class Graph extends View {
         cx.notify();
       })
       .children(linkEls)
+      .children(shapes)
       .children(nodes)
       .children(labels)
       .child(this.toolbar(t))
