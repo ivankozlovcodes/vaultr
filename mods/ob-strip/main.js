@@ -1,7 +1,8 @@
 // ob-strip: Obsidian's sidebar tab header. One icon tab per child of a stack (props.stack),
 // read live from layout(); titles/icons from kit VIEWS. Click selects, right-click opens the
 // group menu (move a view to another group, hide/show a group, close the sidebar).
-// Used as a window_drag block above a top stack and as the `header` of a bottom stack.
+// Used as a window_drag block above a top stack and as the `header` of a bottom stack. Hiding a top half hides
+// its strip too, so the bottom strip of that side then draws the top strip's window buttons or sidebar toggle.
 // props: { stack, side: "left"|"right", place: "top"|"bottom", windowButtons?: bool }
 // Commands (ob-strip.<cmd>, every shown copy gets them; each acts only on its own stack):
 //   select:<child>   move:<child>@<targetStack>   hide-group:<stack>   show-group:<stack>   overflow:<stack>
@@ -12,6 +13,8 @@ import { layout, props, run, nextCommand, settings, agents, shared, window as ap
 import {
   S, NODE, icon, iconButton, stripTab, viewInfo, findNode, findParent, openMenu, subagentCounts, alpha, stop, tc,
 } from "./kit.js";
+import { HALVES, halfAction, standInFor } from "./halves.js";
+import { stripView } from "./strip_view.js";
 
 // The four groups of the layout: [stack id, node to hide/show for the group, title].
 const GROUPS = [
@@ -20,7 +23,7 @@ const GROUPS = [
   [NODE.rightTopStack, NODE.rightTop, "Right sidebar, top"],
   [NODE.rightBottomStack, NODE.rightBottomStack, "Right sidebar, bottom"],
 ];
-const groupNode = (stack) => GROUPS.find((g) => g[0] === stack)?.[1] ?? stack;
+const groupNode = (stack) => HALVES[stack]?.node ?? stack;
 const sideNode = (stack) => (stack === NODE.leftTopStack || stack === NODE.leftBottomStack ? NODE.left : NODE.right);
 const siblingGroup = (stack) => ({ [NODE.leftTopStack]: NODE.leftBottomStack, [NODE.leftBottomStack]: NODE.leftTopStack, [NODE.rightTopStack]: NODE.rightBottomStack, [NODE.rightBottomStack]: NODE.rightTopStack })[stack];
 
@@ -86,7 +89,7 @@ export default class Strip extends View {
   }
 
   badge(id) {
-    if (id === "ob-subagents") { const n = subagentCounts().live; return n ? { n } : null; }
+    if (id === "ob-outline") { const n = subagentCounts().live; return n ? { n } : null; }
     if (id === "ob-agents") { const n = agents().filter((a) => a.status === "blocked").length; return n ? { n, color: tc().blocked } : null; }
     return null;
   }
@@ -104,32 +107,43 @@ export default class Strip extends View {
     const w = appWindow();
     // Window buttons: this strip asks for them (props) and ob.settings allows them (auto = what Herdr wants).
     const wbMode = shared("ob.settings")?.windowButtons ?? "auto";
-    const winButtons = Boolean(p.windowButtons) && (wbMode === "always" || (wbMode === "auto" && Boolean(w?.buttons)));
-    const sideToggle = top && p.side === "left";
+    // This strip's half: collapse its own, or restore the other one when that is hidden (halves.js decides).
+    const half = halfAction(root, p.stack);
+    // A bottom strip whose top half is hidden draws the top strip's controls too (halves.js: standInFor).
+    const lent = standInFor(root, p.stack);
+    const winButtons = Boolean(p.windowButtons || lent?.windowButtons) && (wbMode === "always" || (wbMode === "auto" && Boolean(w?.buttons)));
+    const sideToggle = (top || Boolean(lent)) && p.side === "left";
     // Room: 8 padding + tabs (28 + 2 gap) + right-side buttons.
-    const fixed = 16 + (sideToggle ? 31 : 0) + (winButtons ? 3 * 31 : 0);
+    const fixed = 16 + (sideToggle ? 31 : 0) + (half ? 31 : 0) + (winButtons ? 3 * 31 : 0);
     const fit = this.width ? Math.max(1, Math.floor((avail - fixed - 31) / 31)) : kids.length;
     const shown = kids.length > fit ? kids.slice(0, fit) : kids;
     // Keep the active tab visible when it would overflow: swap it into the last slot.
     if (kids.length > fit && !shown.some((c) => c.id === active)) shown[shown.length - 1] = kids.find((c) => c.id === active);
-    return h_flex().id("strip").size_full().px(S.pad).gap(3).items_center().bg(t.chrome)
-      .when(top, (e) => e.border_b(1).border_color(t.border))
+    // The view decides the label, tooltips and the half control (strip_view.js); this draws them as a bar.
+    const named = (list) => list.map((c) => ({ id: c.id, ...viewInfo(c) }));
+    const view = stripView({ kids: named(kids), shown: named(shown), active, half });
+    return h_flex().id("strip").size_full().px(S.pad).gap(3).items_center().bg(t.raised)
+      .border_b(1).border_color(t.border)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1) { this.width = size.width; cx.notify(); } })
       .when(!stack, (e) => e.child(div().text_size(S.textXs).text_color(t.dim).child(`ob-strip: no stack "${p.stack}"`)))
-      .children(shown.map((c) => {
-        const info = viewInfo(c);
+      .children(view.tabs.map((tab) => {
+        const c = kids.find((k) => k.id === tab.id);
         const b = this.badge(c.id);
         return stripTab({
-          id: `tab-${c.id}`, icon: info.icon, title: info.title, active: c.id === active,
+          id: `tab-${c.id}`, icon: tab.icon, title: tab.tip, active: tab.active,
           badge: b?.n, badgeColor: b?.color,
           onClick: () => run("layout.select", { stack: stack.id, child: c.id }),
           onRight: () => this.menu(stack, c),
-        });
+        }).when(tab.active, (e) => e.child(div().absolute().left(6).right(6).bottom(0).h(2).rounded(S.radius).bg(t.accent)));
       }))
       .when(kids.length > shown.length, (e) => e.child(iconButton({ id: "overflow", icon: "chevron-down", size: S.tab, tip: "More views", onClick: () => this.overflowMenu(stack, fit) })))
       // Empty strip: drags the window (top strips are window_drag blocks); right-click: group menu.
-      .child(div().id("strip-fill").flex_1().h_full().when(Boolean(stack), (e) => e.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(stack, null); })))
+      .child(h_flex().id("strip-fill").flex_1().min_w(0).h_full().items_center().px(4)
+        .when(Boolean(stack), (e) => e.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(stack, null); }))
+        .child(div().min_w(0).flex_shrink(1).truncate().text_size(S.textSm).font_semibold().text_color(t.foreground).child(view.label)))
       .when(sideToggle, (e) => e.child(iconButton({ id: "toggle-left", icon: "panel-left", size: S.tab, tip: "Close left sidebar (Ctrl+B)", onClick: () => run("layout.hide", { id: NODE.left }) })))
+      .when(half?.kind === "collapse", (e) => e.child(iconButton({ id: "half-collapse", icon: "minimize", size: S.tab, tip: view.half.tip, onClick: () => run("layout.hide", { id: half.node }) })))
+      .when(half?.kind === "restore", (e) => e.child(iconButton({ id: "half-restore", icon: "split-down", size: S.tab, tip: view.half.tip, onClick: () => run("layout.show", { id: half.node }) })))
       .when(winButtons, (e) => e
         .child(iconButton({ id: "win-min", icon: "win-min", size: S.tab, tip: "Minimize", onClick: () => run("window.minimize") }))
         .child(iconButton({ id: "win-max", icon: w?.maximized ? "win-restore" : "win-max", size: S.tab, tip: w?.maximized ? "Restore" : "Maximize", onClick: () => run("window.maximize") }))
