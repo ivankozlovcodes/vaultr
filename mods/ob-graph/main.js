@@ -34,7 +34,7 @@ import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, to
 import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
-import { paneShape, placeSubs, editorArgv } from "./shape.js";
+import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom } from "./shape.js";
 import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
 import {
   QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
@@ -477,25 +477,30 @@ export default class Graph extends View {
       .on_mouse_down("left", stop).on_mouse_down("right", stop)
       .child(touchSwitch("g-notes", "Notes", "notes", noVault ? "Set your vault in Settings" : "Notes your agents touched", !noVault))
       .child(touchSwitch("g-artifacts", "Artifacts", "artifacts", "Artifacts agents publish or write outside the vault"));
-    return h_flex().id("gtb").absolute().top(6).left(6).right(6).h(26).gap(4).items_center()
-      .child(h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
-        .on_mouse_down("left", stop).on_mouse_down("right", stop)
-        .child(seg("g-local", "Local", this.mode === "local", "mode:local"))
-        .child(seg("g-global", "Global", this.mode === "global", "mode:global"))
-        .child(activeSwitch(this.activeNow(), `active:${this.activeNow() ? "off" : "on"}`)))
-      .child(touchGroup)
-      .child(div().flex_1())
-      .child(h_flex().p(2).gap(1).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
-        .on_mouse_down("left", stop).on_mouse_down("right", stop)
-        .child(iconButton({ id: "g-labels", icon: "hash", size: 22, iconSize: 13, active: this.labelsAll, tip: this.labelsAll ? "Labels: all" : "Labels: fade in with zoom (hover for the rest)", onClick: (_e, cx) => { this.command(`labels:${this.labelsAll ? "off" : "on"}`, cx); cx.notify(); } }))
-        .child(txt("g-out", "−", "Zoom out", "zoom-out"))
-        .child(txt("g-in", "+", "Zoom in", "zoom-in"))
-        .child(iconButton({ id: "g-fit", icon: "maximize", size: 22, iconSize: 13, tip: "Fit to view", onClick: (_e, cx) => { this.command("fit", cx); cx.notify(); } })));
+    const zoomGroup = h_flex().p(2).gap(1).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
+      .child(iconButton({ id: "g-labels", icon: "hash", size: 22, iconSize: 13, active: this.labelsAll, tip: this.labelsAll ? "Labels: all" : "Labels: fade in with zoom (hover for the rest)", onClick: (_e, cx) => { this.command(`labels:${this.labelsAll ? "off" : "on"}`, cx); cx.notify(); } }))
+      .child(txt("g-out", "−", "Zoom out", "zoom-out"))
+      .child(txt("g-in", "+", "Zoom in", "zoom-in"))
+      .child(iconButton({ id: "g-fit", icon: "maximize", size: 22, iconSize: 13, tip: "Fit to view", onClick: (_e, cx) => { this.command("fit", cx); cx.notify(); } }));
+    const modeGroup = h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
+      .child(seg("g-local", "Local", this.mode === "local", "mode:local"))
+      .child(seg("g-global", "Global", this.mode === "global", "mode:global"))
+      .child(activeSwitch(this.activeNow(), `active:${this.activeNow() ? "off" : "on"}`));
+    // One row when it fits; in a narrow panel the zoom buttons go on a second row (shape.js toolbarRows).
+    if (toolbarRows(this.W) === 1) {
+      return h_flex().id("gtb").absolute().top(6).left(6).right(6).h(26).gap(4).items_center()
+        .child(modeGroup).child(touchGroup).child(div().flex_1()).child(zoomGroup);
+    }
+    return v_flex().id("gtb").absolute().top(6).left(6).right(6).gap(4)
+      .child(h_flex().h(26).gap(4).items_center().child(modeGroup).child(touchGroup))
+      .child(h_flex().h(26).items_center().child(div().flex_1()).child(zoomGroup));
   }
 
   hitNode(mx, my) {
     if (!this.g?.nodes) return null;
-    if (my < 36 || (my > this.H - 24 && mx < 250)) return null;
+    if (my < toolbarBottom(toolbarRows(this.W)) || (my > this.H - 24 && mx < 250)) return null;
     const { scale, x: ox, y: oy } = this.view;
     let bestKey = null, bestDist = Infinity;
     for (const n of this.g.nodes.values()) {

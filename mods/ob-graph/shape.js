@@ -64,3 +64,10 @@ export function editorArgv(editor, path) {
   if (Array.isArray(editor) && editor.length && editor.every((x) => typeof x === "string" && x)) return [...editor, path];
   return ["sh", "-c", PICK, "editor", path];
 }
+
+// The toolbar (main.js): Local/Global/Active only, Notes/Artifacts and the zoom buttons are about 415 px in one row. In a
+// narrower panel the zoom buttons go on a second row rather than off the edge. A width of 0 (before the first layout) is
+// one row. toolbarBottom is the y below which the canvas begins: top 6 + a 26 px row (+ 4 gap + 26 for a second row).
+export const TOOLBAR_WIDE = 430;
+export function toolbarRows(width) { return width > 0 && width < TOOLBAR_WIDE ? 2 : 1; }
+export function toolbarBottom(rows) { return 6 + 26 + (rows === 2 ? 30 : 0) + 4; }

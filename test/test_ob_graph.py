@@ -1177,6 +1177,34 @@ class EditorArgv(unittest.TestCase):
         self.assertIn("own.editor", src)
 
 
+class ToolbarRows(unittest.TestCase):
+    """shape.js toolbarRows: the toolbar is Local/Global/Active only, Notes/Artifacts and the zoom buttons, about 415 px in
+    one row. A narrower panel (the right sidebar is about 320 px) puts the zoom buttons on a second row instead of
+    cutting them off."""
+
+    def rows(self, w):
+        return run("console.log(JSON.stringify([S.toolbarRows(P.w), S.toolbarBottom(S.toolbarRows(P.w))]));", {"w": w}, SHAPE)
+
+    def test_a_wide_panel_keeps_one_row(self):
+        self.assertEqual(self.rows(800)[0], 1)
+        self.assertEqual(self.rows(430)[0], 1)
+
+    def test_a_narrow_panel_uses_two_rows(self):
+        self.assertEqual(self.rows(320)[0], 2)
+        self.assertEqual(self.rows(429)[0], 2)
+
+    def test_the_bottom_edge_clears_every_row_of_buttons(self):
+        one, two = self.rows(800)[1], self.rows(320)[1]
+        self.assertGreaterEqual(one, 32)        # top 6 + 26 high
+        self.assertGreaterEqual(two, one + 26)  # a second row of the same height
+        self.assertEqual(self.rows(0)[0], 1, "before the first layout the width is 0: no second row")
+
+    def test_main_uses_them_for_the_layout_and_for_hit_testing(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertIn("toolbarRows(this.W)", src)
+        self.assertIn("toolbarBottom(toolbarRows(this.W))", src)
+
+
 class ShownGraph(unittest.TestCase):
     """What a view shows (filter.js shownGraph). Global with Active only shows what is active, whichever pane has focus:
     clicking something that opens a pane moves focus, and the graph must not change with it. Local is built around the
