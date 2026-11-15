@@ -2,43 +2,209 @@
 # install.sh: Install, activate, or uninstall Vaultr layout and mods for Herdr
 #
 # Usage:
-#   ./install.sh             # Sync kit, symlink layouts and mods, merge keybindings
+#   ./install.sh             # Sync kit, copy the layout, symlink mods, merge keybindings
+#   ./install.sh --link      # As above, but symlink the layout to the repo (development)
+#   ./install.sh --reset-layout  # Replace your layout copy with the repo's (backed up first)
 #   ./install.sh --activate  # Install and switch active layout to vaultr
-#   ./install.sh --uninstall # Remove vaultr layouts/mods, revert keybindings, switch layout to iv
+#   ./install.sh --uninstall # Remove vaultr layouts/mods, revert keybindings, switch layout to $VAULTR_FALLBACK_LAYOUT (default main)
+#                            # A layout copy you changed stays unless --reset-layout is passed
 
 set -euo pipefail
 
 REPO_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)
 HERDR_APP_DIR="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
+# Layout that Herdr switches back to on uninstall (and after --activate bounce)
+FALLBACK_LAYOUT="${VAULTR_FALLBACK_LAYOUT:-main}"
 
 ACTIVATE=0
 UNINSTALL=0
+LINK=0
+RESET=0
 
 for arg in "$@"; do
   case "$arg" in
     --activate)
       ACTIVATE=1
       ;;
+    --link)
+      LINK=1
+      ;;
+    --reset-layout)
+      RESET=1
+      ;;
     --uninstall)
       UNINSTALL=1
       ;;
     -h|--help)
-      echo "Usage: $0 [--activate | --uninstall]"
+      echo "Usage: $0 [--activate | --uninstall | --link | --reset-layout]"
       exit 0
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [--activate | --uninstall]" >&2
+      echo "Usage: $0 [--activate | --uninstall | --link | --reset-layout]" >&2
       exit 1
       ;;
   esac
 done
 
+# Mods under mods/ that are not ob-* but ship with Vaultr; linked like the ob-* mods
+EXTRA_MODS="insights obsidian"
+
+# Link mods/<name> into $HERDR_APP_DIR/mods. A symlink to another checkout's
+# mods/<name> is replaced; a real folder or an unrecognised symlink is left alone.
+link_extra_mod() {
+  local name=$1
+  local src="$REPO_DIR/mods/$name"
+  local target="$HERDR_APP_DIR/mods/$name"
+  [[ -d "$src" ]] || return 0
+  if [[ -L "$target" ]]; then
+    local dest
+    dest=$(readlink -- "$target")
+    if [[ "$dest" != */mods/"$name" ]]; then
+      echo "skipped mod: $target is a symlink to $dest (not recognised); remove it to link $name" >&2
+      return 0
+    fi
+    rm -f -- "$target"
+  elif [[ -e "$target" ]]; then
+    echo "skipped mod: $target is a real folder; move it aside to link $name" >&2
+    return 0
+  fi
+  ln -sfn "$src" "$target"
+  echo "linked mod: $target -> $src"
+}
+
+# Back up a layout copy next to itself before it is replaced: <file>.bak-<date-time>.
+backup_layout() {
+  local target=$1 stamp
+  stamp=$(date +%Y%m%d-%H%M%S)
+  cp -- "$target" "$target.bak-$stamp"
+  echo "backed up: $target.bak-$stamp"
+}
+
+# Put layouts/<file> into the Herdr app folder as a copy. The copy is the person's arrangement once they move
+# panels: a copy that differs from the repo is kept unless --reset-layout, which backs it up first. An old symlink
+# into this repo, or into another checkout's layouts/, becomes a copy of what it holds; a dangling one is replaced.
+# --link symlinks the repo file instead (development).
+# a Vaultr checkout has its installer and kit sync script at the top
+is_checkout() { [[ -f "$1/install.sh" && -f "$1/kit/sync.sh" ]]; }
+
+install_layout() {
+  local file=$1
+  local src="$REPO_DIR/layouts/$file"
+  local target="$HERDR_APP_DIR/layouts/$file"
+  [[ -f "$src" ]] || return 0
+  if [[ -L "$target" ]]; then
+    local dest
+    dest=$(readlink -- "$target")
+    if [[ ! -e "$target" ]]; then
+      # dangling (the repo was moved): nothing to keep
+      rm -f -- "$target"
+      echo "removed dangling layout link: $target -> $dest"
+    elif [[ "$(readlink -f -- "$target")" == "$(readlink -f -- "$src")" ]]; then
+      if [[ "$LINK" -eq 0 ]]; then
+        cp -L -- "$target" "$target.tmp"
+        mv -f -- "$target.tmp" "$target"
+        echo "replaced the link to the repo with a copy: $target"
+      fi
+    elif [[ "$(readlink -f -- "$target")" == */layouts/"$file" ]] && is_checkout "$(dirname "$(dirname "$(readlink -f -- "$target")")")"; then
+      # another Vaultr checkout's layout: keep the arrangement it holds as a copy, then go on as for any copy
+      cp -L -- "$target" "$target.tmp"
+      mv -f -- "$target.tmp" "$target"
+      echo "replaced the link to another checkout ($dest) with a copy: $target"
+    else
+      echo "skipped layout: $target is a symlink to $dest (not recognised); remove it to install $file" >&2
+      return 0
+    fi
+  fi
+  if [[ "$LINK" -eq 1 ]]; then
+    if [[ -f "$target" ]] && ! cmp -s -- "$src" "$target"; then
+      backup_layout "$target"
+    fi
+    ln -sfn -- "$src" "$target"
+    echo "linked layout: $target -> $src"
+    return 0
+  fi
+  if [[ ! -e "$target" ]]; then
+    cp -- "$src" "$target"
+    echo "copied layout: $target"
+    return 0
+  fi
+  if cmp -s -- "$src" "$target"; then
+    return 0
+  fi
+  if [[ "$RESET" -eq 1 ]]; then
+    backup_layout "$target"
+    cp -- "$src" "$target"
+    echo "replaced layout with the repo's: $target"
+    return 0
+  fi
+  echo "kept your layout: $target differs from the repo (pass --reset-layout to replace it, after a backup)"
+  warn_missing_mods "$target"
+}
+
+# Warn when a kept layout copy names a mod that is neither in this repo, nor in the app's mods folder, nor one of
+# Herdr's shipped mods (e.g. a mod since removed from Vaultr): that block would show an error.
+warn_missing_mods() {
+  [[ "$1" == *.json ]] || return 0
+  python3 - "$1" "$REPO_DIR/mods" "$HERDR_APP_DIR/mods" <<-'PY'
+import json, os, sys
+
+layout, repo_mods, app_mods = sys.argv[1], sys.argv[2], sys.argv[3]
+SHIPPED = {"files", "changes"}
+try:
+    with open(layout) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+names = set()
+stack = [data]
+while stack:
+    x = stack.pop()
+    if isinstance(x, dict):
+        if isinstance(x.get("mod"), str):
+            names.add(x["mod"])
+        stack.extend(x.values())
+    elif isinstance(x, list):
+        stack.extend(x)
+missing = sorted(n for n in names if n not in SHIPPED and "/" not in n
+                 and not os.path.isdir(os.path.join(repo_mods, n)) and not os.path.isdir(os.path.join(app_mods, n)))
+if missing:
+    print(f"warning: your layout {layout} names mods that are not installed: {', '.join(missing)} "
+          "(pass --reset-layout to take the repo's layout, after a backup)", file=sys.stderr)
+PY
+}
+
+# Remove an installed layout copy. Unchanged from the repo, or --reset-layout (backed up first), removes it; a
+# differing copy is the person's and stays.
+uninstall_layout() {
+  local file=$1
+  local src="$REPO_DIR/layouts/$file"
+  local target="$HERDR_APP_DIR/layouts/$file"
+  if [[ -L "$target" ]]; then
+    rm -f -- "$target"
+    echo "removed layout: $target"
+  elif [[ -f "$target" ]]; then
+    if cmp -s -- "$src" "$target"; then
+      rm -f -- "$target"
+      echo "removed layout: $target"
+    elif [[ "$RESET" -eq 1 ]]; then
+      backup_layout "$target"
+      rm -f -- "$target"
+      echo "removed layout (backed up): $target"
+    else
+      echo "left your layout: $target differs from the repo (pass --reset-layout to remove it, after a backup)"
+    fi
+  fi
+}
+
 if [[ "$UNINSTALL" -eq 1 ]]; then
   echo "Uninstalling Vaultr..."
 
   # 1. Remove vaultr layout files (and any legacy obsidian layout files) and ob-* mods
-  for file in "vaultr.json" "vaultr.svg" "obsidian.json" "obsidian.svg"; do
+  for file in "vaultr.json" "vaultr.svg"; do
+    uninstall_layout "$file"
+  done
+  for file in "obsidian.json" "obsidian.svg"; do
     if [[ -f "$HERDR_APP_DIR/layouts/$file" || -L "$HERDR_APP_DIR/layouts/$file" ]]; then
       rm -f "$HERDR_APP_DIR/layouts/$file"
       echo "removed layout: $HERDR_APP_DIR/layouts/$file"
@@ -52,35 +218,66 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     fi
   done
 
-  # 2. Remove vaultr and legacy obsidian keybinding sections from keys.json
+  # Remove only symlinks that point at a mods/<name> folder; real folders are kept
+  for name in $EXTRA_MODS; do
+    target="$HERDR_APP_DIR/mods/$name"
+    if [[ -L "$target" && "$(readlink -- "$target")" == */mods/"$name" ]]; then
+      rm -f -- "$target"
+      echo "removed mod: $target"
+    elif [[ -L "$target" || -e "$target" ]]; then
+      echo "left alone: $target (not a Vaultr link)"
+    fi
+  done
+
+  # 2. Remove the keys Vaultr installed (recorded in vaultr-keys.owned.json) and the legacy obsidian section;
+  #    a key the person added to a Vaultr section stays. Without a record, the Vaultr sections go as before.
   if [[ -f "$HERDR_APP_DIR/keys.json" ]]; then
-    python3 - "$HERDR_APP_DIR/keys.json" <<-'PY'
+    python3 - "$HERDR_APP_DIR/keys.json" "$HERDR_APP_DIR/vaultr-keys.owned.json" <<-'PY'
 import json, os, sys
 
-keys_file = sys.argv[1]
+keys_file, owned_file = sys.argv[1], sys.argv[2]
 try:
     with open(keys_file, "r") as f:
         keys = json.load(f)
 except Exception as e:
     sys.exit(0)
+owned = {}
+if os.path.exists(owned_file):
+    try:
+        with open(owned_file, "r") as f:
+            owned = json.load(f)
+    except Exception:
+        owned = {}
 
 modified = False
-for k in ("layout:vaultr", "layout:obsidian", "mod:ob-sessions"):
-    if k in keys:
+if "layout:obsidian" in keys:
+    del keys["layout:obsidian"]
+    modified = True
+for k in ("layout:vaultr", "mod:ob-sessions"):
+    if k not in keys:
+        continue
+    if k in owned:
+        for key in owned[k]:
+            keys[k].pop(key, None)
+        if not keys[k]:
+            del keys[k]
+    else:
         del keys[k]
-        modified = True
+    modified = True
 
 if modified:
     with open(keys_file, "w") as f:
         json.dump(keys, f, indent=2)
         f.write("\n")
+if os.path.exists(owned_file):
+    os.remove(owned_file)
 PY
     echo "removed vaultr keybindings from $HERDR_APP_DIR/keys.json"
   fi
 
-  # 3. Switch layout back to iv
-  herdr-app do layout.switch --name iv >/dev/null 2>&1 || true
-  echo "switched layout -> iv"
+  # 3. Switch layout back to the fallback layout
+  herdr-app do layout.switch --name "$FALLBACK_LAYOUT" >/dev/null 2>&1 || true
+  echo "switched layout -> $FALLBACK_LAYOUT"
   echo "Vaultr uninstalled."
   exit 0
 fi
@@ -111,13 +308,9 @@ for legacy in "obsidian.json" "obsidian.svg"; do
   fi
 done
 
-# 2. Symlink layouts if present
+# 2. Copy the layout into the app folder (see install_layout)
 for file in "vaultr.json" "vaultr.svg"; do
-  src="$REPO_DIR/layouts/$file"
-  if [[ -f "$src" ]]; then
-    ln -sfn "$src" "$HERDR_APP_DIR/layouts/$file"
-    echo "linked layout: $HERDR_APP_DIR/layouts/$file -> $src"
-  fi
+  install_layout "$file"
 done
 
 # 3. Symlink each mods/ob-* directory
@@ -132,12 +325,32 @@ for mod_dir in "$REPO_DIR"/mods/ob-*/; do
   echo "linked mod: $target -> $mod_dir"
 done
 
-# 4. Merge vaultr keybindings into keys.json and clean up stale layout:obsidian
+# 3a. Prune links into this repo whose mod was removed from it (a dangling link would show as a broken mod)
+for target in "$HERDR_APP_DIR"/mods/*; do
+  [[ -L "$target" ]] || continue
+  name=$(basename -- "$target")
+  dest=$(readlink -- "$target")
+  dest=${dest%/}
+  if [[ "$dest" == "$REPO_DIR/mods/$name" && ! -e "$dest" ]]; then
+    rm -f -- "$target"
+    echo "removed link to removed mod: $target"
+  fi
+done
+
+# 3b. Symlink the non-ob-* mods shipped in mods/
+for name in $EXTRA_MODS; do
+  link_extra_mod "$name"
+done
+
+# 4. Merge vaultr keybindings into keys.json and clean up stale layout:obsidian.
+#    Vaultr owns only the keys it installed (recorded in vaultr-keys.owned.json): a key dropped from the repo file is
+#    removed, and a key the person added to the same section is kept. A section with no record (first install, or an
+#    install from before the record existed) is replaced as a whole, as before.
 if [[ -f "$REPO_DIR/keys/vaultr-keys.json" ]]; then
-  python3 - "$REPO_DIR/keys/vaultr-keys.json" "$HERDR_APP_DIR/keys.json" <<-'PY'
+  python3 - "$REPO_DIR/keys/vaultr-keys.json" "$HERDR_APP_DIR/keys.json" "$HERDR_APP_DIR/vaultr-keys.owned.json" <<-'PY'
 import json, os, sys
 
-src_file, dst_file = sys.argv[1], sys.argv[2]
+src_file, dst_file, owned_file = sys.argv[1], sys.argv[2], sys.argv[3]
 keys = {}
 if os.path.exists(dst_file):
     try:
@@ -145,6 +358,13 @@ if os.path.exists(dst_file):
             keys = json.load(f)
     except Exception as e:
         print(f"Warning: could not read {dst_file}: {e}", file=sys.stderr)
+owned = {}
+if os.path.exists(owned_file):
+    try:
+        with open(owned_file, "r") as f:
+            owned = json.load(f)
+    except Exception:
+        owned = {}
 
 # Clean up stale layout:obsidian
 keys.pop("layout:obsidian", None)
@@ -152,12 +372,28 @@ keys.pop("layout:obsidian", None)
 with open(src_file, "r") as f:
     vaultr_keys = json.load(f)
 
+new_owned = dict(owned)
 for k in ("layout:vaultr", "mod:ob-sessions"):
     if k in vaultr_keys:
-        keys[k] = vaultr_keys[k]
+        repo = vaultr_keys[k]
+        if k in owned:
+            cur = {key: val for key, val in keys.get(k, {}).items() if key not in owned[k] or key in repo}
+            # a chord the person bound themselves (in the section, not installed by Vaultr) is theirs: leave it
+            theirs = {key for key in repo if key in cur and key not in owned[k]}
+        else:
+            cur = {}
+            theirs = set()
+        for key in sorted(key for key in theirs if cur[key] != repo[key]):
+            print(f"kept your key: {k} {key} = {cur[key]} (Vaultr's {repo[key]} not installed)")
+        cur.update({key: val for key, val in repo.items() if key not in theirs})
+        keys[k] = cur
+        new_owned[k] = sorted(key for key in repo if key not in theirs)
 
 with open(dst_file, "w") as f:
     json.dump(keys, f, indent=2)
+    f.write("\n")
+with open(owned_file, "w") as f:
+    json.dump(new_owned, f, indent=2)
     f.write("\n")
 PY
   echo "merged keybindings into $HERDR_APP_DIR/keys.json"
@@ -165,8 +401,8 @@ fi
 
 # 5. Activate if requested
 if [[ "$ACTIVATE" -eq 1 ]]; then
-  # Bounce layout through iv to force full reload if vaultr was already active
-  herdr-app do layout.switch --name iv >/dev/null 2>&1 || true
+  # Bounce layout through the fallback to force full reload if vaultr was already active
+  herdr-app do layout.switch --name "$FALLBACK_LAYOUT" >/dev/null 2>&1 || true
   herdr-app do layout.switch --name vaultr >/dev/null 2>&1 || true
   echo "activated layout -> vaultr"
 fi
