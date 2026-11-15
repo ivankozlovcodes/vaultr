@@ -11,8 +11,12 @@
 
 set -euo pipefail
 
-REPO_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)
+# The script's real path. `readlink -f` is missing on macOS before 12.3; python3 is required anyway (keys merge).
+resolve() { readlink -f -- "$1" 2>/dev/null || python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+REPO_DIR=$(cd -- "$(dirname -- "$(resolve "$0")")" && pwd)
 HERDR_APP_DIR="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
+# The OS the keys are for: on Darwin (macOS) Vaultr's Ctrl keys install as Cmd (see mods/ob-settings/platform_keys.js).
+VAULTR_OS="${VAULTR_OS:-$(uname -s)}"
 # Layout that Herdr switches back to on uninstall (and after --activate bounce)
 FALLBACK_LAYOUT="${VAULTR_FALLBACK_LAYOUT:-main}"
 
@@ -100,13 +104,13 @@ install_layout() {
       # dangling (the repo was moved): nothing to keep
       rm -f -- "$target"
       echo "removed dangling layout link: $target -> $dest"
-    elif [[ "$(readlink -f -- "$target")" == "$(readlink -f -- "$src")" ]]; then
+    elif [[ "$(resolve "$target")" == "$(resolve "$src")" ]]; then
       if [[ "$LINK" -eq 0 ]]; then
         cp -L -- "$target" "$target.tmp"
         mv -f -- "$target.tmp" "$target"
         echo "replaced the link to the repo with a copy: $target"
       fi
-    elif [[ "$(readlink -f -- "$target")" == */layouts/"$file" ]] && is_checkout "$(dirname "$(dirname "$(readlink -f -- "$target")")")"; then
+    elif [[ "$(resolve "$target")" == */layouts/"$file" ]] && is_checkout "$(dirname "$(dirname "$(resolve "$target")")")"; then
       # another Vaultr checkout's layout: keep the arrangement it holds as a copy, then go on as for any copy
       cp -L -- "$target" "$target.tmp"
       mv -f -- "$target.tmp" "$target"
@@ -347,10 +351,23 @@ done
 #    removed, and a key the person added to the same section is kept. A section with no record (first install, or an
 #    install from before the record existed) is replaced as a whole, as before.
 if [[ -f "$REPO_DIR/keys/vaultr-keys.json" ]]; then
-  python3 - "$REPO_DIR/keys/vaultr-keys.json" "$HERDR_APP_DIR/keys.json" "$HERDR_APP_DIR/vaultr-keys.owned.json" <<-'PY'
-import json, os, sys
+  python3 - "$REPO_DIR/keys/vaultr-keys.json" "$HERDR_APP_DIR/keys.json" "$HERDR_APP_DIR/vaultr-keys.owned.json" "$VAULTR_OS" <<-'PY'
+import json, os, re, sys
 
-src_file, dst_file, owned_file = sys.argv[1], sys.argv[2], sys.argv[3]
+src_file, dst_file, owned_file, os_name = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+
+def for_platform(chord):
+    """The repo's keys are written with Ctrl; macOS gets Cmd in its place, stroke by stroke (platform_keys.js)."""
+    if os_name != "Darwin":
+        return chord
+    out = []
+    for stroke in chord.split(" "):
+        m = re.match(r"^((?:[a-z]+-)*)(.+)$", stroke)
+        if m and m.group(1):
+            stroke = "-".join("cmd" if w == "ctrl" else w for w in m.group(1).split("-")) + m.group(2)
+        out.append(stroke)
+    return " ".join(out)
 keys = {}
 if os.path.exists(dst_file):
     try:
@@ -375,7 +392,7 @@ with open(src_file, "r") as f:
 new_owned = dict(owned)
 for k in ("layout:vaultr", "mod:ob-sessions"):
     if k in vaultr_keys:
-        repo = vaultr_keys[k]
+        repo = {for_platform(key): val for key, val in vaultr_keys[k].items()}
         if k in owned:
             cur = {key: val for key, val in keys.get(k, {}).items() if key not in owned[k] or key in repo}
             # a chord the person bound themselves (in the section, not installed by Vaultr) is theirs: leave it

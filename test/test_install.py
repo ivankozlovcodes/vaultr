@@ -367,9 +367,10 @@ class KeyOwnership(unittest.TestCase):
         with open(self.keys_file, "w") as f:
             json.dump(keys, f)
 
-    def install(self, *args):
+    def install(self, *args, os_name="Linux"):
         p = subprocess.run(["bash", os.path.join(self.repo, "install.sh"), *args], capture_output=True, text=True,
-                           env=dict(os.environ, HERDR_APP_HOME=self.app), cwd=self.repo, stdin=subprocess.DEVNULL)
+                           env=dict(os.environ, HERDR_APP_HOME=self.app, VAULTR_OS=os_name), cwd=self.repo,
+                           stdin=subprocess.DEVNULL)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return p.stdout + p.stderr
 
@@ -426,6 +427,26 @@ class KeyOwnership(unittest.TestCase):
         self.assertEqual(after["layout:vaultr"], {"ctrl-q": "mine.thing"})
         self.assertNotIn("mod:ob-sessions", after)
         self.assertEqual(after["global"], {"ctrl-k": "mine.open"})
+
+    def test_on_macos_ctrl_keys_install_as_cmd(self):
+        self.install(os_name="Darwin")
+        keys = self.installed()
+        self.assertEqual(keys["layout:vaultr"], {"cmd-shift-f": "ob-tabs.open:ob-search", "cmd-x": "old"})
+        self.assertEqual(keys["mod:ob-sessions"], {"f2": "ob-sessions.rename"})
+        self.assertEqual(keys["global"], {"ctrl-k": "mine.open"}, "the person's own keys are not translated")
+
+    def test_moving_a_keys_file_to_macos_replaces_the_ctrl_keys(self):
+        self.install()
+        self.install(os_name="Darwin")
+        layout = self.installed()["layout:vaultr"]
+        self.assertEqual(sorted(layout), ["cmd-shift-f", "cmd-x"])
+
+    def test_uninstall_on_macos_removes_the_cmd_keys(self):
+        self.install(os_name="Darwin")
+        self.install("--uninstall", os_name="Darwin")
+        after = self.installed()
+        self.assertNotIn("layout:vaultr", after)
+        self.assertNotIn("mod:ob-sessions", after)
 
 
 if __name__ == "__main__":
