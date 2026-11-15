@@ -1019,7 +1019,7 @@ export default class Sessions extends View {
       case "space": if (r?.foldable) this.setOpen(r.node, !r.open); break;
       case "f2": if (this.once("rename")) this.rename(r?.node); break;
       case "delete": if (this.once("close")) this.close(r?.node); break;
-      case "ctrl-enter": if (this.once("open-right")) this.openRight(r?.node); break;
+      case "ctrl-enter": case "cmd-enter": if (this.once("open-right")) this.openRight(r?.node); break;
       case "shift-f10": case "menu": if (r) this.menu(r.key); break;
       case "/": this.input.focus(); break;
       case "escape":

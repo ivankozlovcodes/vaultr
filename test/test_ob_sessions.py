@@ -33,6 +33,13 @@ class PaneNames(unittest.TestCase):
         self.assertRegex(self.src, r"n\.secondary[\s\S]{0,200}text_color\(t\.dim\)")
 
 
+class MacKeys(unittest.TestCase):
+    def test_cmd_enter_opens_to_the_right_like_ctrl_enter(self):
+        # On macOS install.sh binds cmd-enter where keys/ says ctrl-enter; the tree's own key handler takes both.
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertRegex(src, r'case "ctrl-enter": case "cmd-enter": if \(this\.once\("open-right"\)\)')
+
+
 MATCH = Path(ROOT, "mods", "ob-sessions", "match.js")
 NODE = shutil.which("node")
 
