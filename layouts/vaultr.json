@@ -20,10 +20,13 @@
         {
           "id": "ob-left-body",
           "type": "column",
+          "divider": { "width": 1, "color": "border" },
           "children": [
             {
               "id": "ob-lt",
               "type": "column",
+              "size": { "weight": 3 },
+              "min": 140,
               "resizable": false,
               "children": [
                 {
@@ -40,11 +43,21 @@
                   "children": [
                     { "id": "ob-sessions", "type": "block", "content": { "mod": "ob-sessions", "props": { "slot": "ob-sessions" } } },
                     { "id": "ob-search", "type": "block", "content": { "mod": "ob-search", "props": { "slot": "ob-search" } } },
-                    { "id": "ob-bookmarks", "type": "block", "content": { "mod": "ob-bookmarks", "props": { "slot": "ob-bookmarks" } } },
-                    { "id": "ob-agents", "type": "block", "content": { "mod": "ob-agents", "props": { "slot": "ob-agents" } } },
-                    { "id": "ob-recent", "type": "block", "content": { "mod": "ob-recent", "props": { "slot": "ob-recent" } } }
+                    { "id": "ob-bookmarks", "type": "block", "content": { "mod": "ob-bookmarks", "props": { "slot": "ob-bookmarks" } } }
                   ]
                 }
+              ]
+            },
+            {
+              "id": "ob-lb-stack",
+              "type": "stack",
+              "size": { "weight": 2 },
+              "min": 90,
+              "active": "ob-agents",
+              "header": { "content": { "mod": "ob-strip", "props": { "stack": "ob-lb-stack", "side": "left", "place": "bottom" } }, "height": 34 },
+              "children": [
+                { "id": "ob-agents", "type": "block", "content": { "mod": "ob-agents", "props": { "slot": "ob-agents" } } },
+                { "id": "ob-recent", "type": "block", "content": { "mod": "ob-recent", "props": { "slot": "ob-recent" } } }
               ]
             }
           ]
@@ -93,9 +106,10 @@
           "resizable": false,
           "children": [
             { "id": "ob-status", "type": "block", "content": { "mod": "ob-status" } },
-            { "id": "ob-feed", "type": "block", "size": { "px": 210 }, "content": { "mod": "ob-feed" } }
+            { "id": "ob-feed", "type": "block", "size": { "px": 210 }, "content": { "mod": "ob-feed", "props": { "role": "draw" } } }
           ]
-        }
+        },
+        { "id": "ob-feed-scan", "type": "block", "size": { "px": 0 }, "content": { "mod": "ob-feed", "props": { "role": "scan" } } }
       ]
     },
     {
@@ -140,10 +154,9 @@
           "type": "stack",
           "size": { "weight": 2 },
           "min": 90,
-          "active": "ob-subagents",
+          "active": "ob-graph",
           "header": { "content": { "mod": "ob-strip", "props": { "stack": "ob-rb-stack", "side": "right", "place": "bottom" } }, "height": 34 },
           "children": [
-            { "id": "ob-subagents", "type": "block", "content": { "mod": "ob-subagents", "props": { "slot": "ob-subagents" } } },
             { "id": "ob-graph", "type": "block", "content": { "mod": "ob-graph", "props": { "slot": "ob-graph" } } },
             { "id": "ob-outline", "type": "block", "content": { "mod": "ob-outline", "props": { "slot": "ob-outline" } } }
           ]
