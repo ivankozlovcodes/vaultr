@@ -26,6 +26,7 @@ import {
 } from "herdr";
 import { vaultFor } from "./vault_rules.js";
 import { zenPlan } from "./zen.js";
+import { isSettingsOpen } from "./settings_open.js";
 import {
   S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, stackOf, isShown, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
@@ -75,10 +76,6 @@ export default class Tabs extends View {
     this.over = null;        // tab id the drag is over
     this.nav = null;         // { space, tab, pane, until }: a back/forward jump in flight
     this.restoreHistory();
-    // Shared state is saved: a Settings dialog that died open left "ob-settings.open" true, which would stop
-    // settings() opening it ever again. ob-tabs starts with the layout, before any dialog (a reload of ob-tabs under
-    // an open dialog only lets the next Settings click reach mod.open). Deferred: setShared re-renders every mod.
-    cx.timer.after(0, () => { if (shared("ob-settings.open")) setShared("ob-settings.open", false); });
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -211,10 +208,11 @@ export default class Tabs extends View {
   }
 
   // ob-settings opens on the tab named in shared "ob-settings.tab" (it clears that once read). An open
-  // dialog is not toggled shut by mod.open: it takes the request as it is, so only a closed one is opened.
+  // dialog is not toggled shut by mod.open: it takes the request as it is, so only a closed one is opened. "Open" is a
+  // beat the dialog keeps up (settings_open.js), so one that died open, or an ob-tabs that reloaded, needs no clean-up.
   settings(tab) {
     if (tab) setShared("ob-settings.tab", tab);
-    if (shared("ob-settings.open")) return;
+    if (isSettingsOpen(shared("ob-settings.open"))) return;
     run("mod.open", { name: "ob-settings" });
   }
 

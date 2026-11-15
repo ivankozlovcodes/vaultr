@@ -2,6 +2,7 @@
 and the status row; leaving it shows back exactly what was shown before the first entry."""
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
 import json
+import re
 import shutil
 import subprocess
 import unittest
@@ -12,6 +13,15 @@ ZEN = Path(ROOT, "mods", "ob-tabs", "zen.js")
 NODE = shutil.which("node")
 VISIBLE = {"left": False, "right": False, "statusrow": False}
 ALL_HIDDEN = {"left": True, "right": True, "statusrow": True}
+
+
+def run_node(body, module):
+    src = (f'import * as M from "{module.as_uri()}";\n'
+           f'console.log(JSON.stringify((() => {{ {body} }})()));')
+    out = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.strip() or "node failed")
+    return json.loads(out.stdout)
 
 
 def plan(prev, mode, hidden, now=1000):
@@ -61,22 +71,52 @@ class Zen(unittest.TestCase):
         self.assertEqual((r["show"], r["hide"], r["tabbar"]), ([], [], None))
 
 
+SETTINGS_OPEN = Path(ROOT, "mods", "ob-tabs", "settings_open.js")
+
+
 class SettingsOpenFlag(unittest.TestCase):
-    """ob-tabs opens Settings only while shared "ob-settings.open" is false, and only the dialog's close() clears it.
-    Shared state is saved, so a dialog that died open would block Settings for good: ob-tabs (always in the layout,
-    started before any dialog) clears a stale flag when it starts."""
+    """ob-tabs opens Settings only while the dialog says it is open. Shared "ob-settings.open" is the time of the dialog's
+    last beat (it beats while open, and close() sets false), so a dialog that died open, or an ob-tabs that reloaded
+    under an open one, needs no clean-up: a beat that stops goes stale on its own."""
 
     def setUp(self):
         self.src = Path(ROOT, "mods", "ob-tabs", "main.js").read_text(encoding="utf-8")
 
-    def test_init_clears_a_stale_open_flag(self):
+    def is_open(self, value, now):
+        return run_node('return M.isSettingsOpen(%s, %s);' % (json.dumps(value), now), SETTINGS_OPEN)
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_a_fresh_beat_is_open_and_a_stale_one_is_not(self):
+        self.assertTrue(self.is_open(1_000_000, 1_000_000 + 5_000))
+        self.assertFalse(self.is_open(1_000_000, 1_000_000 + 60_000), "a dialog that died open")
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_closed_and_old_style_values_are_not_open(self):
+        for v in (False, None, True, 0, "x"):  # true is what an older version left in the saved state
+            self.assertFalse(self.is_open(v, 1_000_000), repr(v))
+
+    def test_settings_asks_isSettingsOpen_and_init_clears_nothing(self):
+        self.assertIn('isSettingsOpen(shared("ob-settings.open"))', self.src)
         init = self.src[self.src.index("  init(_p, cx) {"):]
         init = init[:init.index("\n  }\n")]
-        self.assertRegex(init, r'cx\.timer\.after\(0, \(\) => \{ if \(shared\("ob-settings\.open"\)\) setShared\("ob-settings\.open", false\); \}\)')
+        self.assertNotIn("ob-settings.open", init)
 
-    def test_settings_still_checks_the_flag_by_its_name(self):
-        self.assertIn('if (shared("ob-settings.open")) return;', self.src)
+    def test_a_closed_dialog_stops_beating(self):
+        # A beat after close() would set the flag fresh again and ob-tabs would never open Settings.
+        dialog = Path(ROOT, "mods", "ob-settings", "main.js").read_text(encoding="utf-8")
+        self.assertRegex(dialog, r"this\.beat = cx\.timer\.every\(BEAT_MS, \(\) => \{ if \(this\.closed\) return; setShared\(OPEN, Date\.now\(\)\); \}\)")
+        close = dialog[dialog.index("  close() {"):]
+        close = close[:close.index("\n")]
+        self.assertIn("this.closed = true", close)
+        self.assertIn("this.beat?.cancel()", close)
+        self.assertLess(close.index("this.closed = true"), close.index("setShared(OPEN, false)"))
 
+    def test_the_dialog_beats_faster_than_the_flag_goes_stale(self):
+        dialog = Path(ROOT, "mods", "ob-settings", "main.js").read_text(encoding="utf-8")
+        beat = int(re.search(r"const BEAT_MS = (\d+);", dialog).group(1))
+        ttl = int(re.search(r"export const OPEN_TTL_MS = (\d+);", SETTINGS_OPEN.read_text(encoding="utf-8")).group(1))
+        self.assertLessEqual(beat * 2, ttl)
+        self.assertRegex(dialog, r"setShared\(OPEN, Date\.now\(\)\)")
 
 
 if __name__ == "__main__":

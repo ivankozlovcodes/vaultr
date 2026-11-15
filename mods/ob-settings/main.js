@@ -21,6 +21,9 @@ import * as hotkeys from "./hotkeys.js";
 
 const REQUEST = "ob-settings.tab";
 const OPEN = "ob-settings.open";
+// While open, the dialog keeps shared OPEN at the time of its last beat; ob-tabs reads a beat older than twice this as closed
+// (mods/ob-tabs/settings_open.js). Not so often: setShared re-renders every mod.
+const BEAT_MS = 5000;
 const LAST_KEY = "tab";
 
 const TABS = [
@@ -49,7 +52,8 @@ export default class Settings extends View {
     this.takeRequest(cx);
     for (const t of TABS) t.mod?.init?.(this, cx);
     // Deferred: setShared re-renders every mod, so not inside init.
-    cx.timer.after(0, () => setShared(OPEN, true));
+    cx.timer.after(0, () => setShared(OPEN, Date.now()));
+    this.beat = cx.timer.every(BEAT_MS, () => { if (this.closed) return; setShared(OPEN, Date.now()); });
     cx.timer.after(60, () => this.handle.focus());
     cx.spawn(async (cx) => {
       for (;;) {
@@ -61,7 +65,7 @@ export default class Settings extends View {
   }
 
   // The View's cleanup hook: the dialog is going, so ob-tabs must stop treating it as open.
-  close() { setShared(OPEN, false); }
+  close() { this.closed = true; try { this.beat?.cancel(); } catch { /* already gone */ } setShared(OPEN, false); }
 
   // A request from ob-tabs: show that tab, then clear the request (deferred, see init).
   takeRequest(cx) {
