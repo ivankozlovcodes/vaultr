@@ -10,8 +10,8 @@
 //
 // Commands (ob-tabs.<cmd>):
 //   router (5.3): open:<child>[@intent]  toggle:<child>[@intent]  back  forward  last
-//                 switcher[:go|move|views]  copy-path  copy-address  daily  bookmark[:<tabId>]
-//                 tab-list  new
+//                 switcher[:go|move|views|commands]  copy-path  copy-address  daily  bookmark[:<tabId>]
+//                 tab-list  new  settings[:<tab>] (ob-settings, on that tab if given)
 //   tab bar:      menu:<tabId>  move-to:<tabId>  scroll:<-n|+n>
 //
 // History (shared "ob.history" = { entries: [{space, tab, pane, terminal, at}], index }): every
@@ -24,6 +24,8 @@ import {
   spaces, panes, run, layout, nextCommand, setShared, shared as _shared, focused, settings, openOverlay, notify,
   readTextFile, writeTextFile, exec, home, appHome, window as appWindow,
 } from "herdr";
+import { vaultFor } from "./vault_rules.js";
+import { zenPlan } from "./zen.js";
 import {
   S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, stackOf, isShown, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
@@ -73,6 +75,10 @@ export default class Tabs extends View {
     this.over = null;        // tab id the drag is over
     this.nav = null;         // { space, tab, pane, until }: a back/forward jump in flight
     this.restoreHistory();
+    // Shared state is saved: a Settings dialog that died open left "ob-settings.open" true, which would stop
+    // settings() opening it ever again. ob-tabs starts with the layout, before any dialog (a reload of ob-tabs under
+    // an open dialog only lets the next Settings click reach mod.open). Deferred: setShared re-renders every mod.
+    cx.timer.after(0, () => { if (shared("ob-settings.open")) setShared("ob-settings.open", false); });
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -192,6 +198,7 @@ export default class Tabs extends View {
     if (verb === "bookmark") return this.bookmark(arg);
     if (verb === "tab-list") return this.tabList();
     if (verb === "new") return openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 });
+    if (verb === "settings") return this.settings(arg);
     if (verb === "menu") { const t = this.findTab(arg); if (t) this.tabMenu(t.space, t.tab); return; }
     if (verb === "move-to") {
       const t = this.findTab(arg);
@@ -203,30 +210,25 @@ export default class Tabs extends View {
     console.log(`ob-tabs: unknown command "${c}"`);
   }
 
+  // ob-settings opens on the tab named in shared "ob-settings.tab" (it clears that once read). An open
+  // dialog is not toggled shut by mod.open: it takes the request as it is, so only a closed one is opened.
+  settings(tab) {
+    if (tab) setShared("ob-settings.tab", tab);
+    if (shared("ob-settings.open")) return;
+    run("mod.open", { name: "ob-settings" });
+  }
+
   zen(mode) {
     const root = layout();
-    const prev = shared()?.["ob.zen"];
-    const currentlyZen = Boolean(prev?.active) && Boolean(findNode(root, N.left)?.hidden) && Boolean(findNode(root, N.right)?.hidden);
-    const enter = mode === "on" ? true : mode === "off" ? false : !currentlyZen;
-    if (enter) {
-      setShared("ob.zen", {
-        active: true,
-        leftHidden: Boolean(findNode(root, N.left)?.hidden),
-        rightHidden: Boolean(findNode(root, N.right)?.hidden),
-        statusHidden: Boolean(findNode(root, N.statusrow)?.hidden),
-        at: Date.now(),
-      });
-      run("layout.hide", { id: N.left });
-      run("layout.hide", { id: N.right });
-      run("layout.hide", { id: N.statusrow });
-      run("layout.resize", { id: N.tabbar, px: 0 });
-    } else {
-      setShared("ob.zen", { active: false, at: Date.now() });
-      run("layout.resize", { id: N.tabbar, px: 40 });
-      if (!prev?.statusHidden) run("layout.show", { id: N.statusrow });
-      if (!prev?.leftHidden) run("layout.show", { id: N.left });
-      if (!prev?.rightHidden) run("layout.show", { id: N.right });
-    }
+    const plan = zenPlan({
+      prev: shared()?.["ob.zen"], mode, now: Date.now(),
+      hidden: { left: findNode(root, N.left)?.hidden, right: findNode(root, N.right)?.hidden, statusrow: findNode(root, N.statusrow)?.hidden },
+    });
+    const id = { left: N.left, right: N.right, statusrow: N.statusrow };
+    setShared("ob.zen", plan.state);
+    for (const k of plan.hide) run("layout.hide", { id: id[k] });
+    for (const k of plan.show) run("layout.show", { id: id[k] });
+    if (plan.tabbar !== null) run("layout.resize", { id: N.tabbar, px: plan.tabbar });
   }
 
   open(root, verb, child, intent) {
@@ -248,9 +250,11 @@ export default class Tabs extends View {
   }
 
   // The quick switcher, at the top center of the window like Obsidian's.
+  // An already-open switcher keeps its state and ignores new props, so the mode is also sent to it as a command.
   switcher(mode) {
-    const m = ["go", "move", "views"].includes(mode) ? mode : "go";
+    const m = ["go", "move", "views", "commands"].includes(mode) ? mode : "go";
     openOverlay({ mod: "ob-switcher", kind: "popup", at: "top", offset: 48, width: 660, height: 0.72, props: { mode: m } });
+    run(`ob-switcher.mode:${m}`);
   }
 
   findTab(id) {
@@ -324,8 +328,10 @@ export default class Tabs extends View {
 
   // ------------------------------------------------------------------ daily note
   async daily() {
-    const vault = await findVault();
-    if (!vault) return notify({ title: "No Obsidian vault found", body: "Open a vault in Obsidian once, or set {\"vault\": \"~/path\"} in obsidian.json in the Herdr folder.", level: "warning", timeout: 5000 });
+    let vault;
+    try { vault = await findVault(); }
+    catch (e) { return notify({ title: "Can't read obsidian.json", body: String(e?.message ?? e), level: "error", timeout: 5000 }); }
+    if (vault.error) return notify({ title: vault.unset ? "No vault set" : "Vault path refused", body: vault.error, level: vault.unset ? "warning" : "error", timeout: 5000 });
     const dn = parseJSON(await readTextFile(`${vault.root}/.obsidian/daily-notes.json`).catch(() => null)) ?? {};
     const trim = (p) => String(p ?? "").replace(/^\/+|\/+$/g, "");
     const folder = trim(vault.own.dailyFolder ?? dn.folder);
@@ -478,26 +484,12 @@ export default class Tabs extends View {
 // ------------------------------------------------------------------ vault + dates
 function parseJSON(text) { if (text == null) return null; try { return JSON.parse(text); } catch { return null; } }
 
-// The vault the obsidian mod uses: appHome()/obsidian.json {vault} first, else Obsidian's open vault.
+// The vault the obsidian mod uses: appHome()/obsidian.json {vault}, and nothing else. No fallback to Obsidian's
+// own vault list. The rule is ./vault_rules.js (the same as mods/obsidian/config.js).
 async function findVault() {
-  const h = home();
-  const own = parseJSON(await readTextFile(`${appHome()}/obsidian.json`).catch(() => null)) ?? {};
-  const expand = (p) => (p === "~" || p.startsWith("~/") ? h + p.slice(1) : p);
-  if (typeof own.vault === "string" && own.vault) return { root: expand(own.vault).replace(/\/+$/, ""), own };
-  const regs = [
-    `${h}/.config/obsidian/obsidian.json`,
-    `${h}/.var/app/md.obsidian.Obsidian/config/obsidian/obsidian.json`,
-    `${h}/snap/obsidian/current/.config/obsidian/obsidian.json`,
-    `${h}/Library/Application Support/obsidian/obsidian.json`,
-  ];
-  for (const file of regs) {
-    const reg = parseJSON(await readTextFile(file).catch(() => null));
-    const vaults = Object.values(reg?.vaults ?? {}).filter((v) => typeof v?.path === "string");
-    if (!vaults.length) continue;
-    const v = vaults.find((x) => x.open) ?? vaults.sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0))[0];
-    return { root: v.path.replace(/\/+$/, ""), own };
-  }
-  return null;
+  const text = await readTextFile(`${appHome()}/obsidian.json`).catch(() => null);
+  const own = (text == null ? null : JSON.parse(text)) ?? {};
+  return { ...vaultFor(own, home()), own };
 }
 
 // moment.js tokens Obsidian's daily notes use; [text] is literal. (Same as mods/obsidian/vault.js.)
