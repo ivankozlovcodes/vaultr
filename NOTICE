@@ -1,0 +1,15 @@
+Vaultr
+Copyright (c) 2026 Ivan Kozlov. MIT licensed: see LICENSE.
+
+Some of Vaultr's mods began as forks of, or carry forward code and action lists from, mods shipped with the Herdr app:
+- mods/ob-agents (from Herdr's shipped agents mod)
+- mods/ob-sessions (git.js and parts of main.js carried over from Herdr's shipped spaces mod)
+- mods/ob-switcher/commands.js (action names and command tables derived from Herdr's shipped palette frame mod)
+
+The Herdr app is licensed under the Apache License, Version 2.0; its license is in LICENSE-herdr. Those portions remain under that license.
+
+Third-party icons, logos, vendored libraries, and mod-specific notices are in:
+- kit/NOTICE.md (Lucide icons, ISC; Feather icons, MIT)
+- mods/ob-graph/NOTICE.md and mods/ob-graph/vendor/*/LICENSE (Quartz v4, MIT; d3-force, d3-quadtree, d3-dispatch, ISC)
+- mods/obsidian/NOTICE.md (Lucide/Feather icons; Obsidian trademark notice)
+- mods/insights/NOTICE.md (Simple Icons, CC0-1.0; Lobe Icons, MIT)

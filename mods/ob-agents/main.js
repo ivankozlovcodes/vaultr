@@ -1,3 +1,4 @@
+// Portions derived from the Herdr app (Apache-2.0) and modified for Vaultr; see NOTICE and LICENSE-herdr.
 // ob-agents: the main agents, those whose terminal is in a pane of a tab (kit/agents.js), by priority (Needs you /
 // Done / Working / Idle) or grouped by space, pinned ones on top. A fork of the shipped `agents` list in the kit
 // look: durations since the last change, machine tag for remote agents, Needs-you pill when there is room.

@@ -214,6 +214,23 @@ class Repo(unittest.TestCase):
         self.assertIn("insights", text)
         self.assertIn("obsidian", text)
 
+    def test_notice_and_herdr_license(self):
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, "LICENSE-herdr")))
+        notice_path = os.path.join(ROOT, "NOTICE")
+        self.assertTrue(os.path.isfile(notice_path))
+        with open(notice_path, encoding="utf-8") as f:
+            notice = f.read()
+        self.assertIn("Some of Vaultr's mods", notice)
+        section = notice.split("Some of Vaultr's mods", 1)[1].split("\n\n", 1)[0]
+        paths = []
+        for line in section.splitlines():
+            if line.startswith("- "):
+                paths.extend(re.findall(r"mods/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", line))
+        self.assertTrue(paths)
+        for rel in paths:
+            with self.subTest(path=rel):
+                self.assertTrue(os.path.exists(os.path.join(ROOT, rel)), f"missing {rel} named in NOTICE")
+
 
 if __name__ == "__main__":
     unittest.main()
