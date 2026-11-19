@@ -46,7 +46,7 @@ const MAX_CHARGE_DISTANCE = 250;                         // the charge reaches n
 const MACHINE_GRAVITY = 0.2;                             // pull of each machine toward the centre
 
 // Quartz: 2 + sqrt(number of links) (graph.inline.ts 208-213).
-// Machines and spaces have a fixed size (drawn as a diamond and a hexagon, shape.js): what hangs off them does not grow them.
+// Machines and spaces have a fixed size (round frame dots): what hangs off them does not grow them.
 const FRAME_RADIUS = { m: 5, s: 4.5 };
 // Every other node grows with the nodes that reference it: its links minus the one to its parent, so a leaf is 3 and a
 // session with sub-agents, or a note several agents touched, is clearly bigger (Quartz: 2 + sqrt(degree), which barely

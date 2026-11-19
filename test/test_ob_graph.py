@@ -1210,8 +1210,8 @@ class EditorArgv(unittest.TestCase):
 
 
 class FrameShapes(unittest.TestCase):
-    """Machines and spaces are the graph's frame: a different shape (a diamond, a hexagon), a stronger colour and an
-    always-shown label, so they stand out from the dots (panes, agents) and squares (artifacts) without being bigger."""
+    """Machines and spaces are the graph's fixed-size anchors: round accent dots like every other node (no polygon
+    shapes), with stronger accent tones (0.92 and 0.78) and always-shown labels."""
 
     def radius(self, degree, kind):
         return run("console.log(JSON.stringify(S.radiusOf(P.d, P.kind)));", {"d": degree, "kind": kind}, SIM)
@@ -1219,96 +1219,99 @@ class FrameShapes(unittest.TestCase):
     def test_machines_and_spaces_have_a_fixed_size_whatever_hangs_off_them(self):
         for kind in ("m", "s"):
             self.assertEqual(self.radius(1, kind), self.radius(40, kind), kind)
-        self.assertLess(self.radius(1, "s"), 6, "not a big dot: the shape is the highlight")
+        self.assertLess(self.radius(1, "s"), 6)
         self.assertLessEqual(self.radius(1, "m"), 6)
 
     def paint(self, kind):
         return run("console.log(JSON.stringify(S.framePaint(P.kind)));", {"kind": kind}, SHAPE)
 
-    def test_machines_are_diamonds_spaces_are_hexagons_and_others_are_not_framed(self):
-        self.assertEqual(self.paint("m")["shape"], "diamond")
-        self.assertEqual(self.paint("s")["shape"], "hexagon")
-        for kind in ("p", "r", "c", "h", "n", "a"):
-            self.assertIsNone(self.paint(kind)["shape"], kind)
+    def test_every_kind_is_a_unit_scale_round_dot_with_no_polygon_shape(self):
+        for kind in ("m", "s", "p", "r", "c", "h", "n", "a"):
+            fp = self.paint(kind)
+            self.assertIsNone(fp.get("shape"), kind)
+            self.assertEqual(fp["scale"], 1, kind)
+        has_points = run('console.log(JSON.stringify("shapePoints" in S));', {}, SHAPE)
+        self.assertFalse(has_points, "polygon helpers are gone from shape.js")
 
     def test_machines_and_spaces_are_drawn_stronger_and_always_labelled(self):
         m, s, p = self.paint("m"), self.paint("s"), self.paint("p")
         self.assertTrue(m["label"] and s["label"])
         self.assertFalse(p["label"])
-        self.assertGreater(m["tone"], s["tone"])
-        self.assertGreater(s["tone"], 0.55)
-        self.assertIsNone(p["tone"], "other nodes keep their own colour rules")
+        self.assertEqual(m["tone"], 0.92)
+        self.assertEqual(s["tone"], 0.78)
+        for kind in ("p", "r", "c", "h", "n", "a"):
+            self.assertIsNone(self.paint(kind)["tone"], kind)
 
-    def points(self, shape, r=10):
-        return run("console.log(JSON.stringify(S.shapePoints(P.shape, 100, 200, P.r)));", {"shape": shape, "r": r}, SHAPE)
-
-    def test_a_diamond_has_four_points_on_the_axes(self):
-        pts = self.points("diamond", 10)
-        self.assertEqual(sorted(map(tuple, pts)), sorted([(100, 190), (110, 200), (100, 210), (90, 200)]))
-
-    def test_a_hexagon_has_six_points_all_the_same_distance_from_the_centre(self):
-        pts = self.points("hexagon", 10)
-        self.assertEqual(len(pts), 6)
-        for x, y in pts:
-            self.assertAlmostEqual(((x - 100) ** 2 + (y - 200) ** 2) ** 0.5, 10, places=6)
-        self.assertEqual(len({(round(x, 6), round(y, 6)) for x, y in pts}), 6)
-
-    def test_an_unknown_shape_has_no_points(self):
-        self.assertEqual(self.points(None), [])
-
-    def test_main_draws_the_shapes_with_the_pure_helpers(self):
+    def test_every_node_renders_as_a_round_dot_with_no_polygons_or_squares(self):
         src = MAIN.read_text(encoding="utf-8")
-        self.assertIn("framePaint(n.kind)", src)
-        self.assertIn("shapePoints(", src)
-        self.assertIn("add_polygon(", src)
+        render = src[src.index("  render(cx) {"):]
+        self.assertIn("framePaint(n.kind)", render)
+        self.assertIn(".rounded_full()", render)
+        self.assertNotIn("add_polygon(", src)
+        self.assertNotIn("shapePoints", src)
+        self.assertNotIn('n.kind === "a" ? dot', render)
 
 
-class AgentHue(unittest.TestCase):
-    """Agents are coloured by the program that runs them, so claude, pi, codex and antigravity (agy) tell apart at a
-    glance. Only agents: a pane running a shell or an editor keeps the usual colour."""
+class AccentPaletteAndHoverStyle(unittest.TestCase):
+    """Obsidian-style graph presentation: clean theme-accent opacity palette (no per-program rainbow hues), 1 px canvas
+    cutout borders (foreground on hover/selection), status-coloured halos (working/blocked), 1.5 px accent-lit incident
+    links on hover, and chrome pill-backed hover/selection labels."""
 
-    def hue(self, node):
-        return run("console.log(JSON.stringify(S.agentHue(P.n)));", {"n": node}, SHAPE)
+    def tone(self, r):
+        return run("console.log(JSON.stringify(S.dotTone(P.r)));", {"r": r}, SHAPE)
 
-    def pane(self, key, **kw):
-        return {"kind": "p", "program": {"key": key, "agent": True, **kw}}
+    def test_dot_tone_steps_across_leaf_connected_and_hub_radii(self):
+        self.assertEqual(self.tone(3), 0.55, "base leaf radius")
+        self.assertEqual(self.tone(3.5), 0.55, "up to 3.5 stays at leaf opacity")
+        self.assertEqual(self.tone(4.8), 0.75, "connected node above 3.5")
+        self.assertEqual(self.tone(6.9), 0.75)
+        self.assertEqual(self.tone(7), 0.95, "hub radius >= 7")
+        self.assertEqual(self.tone(11), 0.95, "capped hub radius")
 
-    def test_the_four_named_agents_have_four_different_colours(self):
-        hues = [self.hue(self.pane(k)) for k in ("claude", "pi", "codex", "antigravity")]
-        self.assertTrue(all(isinstance(h, str) and h.startswith("#") for h in hues), hues)
-        self.assertEqual(len(set(hues)), 4)
+    def test_per_program_agent_hues_are_gone(self):
+        has_hue = run('console.log(JSON.stringify("agentHue" in S));', {}, SHAPE)
+        self.assertFalse(has_hue)
+        self.assertNotIn("AGENT_HUES", SHAPE.read_text(encoding="utf-8"))
+        self.assertNotIn("agentHue", MAIN.read_text(encoding="utf-8"))
 
-    def test_agy_and_claude_code_are_the_same_agents_as_antigravity_and_claude(self):
-        self.assertEqual(self.hue(self.pane("agy")), self.hue(self.pane("antigravity")))
-        self.assertEqual(self.hue(self.pane("claude-code")), self.hue(self.pane("claude")))
-        self.assertEqual(self.hue(self.pane("CLAUDE")), self.hue(self.pane("claude")))
-
-    def test_a_claude_sub_agent_is_claudes_colour_and_a_pi_run_is_pis(self):
-        self.assertEqual(self.hue({"kind": "c"}), self.hue(self.pane("claude")))
-        self.assertEqual(self.hue({"kind": "r"}), self.hue(self.pane("pi")))
-
-    def test_an_agent_the_table_does_not_know_uses_the_programs_own_colour_when_it_is_a_hex(self):
-        self.assertEqual(self.hue(self.pane("mystery", color="#12ab34")), "#12ab34")
-        self.assertIsNone(self.hue(self.pane("mystery", color="red")), "not a hex colour: the usual colour")
-        self.assertIsNone(self.hue(self.pane("mystery")))
-
-    def test_a_pane_that_is_not_an_agent_has_no_hue(self):
-        self.assertIsNone(self.hue({"kind": "p", "program": {"key": "claude", "agent": False}}), "a plain terminal")
-        self.assertIsNone(self.hue({"kind": "p", "program": {"key": "nvim", "agent": False}}))
-        self.assertIsNone(self.hue({"kind": "m"}))
-        self.assertIsNone(self.hue({"kind": "n"}))
-        self.assertIsNone(self.hue(None))
-
-    def test_a_foreground_pane_without_a_known_program_still_gets_the_default(self):
-        self.assertIsNone(self.hue({"kind": "p", "foreground": True, "program": {"key": "shell", "agent": False}}))
-
-    def test_main_colours_agents_by_hue_and_dims_the_idle_ones(self):
+    def test_node_color_uses_accent_opacity_ramp_and_dim_offline_machines(self):
         src = MAIN.read_text(encoding="utf-8")
-        body = src[src.index("  nodeColor(t, n, focusKey) {"):]
-        body = body[:body.index("\n  }\n")]
-        self.assertIn("agentHue(n)", body)
-        self.assertIn("alpha(hue, ", body)
-        self.assertLess(body.index("n.key === focusKey"), body.index("agentHue(n)"), "the Local focus accent still wins")
+        body = re.search(r"\n  nodeColor\(t, n, focusKey\) \{([\s\S]*?)\n  \}", src).group(1)
+        self.assertIn("n.key === focusKey", body)
+        self.assertIn('n.kind === "m" && n.down', body)
+        self.assertIn("t.dim", body)
+        self.assertIn("activityOf(n, Date.now())", body)
+        self.assertIn("framePaint(n.kind)", body)
+        self.assertIn("dotTone(", body)
+        self.assertIn("alpha(t.accent,", body)
+        self.assertNotIn("t.done", body)
+
+    def test_dots_carry_one_pixel_cutout_borders_that_highlight_on_hover_or_selection(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        self.assertIn(".border_1()", render)
+        self.assertRegex(render, r"border_color\([^)]*this\.hover === n\.key[^)]*this\.selected === n\.key[^)]*\?\s*t\.foreground\s*:\s*t\.canvas\)")
+
+    def test_status_halos_use_working_and_blocked_theme_colours(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        self.assertIn("haloDrawAlpha(", render)
+        self.assertRegex(render, r'st === "blocked"\s*\?\s*t\.blocked\s*:\s*t\.working')
+        self.assertIn("alpha(haloColor, ha)", render)
+
+    def test_hovered_incident_links_draw_at_1_5px_in_accent_above_1px_muted_links(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        muted_idx = render.index("alpha(t.muted, b.alpha)")
+        accent_idx = render.index("alpha(t.accent, b.alpha)")
+        nodes_idx = render.index(".children(nodes)")
+        self.assertLess(muted_idx, accent_idx, "1.5 px accent hover links are batched after 1 px muted links")
+        self.assertLess(accent_idx, nodes_idx, "links stay under the nodes")
+        self.assertRegex(render, r"layer\([^,]+,\s*b\.segs,\s*1,\s*alpha\(t\.muted,\s*b\.alpha\)\)")
+        self.assertRegex(render, r"layer\([^,]+,\s*b\.segs,\s*1\.5,\s*alpha\(t\.accent,\s*b\.alpha\)\)")
+
+    def test_hovered_and_selected_labels_render_in_a_centered_chrome_pill(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        self.assertRegex(render, r"\(this\.hover != null && this\.near\.has\(n\.key\)\)\s*\|\|\s*this\.selected === n\.key")
+        self.assertIn(".justify_center()", render)
+        self.assertIn(".max_w(lw).truncate().px(4).rounded(3).bg(alpha(t.chrome, 0.9))", render)
 
 
 class ToolbarRows(unittest.TestCase):
