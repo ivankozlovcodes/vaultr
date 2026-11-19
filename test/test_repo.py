@@ -247,6 +247,21 @@ class Repo(unittest.TestCase):
                 bad.append(f"{os.path.relpath(path, ROOT)}: {m.group(0).decode(errors='replace')}")
         self.assertEqual(bad, [])
 
+    def test_every_on_mouse_down_names_its_button(self):
+        with self.subTest("no prototype patch"):
+            self.assertNotIn("__patched_mouse_down", read("kit/kit.js"))
+        pat = re.compile(r"""\.on_mouse_down\(\s*(?!(?:"left"|"right"|"middle"|'left'|'right'|'middle')\s*,)""")
+        bad = []
+        for path in suffix(tracked(), ".js", ".mjs"):
+            rel = os.path.relpath(path, ROOT)
+            with open(path, encoding="utf-8") as f:
+                src = f.read()
+            for m in pat.finditer(src):
+                lineno = src.count("\n", 0, m.start()) + 1
+                bad.append(f"{rel}:{lineno}")
+        with self.subTest("explicit button"):
+            self.assertEqual(bad, [])
+
 
 if __name__ == "__main__":
     unittest.main()

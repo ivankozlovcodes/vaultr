@@ -169,7 +169,7 @@ export default class PaneHeader extends View {
           .bg(alpha(t.accent, 0.14)).hover((s) => s.bg(alpha(t.accent, 0.24)))
           .text_size(S.xs).font_medium().text_color(t.accent)
           .tooltip(tip("Exit Zen mode", "ob-tabs.zen"))
-          .on_mouse_down(stop(() => run("ob-tabs.zen")))
+          .on_mouse_down("left", stop(() => run("ob-tabs.zen")))
           .child(icon("minimize", 11, t.accent))
           .child("Zen")
       );

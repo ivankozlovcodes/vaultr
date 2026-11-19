@@ -138,18 +138,6 @@ export const stop = (fnOrE, maybeCx) => {
   (maybeCx || fnOrE)?.stop_propagation?.();
 };
 
-try {
-  const proto = Object.getPrototypeOf(h_flex());
-  if (proto && !proto.__patched_mouse_down) {
-    const orig = proto.on_mouse_down;
-    proto.on_mouse_down = function(btn, handler) {
-      if (typeof btn === "function") return orig.call(this, "left", btn);
-      return orig.call(this, btn, handler);
-    };
-    proto.__patched_mouse_down = true;
-  }
-} catch {}
-
 // Square icon button. opts: { id, icon, tip, size, iconSize, active, disabled, color, onClick, onRight }
 export function iconButton(o) {
   const t = theme();
