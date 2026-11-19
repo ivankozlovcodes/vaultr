@@ -3,7 +3,7 @@
 // Kit request: move these into kit.js (they only use kit and herdr).
 
 import { terminals, agents, panes, spaces, run, openOverlay, shared, setShared, focused, notify } from "herdr";
-import { machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, feed, liveRecords, base } from "./kit.js";
+import { machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, feed, liveRecords, base, followTarget } from "./kit.js";
 
 export const MONO = "JetBrains Mono";
 
@@ -31,11 +31,17 @@ export function sessionOf(address, ps = panes(), sp = spaces()) {
   return { address, machine: machineOf(address), term, agent, pane, tab, space, label, program, status, live: term ? term.state === "live" : Boolean(pane) };
 }
 
-// The session the right sidebar is about: ob.inspect when that terminal is live, else the focused one.
+// The session the right sidebar is about: the pinned one (ob.inspect) while it is live, else the last focused
+// main-window pane that holds an agent (kit/follow_target.js). The last one this panel followed is kept in shared "ob.follow".
 export function inspected() {
+  const f = focused();
+  const focus = f ? { pane: f.pane, terminal: f.terminal, agent: Boolean(f.terminal && agents().some((a) => a.address === f.terminal)) } : null;
   const pin = shared("ob.inspect");
-  if (pin?.terminal && terminals().some((t) => t.address === pin.terminal && t.state === "live")) return { address: pin.terminal, pinned: true };
-  return { address: focused()?.terminal ?? null, pinned: false };
+  const follow = shared("ob.follow") ?? {};
+  const last = follow["subagents"] ?? null;
+  const r = followTarget({ pinned: pin?.terminal ?? null, focused: focus, last, terminals: terminals(), wantAgent: true });
+  if (r.last !== last) setShared("ob.follow", { ...follow, subagents: r.last });
+  return { address: r.terminal, pinned: Boolean(pin?.terminal) && r.terminal === pin.terminal };
 }
 export function inspect(address) { setShared("ob.inspect", address ? { terminal: address, at: Date.now() } : null); }
 
@@ -100,8 +106,8 @@ export function claudeAll() {
   const recs = liveRecords();
   const out = (f?.claude ?? []).map((c) => {
     const r = recs.get(c.parent)?.[c.id];
-    // A local record is the say-so when there is one; a feed-only record is live as the feed (its scanner) says.
-    return { ...c, live: r ? r.state === "working" || r.state === "blocked" : Boolean(c.live), state: r?.state ?? null, desc: c.desc || r?.title || c.type };
+    // Live: the scan's transcript says it is running, or the terminal's live record says so.
+    return { ...c, live: Boolean(c.live) || Boolean(r && (r.state === "working" || r.state === "blocked")), state: r?.state ?? null, desc: c.desc || r?.title || c.type };
   });
   for (const [addr, rs] of recs) {
     for (const [id, r] of Object.entries(rs)) {
@@ -117,10 +123,18 @@ export function hcChildren(address) {
   return terminals().filter((t) => t.parent && t.state === "live" && (address == null || t.parent === address));
 }
 
-// ---------------------------------------------------------------- viewer windows (ob-outline)
-// props: { view: "log"|"transcript", machine, path, title, live, runKey }
+// ---------------------------------------------------------------- popups (ob-outline)
+// A log or transcript: a popup over the window, closed with Escape or its close button; "Move to main
+// window" in its header makes it a pane. props: { view: "log"|"transcript", machine, path, title, live, runKey }
 export function openViewer(p) {
   return openOverlay({ kind: "popup", mod: "ob-outline", width: 760, props: { view: p.view, machine: p.machine ?? null, path: p.path, title: p.title ?? base(p.path), live: Boolean(p.live), runKey: p.runKey ?? null } });
+}
+// A live hc child terminal: a centered dialog (modal, so a click outside does not close it) with its header
+// (ob-outline, view "attach") above the terminal itself. Escape goes to the terminal. Local terminals only.
+export function openAttach(p) {
+  return openOverlay({ kind: "dialog", modal: true, width: 0.75, height: 0.75, layout: { id: "attach", type: "column", children: [
+    { id: "attach-head", type: "block", size: { px: 36 }, content: { mod: "ob-outline", props: { view: "attach", title: p.title ?? p.terminal, parent: p.parent ?? null, machine: p.machine ?? null, terminal: p.terminal } } },
+    { id: "attach-term", type: "block", content: { terminal: p.terminal } } ] } });
 }
 
 export function copied(cx, what, text) {
