@@ -1,4 +1,4 @@
-// ob-props: Obsidian's Properties for a session (SPEC 8.C3). Target: ob.inspect's terminal while pinned, else the
+// ob-props: Obsidian's Properties for a session. Target: ob.inspect's terminal while pinned, else the
 // last focused main pane that holds a terminal (kit/follow_target.js); before any, the focused mod pane (pane facts only).
 // Sections: Session, Location, Process, Labels, Relations, Usage, Session file. Usage reads the followed agent's
 // transcript with usage.py (exec, off the UI path) on target change and every 10 s; usage.js does the arithmetic. Key column 96 px; hover a

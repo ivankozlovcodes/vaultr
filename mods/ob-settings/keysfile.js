@@ -1,5 +1,5 @@
 // keysfile.js: safe, minimal edits of keys.json text. Pure (no herdr imports) so it runs under node
-// for the offline tests ($S/obsidian-layout/test-keysfile.mjs).
+// for the offline tests (test/test_ob_settings.py).
 //
 // The rule: only the one section being edited is re-rendered; every other byte of the file stays as
 // it was (other sections, unknown top-level content, key order, escapes like "send:\u0017").

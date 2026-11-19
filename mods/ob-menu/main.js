@@ -1,5 +1,5 @@
 // ob-menu: the context menu every ob-* mod opens with kit.openMenu(items). A popup at the pointer.
-// props: { items: Item[], title?: string, overlay }  (Item: see kit.openMenu / SPEC 4)
+// props: { items: Item[], title?: string, overlay }  (Item: see openMenu in kit/kit.js)
 // Item extras understood here (additive): header: "Section" (a small section title row),
 // dot: "<theme color>" (a status dot in place of the icon), indent: true (one step in).
 // ↑/↓ move, Home/End jump, Enter runs, Esc closes. Disabled items, headers and separators are skipped.

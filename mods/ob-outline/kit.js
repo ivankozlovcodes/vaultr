@@ -1,6 +1,6 @@
 // kit.js: shared look and helpers for every ob-* mod (the Obsidian layout).
-// MASTER COPY: $S/kit/kit.js. sync.sh copies it into mods/ob-*/kit.js and fills in MOD.
-// Never edit a copy: it is overwritten. Ask the architect for changes. See SPEC.md section 4.
+// MASTER COPY: kit/kit.js. kit/sync.sh copies it into mods/ob-*/kit.js and fills in MOD.
+// Never edit a mod's copy directly: kit/sync.sh overwrites it from kit/kit.js.
 
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
@@ -389,7 +389,7 @@ export function isShown(root, id) {
   }
   return true;
 }
-// The node ids of the obsidian layout (SPEC section 2). Use these, never string literals.
+// The node ids of layouts/vaultr.json. Use these, never string literals.
 export const NODE = {
   left: "ob-left", leftTop: "ob-lt", leftTopStrip: "ob-lt-strip", leftTopStack: "ob-lt-stack",
   leftBottomStack: "ob-lb-stack", footer: "ob-footer",
@@ -528,7 +528,7 @@ export function toggleBookmark(item) {
 }
 
 // ---------------------------------------------------------------- sub-agents (shared "ob.subagents")
-// Written only by ob-feed (SPEC section 7). Readers use these helpers, never the raw key.
+// Written only by mods/ob-feed/main.js. Readers use these helpers, never the raw key.
 // feed(): { v, at, machines: { [name|"local"]: { ok, at, error, ms } }, runs: Run[], claude: ClaudeAgent[] } or null.
 // Run: { key, machine, id, short, mode, state, live, startedAt, endedAt, lastUpdate, cwd, parent (address|null),
 //        parentGuess, parentSession, tokens, cost, turns, toolCount, error, log, dir, steps: Step[] }

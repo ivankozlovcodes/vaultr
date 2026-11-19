@@ -231,6 +231,18 @@ class Repo(unittest.TestCase):
             with self.subTest(path=rel):
                 self.assertTrue(os.path.exists(os.path.join(ROOT, rel)), f"missing {rel} named in NOTICE")
 
+    def test_no_dangling_spec_or_architect_references(self):
+        pat = rb"SPEC\.md|SPEC[ ]section|\bSPEC\s+(?:[0-9]|U4)|Ask[ ]the[ ]architect|\$[S]/"
+        bad = []
+        for path in tracked():
+            if path.endswith((".png", ".jpg", ".gif", ".ico", ".woff", ".woff2", ".ttf")):
+                continue
+            with open(path, "rb") as f:
+                data = f.read()
+            for m in re.finditer(pat, data):
+                bad.append(f"{os.path.relpath(path, ROOT)}: {m.group(0).decode(errors='replace')}")
+        self.assertEqual(bad, [])
+
 
 if __name__ == "__main__":
     unittest.main()

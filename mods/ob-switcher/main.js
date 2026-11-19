@@ -324,7 +324,7 @@ export default class Switcher extends View {
   }
 
   // Move mode: reorder the active tab in its space; other spaces are listed but Herdr has no
-  // command to move a tab between spaces (SPEC U4), so they are disabled with that hint.
+  // command to move a tab between spaces, so they are disabled with that hint.
   moveRows(cur, query) {
     const out = [];
     const space = cur.space;

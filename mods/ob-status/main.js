@@ -1,4 +1,4 @@
-// ob-status: the status bar of the obsidian layout (26 px, chrome, top hairline). SPEC.md 8.A4.
+// ob-status: the status bar of the obsidian layout (26 px, chrome, top hairline).
 // Right-aligned like Obsidian's, 11 px muted text, items 14 px apart; when the bar is narrow
 // items drop from the left: key hint · machine · folder · branch · agents by status · zoom.
 // The sub-agent count is the next block's (ob-feed).

@@ -1,5 +1,5 @@
 // ob-pane: the pane header of the obsidian layout (one copy per pane; props { pane, terminal }).
-// SPEC.md 8.A3. Obsidian's view header: back / forward on the left, the breadcrumb
+// Obsidian's view header: back / forward on the left, the breadcrumb
 // "machine / space / tab / pane" centered (left-aligned when narrow), and on the right the
 // sub-agent badge, the status (or "Needs you"), split / zoom / close on hover and "more" (⋮).
 // Every breadcrumb segment opens a menu of its siblings. A click on the header focuses the pane;
