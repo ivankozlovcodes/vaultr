@@ -104,6 +104,9 @@ class Repo(unittest.TestCase):
                 with open(os.path.join(ROOT, "kit", "hidden.js"), "rb") as a, \
                         open(os.path.join(MODS, m, "hidden.js"), "rb") as b:
                     self.assertEqual(a.read(), b.read(), "hidden.js: run kit/sync.sh; never edit a mod's copy")
+                with open(os.path.join(ROOT, "kit", "attention.js"), "rb") as a, \
+                        open(os.path.join(MODS, m, "attention.js"), "rb") as b:
+                    self.assertEqual(a.read(), b.read(), "attention.js: run kit/sync.sh; never edit a mod's copy")
                 with open(os.path.join(ROOT, "kit", "follow_target.js"), "rb") as a, \
                         open(os.path.join(MODS, m, "follow_target.js"), "rb") as b:
                     self.assertEqual(a.read(), b.read(), "follow_target.js: run kit/sync.sh; never edit a mod's copy")

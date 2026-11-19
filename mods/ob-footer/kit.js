@@ -74,6 +74,52 @@ export function updateHidden(mutator) {
   return next;
 }
 
+// Pure attention rules (kit/attention.js): who needs you, and dismissed "Needs you" entries. A dismissal changes
+// attention only (sections, counts, badges, pills); the pane header, Properties and Outline show the real status.
+export {
+  attentionWord, attentionRank, attentionCounts, isNeedsYou, dismissStamp, normDismissed, isDismissed,
+  attentionStatus, patchDismissed, pruneDismissed,
+} from "./attention.js";
+import { attentionStatus, dismissStamp, normDismissed, isDismissed, patchDismissed, pruneDismissed } from "./attention.js";
+
+// Dismissals { [terminal address]: stamp }: shared as ob.dismissed and kept in storage, like ob.hidden.
+export function getDismissed() {
+  let d = shared("ob.dismissed");
+  if (!d) {
+    d = lsGet("dismissed", null);
+    if (d) setShared("ob.dismissed", d);
+  }
+  return normDismissed(d);
+}
+
+export function updateDismissed(mutator) {
+  const next = normDismissed(typeof mutator === "function" ? mutator(getDismissed()) : mutator);
+  setShared("ob.dismissed", next);
+  lsSet("dismissed", next);
+  return next;
+}
+
+// Dismiss (on) the report `status` of `term` at `address`, or restore it (off).
+export function setDismissed(address, on, status = null, term = null) {
+  return updateDismissed((d) => patchDismissed(d, address, on ? dismissStamp(status, term) : null));
+}
+
+// Drops the dismissals whose terminal is gone or reports something new. current: Map address -> its stamp now.
+// An empty map (nothing listed yet) drops nothing.
+export function pruneDismissedNow(current) {
+  const cur = getDismissed();
+  if (!current?.size || !Object.keys(cur).length) return cur;
+  const next = pruneDismissed(cur, current);
+  return Object.keys(next).length === Object.keys(cur).length ? cur : updateDismissed(next);
+}
+
+// terminals() by address: a dismissal stamp reads the terminal's status_ms and turn.
+export function terminalsByAddress(ts = terminals()) {
+  const m = new Map();
+  for (const t of ts ?? []) if (t?.address) m.set(t.address, t);
+  return m;
+}
+
 // ---------------------------------------------------------------- sizes (design px at zoom 1)
 export const S = {
   strip: 40,        // top strip of every column (icon tabs, tab bar)
@@ -144,6 +190,35 @@ const STATUS_MAP = {
 export function normStatus(s) { return s == null ? null : STATUS_MAP[s] ?? "idle"; }
 export const RANK = { blocked: 5, failed: 4, done: 3, working: 2, ok: 1, idle: 1, stopped: 0 };
 export function worst(list) { return list.reduce((m, s) => ((RANK[normStatus(s)] ?? -1) > (RANK[normStatus(m)] ?? -1) ? s : m), null); }
+
+// The status for attention (sections, counts, badges, pills): the agent's or pane's own status, idle while its
+// current report is dismissed. tmap: terminalsByAddress(); dis: getDismissed(). The pane header, Properties and
+// Outline keep reading a.status / p.status.
+export function agentAttention(a, tmap = null, dis = null) {
+  if (!a) return null;
+  return attentionStatus(dis, a.address, a.status ?? null, tmap?.get(a.address));
+}
+export function paneAttention(p, tmap = null, dis = null) {
+  if (!p) return null;
+  if (!p.terminal) return p.status ?? null;
+  return attentionStatus(dis, p.terminal, p.status ?? null, tmap?.get(p.terminal));
+}
+// A tab's or space's status for attention: Herdr's own, unless one of its panes has a dismissed report; then the
+// worst of its panes' attention statuses.
+const anyDismissed = (mine, tmap, dis) => mine.some((p) => p.terminal && isDismissed(dis, p.terminal, p.status, tmap?.get(p.terminal)));
+export function tabAttention(tab, ps, tmap = null, dis = null) {
+  if (!tab) return null;
+  const mine = (ps ?? []).filter((p) => p.tab === tab.id);
+  if (!dis || !anyDismissed(mine, tmap, dis)) return tab.status ?? null;
+  return worst(mine.map((p) => paneAttention(p, tmap, dis)).filter(Boolean));
+}
+export function spaceAttention(space, ps, tmap = null, dis = null) {
+  if (!space) return null;
+  const tabs = space.tabs ?? [];
+  const ids = new Set(tabs.map((tb) => tb.id));
+  if (!dis || !anyDismissed((ps ?? []).filter((p) => ids.has(p.tab)), tmap, dis)) return space.status ?? null;
+  return worst(tabs.map((tb) => tabAttention(tb, ps, tmap, dis)).filter(Boolean));
+}
 
 // The status mark (12px box): working = spinning ring, blocked = solid dot that pulses,
 // done = solid dot, idle = hollow ring, ok = check, failed = x-circle, stopped = dim ring, null = empty box.
