@@ -7,7 +7,9 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = home_guard.ROOT
 MOD = os.path.join(ROOT, "mods", "ob-agents")
@@ -97,6 +99,75 @@ class PanelNames(unittest.TestCase):
                     src = f.read()
                 self.assertNotIn(old, src)
                 self.assertIn("Outline", src)
+
+
+def run_main(body, titles=None):
+    """Import a copy of ob-agents/main.js in node with gpui/herdr stubbed and kit.js providing real cleanTitle plus
+    sessionTitleOf backed by `titles` ({address: title})."""
+    folder = tempfile.mkdtemp(prefix="ob-agents-main-")
+    try:
+        shutil.copy(os.path.join(MOD, "names.js"), os.path.join(folder, "names.js"))
+        with open(MAIN, encoding="utf-8") as f:
+            src = f.read()
+        src = (src.replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                  .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                  .replace('from "herdr"', 'from "./herdr.js"')
+               + "\nexport { leadPanes, title };\n")
+        Path(folder, "main.js").write_text(src, encoding="utf-8")
+        Path(folder, "gpui-kit.js").write_text("export class View {}\nexport const div = () => null;\n", encoding="utf-8")
+        Path(folder, "gpui-base.js").write_text(
+            "export const v_flex = () => null;\nexport const h_flex = () => null;\n"
+            "export const ScrollHandle = { new: () => ({}) };\nexport const Scrollbar = () => null;\n",
+            encoding="utf-8",
+        )
+        herdr_fns = ["agents", "panes", "spaces", "focused", "run", "theme", "props", "nextCommand", "settings", "setAgentOrder", "shared"]
+        Path(folder, "herdr.js").write_text("".join(f"export const {n} = () => [];\n" for n in herdr_fns), encoding="utf-8")
+        kit_stubs = ["S", "icon", "programIcon", "iconButton", "treeRow", "sectionHeader", "emptyState", "openMenu",
+                     "statusMark", "needsYou", "normStatus", "takeFocus", "machineOf", "isBookmarked", "toggleBookmark",
+                     "mainAgents", "placedTerminals", "getHidden", "isHidden", "hideItem", "unhideItem", "hiddenSummary",
+                     "dismissedSet", "needsYouShown", "dismissNeedsYou", "restoreNeedsYou", "pruneDismissed"]
+        Path(folder, "kit.js").write_text(
+            'export { cleanTitle } from "./names.js";\n'
+            + "".join(f"export const {n} = () => null;\n" for n in kit_stubs)
+            + f"const TITLES = {json.dumps(titles or {})};\n"
+            + "export const sessionTitleOf = (addr) => TITLES[addr] ?? null;\n",
+            encoding="utf-8",
+        )
+        code = (f'import * as M from "{Path(folder, "main.js").as_uri()}";\n'
+                f'process.stdout.write(JSON.stringify((() => {{ {body} }})()));\n')
+        return run_node(code)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+class LeadPaneSessionTitles(unittest.TestCase):
+    """ob-agents names an unnamed or program-named tab by its lead pane's sessionTitleOf(), cleaned via cleanTitle."""
+
+    def test_unnamed_or_program_named_tab_uses_session_title_even_on_wrapped_shell_pane(self):
+        got = run_main(
+            'const shellLead = { terminal: "t3c", title: "~/git/vaultr", program: { name: "zsh", shell: true } };'
+            'const agentLead = { terminal: "t3d", title: "Claude Code", program: { name: "Claude Code", key: "claude", agent: true } };'
+            'return ['
+            '  M.title({ named: false, name: "1" }, shellLead),'
+            '  M.title({ named: true, name: "Claude Code" }, agentLead),'
+            '  M.title({ named: true, name: "release-prep" }, agentLead),'
+            '];',
+            {"t3c": "✦ Audit Session Sync", "t3d": "✳ Stack Rebuild"},
+        )
+        self.assertEqual(got, ["Audit Session Sync", "Stack Rebuild", "release-prep"])
+
+    def test_live_title_fallback_cleans_leading_symbols_and_wiring_imports_cleanTitle(self):
+        got = run_main(
+            'const lead = { terminal: "t9", title: "✦ · Draft notes", program: { name: "Claude Code", key: "claude", agent: true } };'
+            'return M.title({ named: false, name: "1" }, lead);',
+            {},
+        )
+        self.assertEqual(got, "Draft notes")
+        with open(MAIN, encoding="utf-8") as f:
+            src = f.read()
+        kit_imports = src.split('from "./kit.js"')[0]
+        self.assertIn("cleanTitle", kit_imports)
+        self.assertIn("sessionTitleOf", kit_imports)
 
 
 if __name__ == "__main__":

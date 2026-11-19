@@ -296,6 +296,14 @@ class SessionTitles(unittest.TestCase):
                        'return [...m.entries()];')
         self.assertEqual(r, [])
 
+    def test_leading_symbols_are_cleaned_and_symbol_only_titles_are_dropped(self):
+        r = run_titles('const tabOf = new Map([["t-1", "tab-1"], ["t-2", "tab-1"], ["t-3", "tab-1"]]);'
+                       'return T.sessionTitles(tabOf, {'
+                       '  agents: [{ address: "t-1", title: "✦ ✳ herdr-trials" }],'
+                       '  terminals: [{ address: "t-2", title: " · " }, { address: "t-3", title: "~/git/vaultr" }],'
+                       '}).get("tab-1");')
+        self.assertEqual(r, ["herdr-trials", "~/git/vaultr"])
+
     def test_bestTitle_returns_the_matching_title(self):
         r = run_titles('return T.bestTitle("herdr-trials", ["Claude Code", "herdr-trials"], SUB);')
         self.assertEqual(r["title"], "herdr-trials")

@@ -18,7 +18,7 @@ export { placedTerminals, mainAgents } from "./agents.js";
 
 // Pure pane naming (kit/names.js): paneLabel(pane, ctx), shortFolder(folder, home). paneLabel is also used here.
 import { paneLabel } from "./names.js";
-export { paneLabel, shortFolder, paneSecondary } from "./names.js";
+export { paneLabel, shortFolder, paneSecondary, cleanTitle } from "./names.js";
 
 // The one fuzzy matcher (kit/fuzzy.js, fzf-style): fuzzy(q, text) -> { score, hits } | null, matchQuery for spans.
 export { fuzzy, matchQuery } from "./fuzzy.js";

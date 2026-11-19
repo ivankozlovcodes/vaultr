@@ -2,13 +2,15 @@
 // panes (Claude Code's session title, a pi session's name, a terminal's title) and the session names the sub-agent
 // feed knows for them. Pure functions (no Herdr or gpui imports, so test/ runs them under node).
 
+import { cleanTitle } from "./names.js";
+
 // tabOf: Map terminal address -> tab id (the panes that show a terminal). agents: agents(). terminals: terminals().
 // terms: the feed's terms, { [address]: { name } }. -> Map tab id -> [title, ...] (trimmed, no repeats).
 export function sessionTitles(tabOf, { agents = [], terminals = [], terms = {} } = {}) {
   const out = new Map();
   const note = (address, title) => {
     const tab = tabOf.get(address);
-    const text = typeof title === "string" ? title.trim() : "";
+    const text = cleanTitle(title);
     if (tab == null || !text) return;
     const list = out.get(tab) ?? [];
     if (!list.includes(text)) list.push(text);
