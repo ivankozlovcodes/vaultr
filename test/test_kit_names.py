@@ -189,6 +189,12 @@ class CleanTitleAndWrappedAgent(unittest.TestCase):
             "Audit Session Sync",
         )
 
+    def test_ob_pane_uses_paneLabelOf_instead_of_legacy_paneName(self):
+        with open(os.path.join(ROOT, "mods", "ob-pane", "main.js"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("paneLabelOf(", src)
+        self.assertNotIn("paneName(", src)
+
 
 if __name__ == "__main__":
     unittest.main()
