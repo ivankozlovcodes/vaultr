@@ -48,7 +48,8 @@ class MenuAnchor(unittest.TestCase):
 class HotkeysPicker(unittest.TestCase):
     def test_scope_menu_is_anchored_to_its_button(self):
         # The scope button records its own bounds on press and opens the menu at them, not at the pointer.
-        src = open(HOTKEYS, encoding="utf-8").read()
+        with open(HOTKEYS, encoding="utf-8") as f:
+            src = f.read()
         start = src.index('id("hk-scope")')
         block = src[start:src.index("child(icon(\"layers\"", start)]
         self.assertIn("on_mouse_down", block)
@@ -84,7 +85,8 @@ class VaultRules(unittest.TestCase):
 
     def test_the_rules_module_has_only_the_vault_field(self):
         # The one-field tab: no parser for the daily note keys or the editor command, and no editor splitting.
-        src = open(RULES, encoding="utf-8").read()
+        with open(RULES, encoding="utf-8") as f:
+            src = f.read()
         self.assertNotIn("parseValue", src)
         self.assertNotIn("split(", src)
         self.assertNotIn("editor", src.lower())
@@ -100,19 +102,22 @@ class VaultRules(unittest.TestCase):
         self.assertIsNone(rules("vaultProblem", "/yes", True))
 
     def test_unset_field_says_the_notes_are_off(self):
-        src = open(os.path.join(ROOT, "mods", "ob-settings", "vault.js"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "mods", "ob-settings", "vault.js"), encoding="utf-8") as f:
+            src = f.read()
         self.assertIn("Not set: the Notes panel and daily notes are off until you set it.", src)
         self.assertNotIn("Not set. In effect", src)
         self.assertNotIn("registeredVault", src)
         self.assertNotIn("fallback", src)  # no vault is used when the field is unset
 
     def test_placeholder_is_marked_as_an_example(self):
-        src = open(os.path.join(ROOT, "mods", "ob-settings", "vault.js"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "mods", "ob-settings", "vault.js"), encoding="utf-8") as f:
+            src = f.read()
         self.assertIn('"e.g. ~/Notes"', src)
         self.assertNotIn('"~/Notes"', src)
 
     def test_vault_tab_builds_only_the_vault_field(self):
-        src = open(os.path.join(ROOT, "mods", "ob-settings", "vault.js"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "mods", "ob-settings", "vault.js"), encoding="utf-8") as f:
+            src = f.read()
         for gone in ("dailyFolder", "dailyFormat", "dailyTemplate", 'key: "editor"', "parseValue"):
             self.assertNotIn(gone, src)
         self.assertIn('KEY = "vault"', src)
@@ -217,7 +222,8 @@ ZEN_IN_PANEL = """{
 class ScopePicker(unittest.TestCase):
     def test_default_scope_is_the_vaultr_layout_and_is_not_remembered(self):
         self.assertEqual(keysfile_js("return m.DEFAULT_SCOPE;", {}), "layout:vaultr")
-        src = open(HOTKEYS, encoding="utf-8").read()
+        with open(HOTKEYS, encoding="utf-8") as f:
+            src = f.read()
         self.assertIn("this.scope = DEFAULT_SCOPE", src)
         self.assertNotIn('ls("scope"', src)
         self.assertNotIn('lsSet("scope"', src)
@@ -236,7 +242,8 @@ class ScopePicker(unittest.TestCase):
         self.assertIn("weird", keysfile_js("return m.scopeInfo(A.s).line;", {"s": "weird"}))
 
     def test_the_header_and_picker_use_the_description(self):
-        src = open(HOTKEYS, encoding="utf-8").read()
+        with open(HOTKEYS, encoding="utf-8") as f:
+            src = f.read()
         self.assertIn("scopeInfo(", src)
 
 
@@ -308,7 +315,8 @@ class PanelScopes(unittest.TestCase):
 
 class PanelScopeWiring(unittest.TestCase):
     def test_hotkeys_uses_the_pure_rules_for_the_warning_tag_and_moves(self):
-        src = open(HOTKEYS, encoding="utf-8").read()
+        with open(HOTKEYS, encoding="utf-8") as f:
+            src = f.read()
         for needle in ("scopeWarning(", "panelOnlyTag(", "listedIn(", "moveKey(", "Add to Vaultr layout",
                        "Move to Vaultr layout", "scopeInfo("):
             self.assertIn(needle, src)

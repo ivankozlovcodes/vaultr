@@ -8,8 +8,10 @@ import subprocess
 import unittest
 
 ROOT = home_guard.ROOT
-KEYS = json.load(open(os.path.join(ROOT, "keys", "vaultr-keys.json")))
-REGISTRY = open(os.path.join(ROOT, "mods", "ob-settings", "registry.js"), encoding="utf-8").read()
+with open(os.path.join(ROOT, "keys", "vaultr-keys.json"), encoding="utf-8") as f:
+    KEYS = json.load(f)
+with open(os.path.join(ROOT, "mods", "ob-settings", "registry.js"), encoding="utf-8") as f:
+    REGISTRY = f.read()
 
 
 class SessionSearchKey(unittest.TestCase):

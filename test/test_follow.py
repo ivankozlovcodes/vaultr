@@ -114,12 +114,14 @@ class SubagentsRule(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is not installed: the wiring checks still run")
 class Wiring(unittest.TestCase):
     def test_kit_re_exports_follow_targets(self):
-        self.assertRegex(open(KIT, encoding="utf-8").read(), r'export \{[^}]*followTarget[^}]*\} from "\./follow_target\.js"')
+        with open(KIT, encoding="utf-8") as f:
+            self.assertRegex(f.read(), r'export \{[^}]*followTarget[^}]*\} from "\./follow_target\.js"')
 
     def test_both_panels_call_the_kit_rule(self):
         for mod in ("ob-props", "ob-outline"):
             with self.subTest(mod=mod):
-                src = open(os.path.join(MODS, mod, "obc.js"), encoding="utf-8").read()
+                with open(os.path.join(MODS, mod, "obc.js"), encoding="utf-8") as f:
+                    src = f.read()
                 self.assertIn("followTarget(", src)
                 self.assertRegex(src, r'import \{[^}]*followTarget[^}]*\} from "\./kit\.js"')
 
@@ -132,7 +134,8 @@ class Wiring(unittest.TestCase):
                 if not name.endswith((".js", ".mjs")) or name == "gpui-kit.d.ts":
                     continue
                 with self.subTest(file=f"{mod}/{name}"):
-                    self.assertNotIn("paneFollows", open(os.path.join(d, name), encoding="utf-8").read())
+                    with open(os.path.join(d, name), encoding="utf-8") as f:
+                        self.assertNotIn("paneFollows", f.read())
 
 
 if __name__ == "__main__":
