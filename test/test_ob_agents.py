@@ -120,12 +120,14 @@ def run_main(body, titles=None):
             "export const ScrollHandle = { new: () => ({}) };\nexport const Scrollbar = () => null;\n",
             encoding="utf-8",
         )
-        herdr_fns = ["agents", "panes", "spaces", "focused", "run", "theme", "props", "nextCommand", "settings", "setAgentOrder", "shared"]
+        herdr_fns = ["agents", "panes", "spaces", "terminals", "focused", "run", "theme", "props", "nextCommand", "settings", "setAgentOrder", "shared"]
         Path(folder, "herdr.js").write_text("".join(f"export const {n} = () => [];\n" for n in herdr_fns), encoding="utf-8")
         kit_stubs = ["S", "icon", "programIcon", "iconButton", "treeRow", "sectionHeader", "emptyState", "openMenu",
                      "statusMark", "needsYou", "normStatus", "takeFocus", "machineOf", "isBookmarked", "toggleBookmark",
                      "mainAgents", "placedTerminals", "normHidden", "isMachineHidden", "isSpaceHidden", "isTabHidden",
                      "getHidden", "isHidden", "hideItem", "unhideItem", "hiddenSummary",
+                     "agentAttention", "attentionRank", "attentionCounts", "isNeedsYou", "isDismissed", "dismissStamp",
+                     "getDismissed", "setDismissed", "pruneDismissedNow", "terminalsByAddress",
                      "dismissedSet", "needsYouShown", "dismissNeedsYou", "restoreNeedsYou", "pruneDismissed"]
         Path(folder, "kit.js").write_text(
             'export { cleanTitle } from "./names.js";\n'

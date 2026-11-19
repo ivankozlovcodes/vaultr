@@ -181,5 +181,28 @@ class KitWiring(unittest.TestCase):
         self.assertIn("export function spaceAttention(space, ps, tmap = null, dis = null)", self.kit)
 
 
+class AgentsWiring(unittest.TestCase):
+    def setUp(self):
+        self.src = read("mods", "ob-agents", "main.js")
+
+    def test_sections_ranks_and_counts_come_from_the_shared_rule(self):
+        self.assertNotRegex(self.src, r"const RANK = \{")
+        self.assertIn("attentionRank(", self.src)
+        self.assertIn("attentionCounts(", self.src)
+        self.assertIn("agentAttention(a, tmap, dis)", self.src)
+
+    def test_durations_follow_the_reported_status_not_the_dismissal(self):
+        self.assertIn('const s = a.real === "done" ? "idle" : a.real;', self.src)
+
+    def test_the_row_menu_and_a_hover_button_dismiss_and_restore(self):
+        self.assertIn('"Dismiss"', self.src)
+        self.assertIn('"Restore"', self.src)
+        self.assertIn("ob-agents.dismiss:", self.src)
+        self.assertIn("iconButton({ id: `dis-${a.address}`", self.src)
+
+    def test_stale_dismissals_are_pruned(self):
+        self.assertIn("pruneDismissedNow(", self.src)
+
+
 if __name__ == "__main__":
     unittest.main()
