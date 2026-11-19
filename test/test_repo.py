@@ -120,6 +120,10 @@ class Repo(unittest.TestCase):
                     with open(os.path.join(ROOT, "kit", "icons", name), "rb") as a, \
                             open(os.path.join(MODS, m, "icons", name), "rb") as b:
                         self.assertEqual(a.read(), b.read(), f"icons/{name}")
+        for m in ("ob-graph", "ob-outline", "ob-props"):
+            with open(os.path.join(ROOT, "kit", "obc.js"), "rb") as a, \
+                    open(os.path.join(MODS, m, "obc.js"), "rb") as b:
+                self.assertEqual(a.read(), b.read(), f"{m}/obc.js: run kit/sync.sh; never edit a mod's copy")
         with open(os.path.join(ROOT, "kit", "scan_pi.py"), "rb") as a, \
                 open(os.path.join(MODS, "ob-feed", "scan_pi.py"), "rb") as b:
             self.assertEqual(a.read(), b.read(), "ob-feed/scan_pi.py")

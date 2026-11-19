@@ -1,7 +1,8 @@
 #!/bin/sh
-# sync.sh [HOME]: copy the kit master (kit.js, agents.js, names.js, fuzzy.js, follow_target.js, feed_age.js, ticker.js, touches.js, icons/, scan_pi.py) into every mods/ob-*/ folder.
+# sync.sh [HOME]: copy the kit master (kit.js, obc.js, agents.js, names.js, fuzzy.js, follow_target.js, feed_age.js, ticker.js, touches.js, icons/, scan_pi.py) into every mods/ob-*/ folder.
 #   HOME defaults to the repo root. Builders pass their own dev home.
 #   kit.js gets `export const MOD = "<folder>"`; icons go to mods/<folder>/icons/;
+#   obc.js goes to mods/ob-graph/, mods/ob-outline/, and mods/ob-props/ only;
 #   scan_pi.py goes to mods/ob-feed/ only. Copies are overwritten: never edit them.
 #   Safe to run any time; refuses to touch ~/.config/herdr-app unless OB_SYNC_LIVE=1.
 set -eu
@@ -31,6 +32,9 @@ for dir in "$HOME_DIR"/mods/ob-*/; do
   for f in "$KIT"/icons/*.svg; do
     cmp -s "$f" "$dir/icons/$(basename "$f")" 2>/dev/null || cp "$f" "$dir/icons/"
   done
+  case "$name" in
+    ob-graph|ob-outline|ob-props) cmp -s "$KIT/obc.js" "$dir/obc.js" 2>/dev/null || cp "$KIT/obc.js" "$dir/obc.js" ;;
+  esac
   if [ "$name" = ob-feed ]; then cmp -s "$KIT/scan_pi.py" "$dir/scan_pi.py" 2>/dev/null || cp "$KIT/scan_pi.py" "$dir/scan_pi.py"; fi
   n=$((n + 1))
 done

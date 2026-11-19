@@ -17,6 +17,7 @@ HELPER = MOD / "usage.py"
 FIX = Path(ROOT, "test", "fixtures", "ob-props")
 CLAUDE = FIX / "claude-session.jsonl"
 PI = FIX / "pi-session.jsonl"
+FOLLOW = Path(ROOT, "kit", "follow_target.js")
 NODE = shutil.which("node")
 
 
@@ -164,28 +165,47 @@ class Reader(unittest.TestCase):
         self.assertEqual(d["turns"][-1]["id"], "msg_0299")   # the newest turn is always read
 
 
-def run_obc(body, feed, records):
+def run_obc(body, feed=None, records=None):
     """Import a copy of obc.js in node with herdr and kit.js stubbed: feed() gives `feed`, liveRecords() gives
-    `records` ({address: {id: record}}). Runs `body` (JS with O = the module) and returns its JSON."""
-    folder = tempfile.mkdtemp(prefix="ob-props-obc-")
-    try:
+    `records` ({address: {id: record}}). Runs `body` (JS with H = herdr, O = the module) and returns its JSON."""
+    if not NODE:
+        raise unittest.SkipTest("node is not installed")
+    with tempfile.TemporaryDirectory(prefix="ob-props-obc-") as folder:
         src = (MOD / "obc.js").read_text(encoding="utf-8").replace('from "herdr"', 'from "./herdr.js"')
         Path(folder, "obc.js").write_text(src, encoding="utf-8")
-        names = ["terminals", "agents", "panes", "spaces", "run", "openOverlay", "shared", "setShared", "focused", "notify"]
-        Path(folder, "herdr.js").write_text("".join(f"export const {n} = () => [];\n" for n in names), encoding="utf-8")
-        kit = ["machineOf", "tabLabel", "paneName", "dur", "ago", "fmtTokens", "fmtCost", "normStatus", "copyText", "base", "followTarget"]
+        Path(folder, "herdr.js").write_text(
+            "const st = { terminals: [], agents: [], panes: [], spaces: [], focused: null, shared: {} };\n"
+            "export const __set = (patch) => Object.assign(st, patch);\n"
+            "export const terminals = () => st.terminals;\n"
+            "export const agents = () => st.agents;\n"
+            "export const panes = () => st.panes;\n"
+            "export const spaces = () => st.spaces;\n"
+            "export const focused = () => st.focused;\n"
+            "export const shared = (k) => st.shared[k];\n"
+            "export const setShared = (k, v) => { st.shared[k] = v; };\n"
+            "export const run = () => null;\n"
+            "export const openOverlay = () => null;\n"
+            "export const notify = () => null;\n",
+            encoding="utf-8",
+        )
+        kit = ["machineOf", "tabLabel", "paneName", "dur", "ago", "fmtTokens", "fmtCost", "normStatus", "copyText", "base"]
         Path(folder, "kit.js").write_text(
-            "".join(f"export const {n} = () => null;\n" for n in kit)
+            'export const MOD = "ob-props";\n'
+            f"export {{ followTarget }} from {json.dumps(FOLLOW.as_uri())};\n"
+            + "".join(f"export const {n} = () => null;\n" for n in kit)
             + f"export const feed = () => ({json.dumps(feed)});\n"
-            + f"export const liveRecords = () => new Map(Object.entries({json.dumps(records)}));\n", encoding="utf-8")
-        code = (f'import * as O from "{Path(folder, "obc.js").as_uri()}";\n'
-                f'console.log(JSON.stringify((() => {{ {body} }})()));')
+            + f"export const liveRecords = () => new Map(Object.entries({json.dumps(records or {})}));\n",
+            encoding="utf-8",
+        )
+        code = (
+            f'import * as H from "{Path(folder, "herdr.js").as_uri()}";\n'
+            f'import * as O from "{Path(folder, "obc.js").as_uri()}";\n'
+            f'console.log(JSON.stringify((() => {{ {body} }})()));'
+        )
         out = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
         if out.returncode != 0:
             raise AssertionError(out.stderr.strip() or "node failed")
         return json.loads(out.stdout)
-    finally:
-        shutil.rmtree(folder, ignore_errors=True)
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -207,6 +227,33 @@ class ClaudeLiveness(unittest.TestCase):
         sub = {**self.SUB, "live": False}
         out = run_obc("return O.claudeAll().map((c) => c.live);", {"claude": [sub]}, {})
         self.assertEqual(out, [False])
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class PropsObcFollowSlot(unittest.TestCase):
+    """ob-props uses ob.follow.props and follows any live terminal pane (wantAgent: false)."""
+
+    def test_inspected_stores_props_slot_and_follows_non_agent_shell_pane(self):
+        out = run_obc("""
+            H.__set({
+              agents: [{ address: "t2" }],
+              terminals: [{ address: "t2", state: "live" }, { address: "t4", state: "live" }],
+              focused: { pane: "p1", terminal: "t2" },
+            });
+            const agentPane = O.inspected();
+            const followAfterAgent = H.shared("ob.follow") ?? null;
+            H.__set({ focused: { pane: "p2", terminal: "t4" } });
+            const shellPane = O.inspected();
+            const followAfterShell = H.shared("ob.follow") ?? null;
+            H.__set({ focused: { pane: "side", terminal: null } });
+            const sidePanel = O.inspected();
+            return { agentPane, followAfterAgent, shellPane, followAfterShell, sidePanel };
+        """)
+        self.assertEqual(out["agentPane"], {"address": "t2", "pinned": False})
+        self.assertEqual(out["followAfterAgent"], {"props": "t2"})
+        self.assertEqual(out["shellPane"], {"address": "t4", "pinned": False})
+        self.assertEqual(out["followAfterShell"], {"props": "t4"})
+        self.assertEqual(out["sidePanel"], {"address": "t4", "pinned": False})
 
 
 class UsageUnchanged(unittest.TestCase):
