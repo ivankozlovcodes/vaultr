@@ -22,6 +22,8 @@ import {
   S, alpha, icon, programIcon, normStatus, RANK, statusMark, needsYou, iconButton, badge, treeRow,
   avatar, emptyState, inputFrame, openMenu, ago, dur, tilde, highlight, takeFocus, bindingFor,
   chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneLabelOf, paneSecondary, place, openView,
+  mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden, getHidden, updateHidden,
+  lsGet, lsSet,
 } from "./kit.js";
 import { Git } from "./git.js";
 import { matchQ } from "./match.js";
@@ -92,7 +94,18 @@ export default class Sessions extends View {
     this.input.on("blur", (_e, cx) => { this.inputFocused = false; cx.notify(); });
     this.open = load("tree.open", {});
     this.folded = new Set(load("machines.folded", []));
-    this.hidden = new Set(load("machines.hidden", []));
+    let rawHidden = shared("ob.hidden");
+    if (!rawHidden) {
+      rawHidden = lsGet("hidden", null);
+      if (!rawHidden) {
+        const legacyMachines = load("machines.hidden", []);
+        const settledTabs = spaces().flatMap((s) => (s.tabs ?? []).filter((t) => t.settled).map((t) => t.id));
+        rawHidden = { machines: Array.isArray(legacyMachines) ? legacyMachines : [], spaces: [], tabs: settledTabs };
+      }
+      setShared("ob.hidden", rawHidden);
+      lsSet("hidden", rawHidden);
+    }
+    this.hiddenOpen = Boolean(load("hidden.open", false));
     this.reconnecting = load("machines.reconnecting", {});
     for (const st of Object.values(this.reconnecting)) if (st) st.busy = false;
     this.sort = SORTS.some(([id]) => id === load("sort", "manual")) ? load("sort", "manual") : "manual";
@@ -163,10 +176,65 @@ export default class Sessions extends View {
       cx.notify();
     });
   }
-  setHidden(m, hide) {
-    if (!m) return;
-    hide ? this.hidden.add(m) : this.hidden.delete(m);
-    save("machines.hidden", [...this.hidden]);
+  hiddenState() {
+    return normHidden(shared("ob.hidden") ?? getHidden());
+  }
+
+  setHidden(kind, id, hide) {
+    const cur = getHidden();
+    const next = patchHidden(cur, kind, id, hide);
+    updateHidden(next);
+    return next;
+  }
+
+  hideMachine(m) {
+    const mKey = mKeyOf(m);
+    const next = this.setHidden("machine", mKey, true);
+    const f = focused();
+    const sp = spaces();
+    const curSpace = sp.find((s) => s.id === f?.space);
+    if (curSpace && mKeyOf(curSpace.machine) === mKey) {
+      const nextH = normHidden(next);
+      const visibleSpace = sp.find((s) => !isSpaceHidden(nextH, s));
+      if (visibleSpace) run("space.select", { id: visibleSpace.id });
+    }
+  }
+
+  showMachine(m) {
+    this.setHidden("machine", mKeyOf(m), false);
+  }
+
+  hideSpace(spaceId) {
+    const next = this.setHidden("space", spaceId, true);
+    const f = focused();
+    if (f?.space === spaceId) {
+      const nextH = normHidden(next);
+      const sp = spaces();
+      const nextSpace = sp.find((s) => s.id !== spaceId && !isSpaceHidden(nextH, s));
+      if (nextSpace) run("space.select", { id: nextSpace.id });
+    }
+  }
+
+  showSpace(spaceId) {
+    this.setHidden("space", spaceId, false);
+  }
+
+  hideTab(tabId) {
+    const sp = spaces();
+    const space = sp.find((s) => (s.tabs ?? []).some((t) => t.id === tabId));
+    const h = this.hiddenState();
+    const visibleTabs = (space?.tabs ?? []).filter((t) => !isTabHidden(h, t, space));
+    if (space && visibleTabs.length <= 1) {
+      this.hideSpace(space.id);
+    } else {
+      this.setHidden("tab", tabId, true);
+      run("tab.settle", { id: tabId });
+    }
+  }
+
+  showTab(tabId) {
+    this.setHidden("tab", tabId, false);
+    run("tab.unsettle", { id: tabId });
   }
 
   // ------------------------------------------------------------------ fold state
@@ -239,10 +307,11 @@ export default class Sessions extends View {
       n.defaultOpen = Boolean(w.active && tab.active);
       return n;
     };
+    const h = this.hiddenState();
     const spaceNode = (w, parent, worktree) => {
       const n = add({ key: `s:${w.id}`, kind: "space", label: w.name, text: w.name, space: w, worktree, git: this.git.of(w, ps),
         reps: { machine: w.machine ?? null, space: w.id } }, parent);
-      const tabs = this.sortTabs(w.tabs, ps);
+      const tabs = this.sortTabs((w.tabs ?? []).filter((tab) => !isTabHidden(h, tab, w)), ps);
       if (tabs.length > 1) {
         for (const tab of tabs) tabNode(w, tab, n);
       } else if (tabs.length === 1) {
@@ -261,7 +330,8 @@ export default class Sessions extends View {
     };
     // Spaces of one machine, worktree checkouts under their repo's main checkout (display only).
     const placeSpaces = (list, parent) => {
-      const sorted = this.sortSpaces(list);
+      const visible = list.filter((w) => !h.spaces.has(w.id));
+      const sorted = this.sortSpaces(visible);
       const info = new Map(sorted.map((w) => [w.id, this.git.of(w, ps)]));
       const mains = new Map();
       for (const w of sorted) { const g = info.get(w.id); if (g && !g.linked && !mains.has(g.repo)) mains.set(g.repo, w.id); }
@@ -274,20 +344,25 @@ export default class Sessions extends View {
     const known = [...new Set([
       ...sp.map((s) => s.machine).filter(Boolean), ...this.machinesLs.map((m) => m.name), ...Object.keys(this.reconnecting),
     ])].sort();
-    const remote = known.filter((m) => !this.hidden.has(m));
+    const isLocalHidden = isMachineHidden(h, null);
+    const remote = known.filter((m) => !isMachineHidden(h, m));
     const roots = [];
-    const meta = { grouped: remote.length > 0, known, hiddenNames: known.filter((m) => this.hidden.has(m)) };
+    const grouped = remote.length > 0;
+    const meta = { grouped, known };
     const loading = (m) => {
       const lay = machines().find((k) => (k.name ?? null) === m)?.layout;
       return lay === "loading" || (!lay && m && this.machinesLs.some((k) => k.name === m && k.state === "connected"));
     };
-    if (!meta.grouped) {
-      const holder = { key: "root", kind: "root", children: [], reps: {} };
-      placeSpaces(sp.filter((s) => !s.machine), holder);
-      for (const n of holder.children) { n.parent = null; roots.push(n); }
-      meta.loadingLocal = !roots.length && loading(null);
+    if (!grouped) {
+      if (!isLocalHidden) {
+        const holder = { key: "root", kind: "root", children: [], reps: {} };
+        placeSpaces(sp.filter((s) => !s.machine), holder);
+        for (const n of holder.children) { n.parent = null; roots.push(n); }
+        meta.loadingLocal = !roots.length && loading(null);
+      }
     } else {
-      for (const m of [null, ...remote]) {
+      const list = isLocalHidden ? remote : [null, ...remote];
+      for (const m of list) {
         const repair = m ? this.reconnecting[m] : null;
         const machine = m ? this.machinesLs.find((k) => k.name === m) ?? repair?.machine : null;
         const connected = !m || machine?.state === "connected";
@@ -299,7 +374,30 @@ export default class Sessions extends View {
         if (!n.rebuilt) placeSpaces(sp.filter((s) => (s.machine ?? null) === m), n);
       }
     }
-    return { roots, byKey, meta, now };
+    const hiddenItems = [];
+    for (const m of [null, ...known]) {
+      if (isMachineHidden(h, m)) {
+        hiddenItems.push({ kind: "machine", id: mKeyOf(m), label: machineLabel(m), machine: m });
+      }
+    }
+    for (const s of sp) {
+      if (!isMachineHidden(h, s.machine) && h.spaces.has(s.id)) {
+        hiddenItems.push({ kind: "space", id: s.id, space: s, label: s.name, hint: machineLabel(s.machine) });
+      }
+    }
+    for (const s of sp) {
+      if (!isMachineHidden(h, s.machine) && !h.spaces.has(s.id)) {
+        for (const tab of s.tabs ?? []) {
+          if (h.tabs.has(tab.id) || Boolean(tab.settled)) {
+            hiddenItems.push({
+              kind: "tab", id: tab.id, tab, space: s, spaceId: s.id,
+              label: `${s.name} / ${tabLabel(tab, ps)}`,
+            });
+          }
+        }
+      }
+    }
+    return { roots, byKey, meta, hiddenItems, now };
   }
 
   // Filtering: mark kept nodes (self or a descendant matches) and their label hits.
@@ -344,7 +442,14 @@ export default class Sessions extends View {
     };
     visit(model.roots, 0, filtering ? "filter" : "normal");
     if (!model.meta.grouped && model.meta.loadingLocal && !filtering) out.push({ key: "loading:local", kind: "loading", depth: 0 });
-    if (model.meta.hiddenNames.length && !filtering) out.push({ key: "shelf", kind: "shelf", names: model.meta.hiddenNames });
+    if (model.hiddenItems?.length && !filtering) {
+      out.push({ key: "hidden-hdr", kind: "hidden-hdr", count: model.hiddenItems.length, open: this.hiddenOpen });
+      if (this.hiddenOpen) {
+        for (const it of model.hiddenItems) {
+          out.push({ key: `hidden:${it.kind}:${it.id}`, kind: "hidden-item", item: it });
+        }
+      }
+    }
     return out;
   }
 
@@ -368,7 +473,14 @@ export default class Sessions extends View {
     if (!f?.space) return;
     const sp = spaces().find((s) => s.id === f.space);
     if (!sp) return;
-    if (sp.machine && this.hidden.has(sp.machine)) { if (!explicit) return; this.setHidden(sp.machine, false); }
+    const h = this.hiddenState();
+    if (explicit) {
+      if (isMachineHidden(h, sp.machine)) this.showMachine(sp.machine);
+      if (h.spaces.has(sp.id)) this.showSpace(sp.id);
+      if (f.tab && (h.tabs.has(f.tab) || sp.tabs?.find((t) => t.id === f.tab)?.settled)) this.showTab(f.tab);
+    } else {
+      if (isMachineHidden(h, sp.machine) || h.spaces.has(sp.id) || (f.tab && isTabHidden(h, sp.tabs?.find((t) => t.id === f.tab), sp))) return;
+    }
     let model = this.model();
     const target = (m) => {
       let best = null, score = 0;
@@ -414,6 +526,25 @@ export default class Sessions extends View {
     if (r.node) return this.activate(r.node);
     if (r.kind === "more") openView("ob-outline", `term:${r.addr}`);
     else if (r.kind === "new") run("space.new", { machine: r.machine.machineName ?? "" });
+    else if (r.kind === "hidden-item") this.activateHiddenItem(r.item);
+    else if (r.kind === "hidden-hdr") { this.hiddenOpen = !this.hiddenOpen; save("hidden.open", this.hiddenOpen); }
+  }
+  activateHiddenItem(it) {
+    if (it.kind === "machine") {
+      this.showMachine(it.id);
+    } else if (it.kind === "space") {
+      this.showSpace(it.id);
+      run("space.select", { id: it.id });
+    } else if (it.kind === "tab") {
+      this.showTab(it.id);
+      run("space.select", { id: it.spaceId });
+      run("tab.select", { id: it.id });
+    }
+  }
+  showItem(it) {
+    if (it.kind === "machine") this.showMachine(it.id);
+    else if (it.kind === "space") this.showSpace(it.id);
+    else if (it.kind === "tab") this.showTab(it.id);
   }
   rename(n) {
     if (!n) return;
@@ -448,7 +579,8 @@ export default class Sessions extends View {
     openView("ob-props", `term:${addr}`);
   }
   newSpace() {
-    const remote = this.machinesLs.filter((m) => m.state === "connected" && !this.hidden.has(m.name));
+    const h = this.hiddenState();
+    const remote = this.machinesLs.filter((m) => m.state === "connected" && !isMachineHidden(h, m.name));
     if (!remote.length) { run("space.new", {}); return; }
     openMenu([
       { label: "New space on this computer", icon: "monitor", command: "space.new", args: { machine: "" } },
@@ -525,8 +657,12 @@ export default class Sessions extends View {
       case "toggle": { const r = this.cursorRow(); if (r?.foldable) this.setOpen(r.node, !r.open); break; }
       case "cursor": if (this.byKey?.has(arg) || this.rows.some((r) => r.key === arg)) { this.cursor = arg; this.kbd = true; this.scrollTo(arg); } break;
       case "fold": { const n = node(arg); if (n) { if (this.filter.trim()) this.toggleFilterExpand(n); else this.setOpen(n, !this.isOpen(n)); } break; }
-      case "hide-machine": this.setHidden(arg, true); break;
-      case "show-machine": this.setHidden(arg, false); break;
+      case "hide-machine": this.hideMachine(arg); break;
+      case "show-machine": this.showMachine(arg); break;
+      case "hide-space": this.hideSpace(arg); break;
+      case "show-space": this.showSpace(arg); break;
+      case "hide-tab": this.hideTab(arg); break;
+      case "show-tab": this.showTab(arg); break;
       case "connect": this.reconnect(arg, cx); break;
       case "bookmark": { const it = this.bookmarkItem(node(arg)); if (it) toggleBookmark(it); break; }
       case "inspect": this.inspect(arg); break;
@@ -579,7 +715,7 @@ export default class Sessions extends View {
       if (n.rebuilt) items.push({ label: n.repair?.busy ? "Connecting…" : "Connect to the new machine", icon: "refresh", command: me(`connect:${m}`), disabled: Boolean(n.repair?.busy) });
       if (n.login) items.push({ label: "Copy login command", icon: "copy", copy: n.login, hint: "then run it" });
       items.push({ label: this.isOpen(n) ? "Fold" : "Unfold", icon: this.isOpen(n) ? "chevron-right" : "chevron-down", command: me(`fold:${n.key}`) });
-      if (m) items.push({ label: "Hide machine", icon: "eye-off", command: me(`hide-machine:${m}`) });
+      items.push({ label: "Hide machine", icon: "eye-off", command: me(`hide-machine:${m ?? "local"}`) });
       items.push({ separator: true });
       items.push({ label: "Machine settings", icon: "settings", command: "app.settings", args: { section: "machines" } });
       items.push({ label: "Copy name", icon: "copy", copy: m ?? "This computer" });
@@ -607,6 +743,7 @@ export default class Sessions extends View {
       items.push({ label: "Move down", icon: "chevron-down", command: "space.move", args: { id: w.id, index: gi + 2 }, disabled: i < 0 || i >= list.length - 1 });
       if (n.reps.terminal) { items.push({ separator: true }); items.push(...sessionItems(n.reps.terminal, n.reps.pane, null)); }
       items.push({ separator: true });
+      items.push({ label: "Hide space", icon: "eye-off", command: me(`hide-space:${w.id}`) });
       items.push({ label: "Close space", icon: "trash", danger: true, command: "space.close", args: { id: w.id } });
       return items;
     }
@@ -619,7 +756,10 @@ export default class Sessions extends View {
       items.push({ label: "Rename…", icon: "rename", command: "tab.rename", args: { id: tab.id }, kbd: "f2" });
       items.push({ label: bm("tab", tab.id), icon: isBookmarked("tab", tab.id) ? "bookmark" : "bookmark-plus", command: me(`bookmark:${n.key}`) });
       if (cwd) items.push({ label: "Copy path", icon: "copy", copy: cwd });
-      items.push({ label: tab.settled ? "Unsettle" : "Settle", icon: tab.settled ? "eye" : "eye-off", hint: tab.settled ? "" : "hide from the tab bar", command: tab.settled ? "tab.unsettle" : "tab.settle", args: { id: tab.id } });
+      const isHidden = isTabHidden(this.hiddenState(), tab, w);
+      items.push(isHidden
+        ? { label: "Show tab", icon: "eye", command: me(`show-tab:${tab.id}`) }
+        : { label: "Hide tab", icon: "eye-off", command: me(`hide-tab:${tab.id}`) });
       items.push({ separator: true });
       items.push({ label: "Move up", icon: "chevron-up", command: "tab.move", args: { id: tab.id, index: i }, disabled: i <= 0 });
       items.push({ label: "Move down", icon: "chevron-down", command: "tab.move", args: { id: tab.id, index: i + 2 }, disabled: i < 0 || i >= tabs.length - 1 });
@@ -738,14 +878,16 @@ export default class Sessions extends View {
       .when(spacesN > 0, (e) => e.child(div().px(5).h(16).rounded(4).bg(alpha(t.border, 0.55)).text_size(10.5).font_medium().text_color(t.muted).flex().items_center().child(String(spacesN))))
       .when(hovered && n.connected, (e) => e.child(iconButton({ id: `add-${r.key}`, icon: "plus", size: 20, iconSize: S.iconXs, tip: `New space on ${m ?? "this computer"}`,
         onClick: () => run("space.new", { machine: m ?? "" }) })))
-      .when(hovered && Boolean(m), (e) => e.child(iconButton({ id: `hide-${r.key}`, icon: "eye-off", size: 20, iconSize: S.iconXs, tip: `Hide ${m}`,
-        onClick: (_e, cx) => { this.setHidden(m, true); cx.notify(); } })));
+      .when(hovered, (e) => e.child(iconButton({ id: `hide-${r.key}`, icon: "eye-off", size: 20, iconSize: S.iconXs, tip: "Hide " + n.label,
+        onClick: (_e, cx) => { this.hideMachine(m); cx.notify(); } })));
   }
 
   nodeRow(r, t, sel, now) {
     const n = r.node;
+    const isSub = SUB_KINDS.has(n.kind);
     const compact = this.w < 220;
     const cur = this.kbd && this.cursor === r.key;
+    const hovered = this.hover === r.key || cur;
     const q = this.filter.trim();
     const label = q && n.hits?.length ? highlight(n.label, n.hits) : n.label;
     const o = {
@@ -767,6 +909,12 @@ export default class Sessions extends View {
       o.labelColor = t.foreground;
       if (!compact) o.after.push(this.gitTail(n.git, n, t));
       o.after.push(bmMark("space", w.id));
+      if (hovered) {
+        o.right.push(iconButton({
+          id: `hide-${r.key}`, icon: "eye-off", size: 20, iconSize: S.iconXs, tip: "Hide space",
+          onClick: (_e, cx) => { this.hideSpace(w.id); cx.notify(); },
+        }));
+      }
       const st = n.pane ? n.pane.status : w.status;
       o.right.push(this.status(st, Boolean(n.pane?.program?.agent), t));
     } else if (n.kind === "tab") {
@@ -775,7 +923,7 @@ export default class Sessions extends View {
       o.labelColor = selected ? t.foreground : t.muted;
       o.after.push(bmMark("tab", tab.id));
       if (n.secondary) o.after.push(div().min_w(0).flex_shrink(1).truncate().text_size(S.textXs).text_color(t.dim).child(n.secondary));
-      if (tab.settled && !compact) o.right.push(this.tag("settled", t));
+      if (isTabHidden(this.hiddenState(), tab, n.space) && !compact) o.right.push(this.tag("hidden", t));
       if (tab.status === "working" && tab.working_since && now - tab.working_since > 60000 && !compact) o.right.push(this.tag(ago(tab.working_since, now), t));
       o.right.push(this.status(n.pane ? n.pane.status : tab.status, Boolean(n.pane?.program?.agent), t));
     } else if (n.kind === "pane") {
@@ -804,6 +952,7 @@ export default class Sessions extends View {
     const drag = !q && this.sort === "manual" && (n.kind === "space" || n.kind === "tab");
     const group = n.kind === "space" ? mkey(n.space.machine) : n.kind === "tab" ? n.space.id : null;
     el = el
+      .on_hover((on, cx) => { const v = on ? r.key : this.hover === r.key ? null : this.hover; if (v !== this.hover) { this.hover = v; cx.notify(); } })
       .on_mouse_down("left", (e, cx) => {
         this.pressed = { key: r.key, kind: n.kind, group, drag };
         this.over = r.key;
@@ -873,13 +1022,38 @@ export default class Sessions extends View {
             .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(login); this.copied = login; cx.notify(); })
             .child(this.copied === login ? "Copied" : "Copy")));
     }
-    if (r.kind === "shelf") {
-      return h_flex().id("row-shelf").mt(8).mx(4).px(6).py(4).flex_none().gap(6).items_center().flex_wrap().border_t_1().border_color(t.border)
-        .text_size(S.textXs).text_color(t.dim)
-        .child(icon("eye-off", S.iconXs, t.dim).tooltip("Hidden machines: click one to show it"))
-        .children(r.names.map((m) => div().id(`unhide-${m}`).px(5).h(18).flex().items_center().rounded(4).cursor_pointer()
-          .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(`Show ${m}`)
-          .on_click((_e, cx) => { this.setHidden(m, false); cx.notify(); }).child(m)));
+    if (r.kind === "hidden-hdr") {
+      return h_flex().id("row-hidden-hdr").mt(8).mx(4).px(6).h(24).flex_none().gap(6).items_center().rounded(S.radius)
+        .cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => {
+          this.hiddenOpen = !this.hiddenOpen;
+          save("hidden.open", this.hiddenOpen);
+          cx.notify();
+        })
+        .child(icon(r.open ? "chevron-down" : "chevron-right", S.iconXs, t.dim))
+        .child(icon("eye-off", S.iconXs, t.dim))
+        .child(div().text_size(S.textXs).font_semibold().text_color(t.dim).child(`Hidden (${r.count})`));
+    }
+    if (r.kind === "hidden-item") {
+      const it = r.item;
+      const ic = it.kind === "machine" ? (it.machine ? "server" : "monitor") : it.kind === "space" ? "layers" : "tab";
+      return h_flex().id(`row-${r.key}`).h(S.rowSm).flex_none().pl(S.pad + 10).pr(6).gap(6).items_center().rounded(S.radius)
+        .cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => {
+          this.activateHiddenItem(it);
+          cx.notify();
+        })
+        .child(icon(ic, S.iconXs, t.dim))
+        .child(div().min_w(0).truncate().text_size(S.textSm).text_color(t.muted).child(it.label))
+        .when(Boolean(it.hint) && this.w >= 220, (e) => e.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child(it.hint)))
+        .child(div().flex_1())
+        .child(iconButton({
+          id: `show-${r.key}`, icon: "eye", size: 20, iconSize: S.iconXs, tip: "Show",
+          onClick: (_e, cx) => {
+            this.showItem(it);
+            cx.notify();
+          },
+        }));
     }
     return div();
   }
@@ -944,7 +1118,7 @@ export default class Sessions extends View {
     this.assignColors();
     const now = Date.now();
     const sp = spaces(), ps = panes();
-    const due = this.git.due(now, sp, ps, machines(), Boolean(appWindow()?.active), (m) => this.folded.has(mkey(m)) || this.hidden.has(m));
+    const due = this.git.due(now, sp, ps, machines(), Boolean(appWindow()?.active), (m) => this.folded.has(mkey(m)) || isMachineHidden(this.hiddenState(), m));
     if (due.size) cx.timer.after(0, (cx) => this.git.refresh(due, cx));
 
     const f = focused();

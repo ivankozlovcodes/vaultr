@@ -81,5 +81,138 @@ class Filter(unittest.TestCase):
         self.assertNotIn("function matchQ(", src)
 
 
+HIDDEN_JS = Path(ROOT, "kit", "hidden.js")
+
+
+def hidden_eval(expr, payload=None):
+    src = (f'import * as H from "{HIDDEN_JS.as_uri()}";\n'
+           f'const d = {json.dumps(payload)};\n'
+           f'console.log(JSON.stringify({expr}));')
+    out = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.strip() or "node failed")
+    return json.loads(out.stdout)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class HiddenRules(unittest.TestCase):
+    """Pure hidden rules in kit/hidden.js: machine keys, normalization, inheritance, and patch."""
+
+    def test_m_key_of_normalizes_local_and_remotes(self):
+        got = hidden_eval("[H.mKeyOf(null), H.mKeyOf(undefined), H.mKeyOf(''), H.mKeyOf('devbox')]")
+        self.assertEqual(got, ["local", "local", "local", "devbox"])
+
+    def test_norm_hidden_creates_sets(self):
+        raw = {"machines": ["local"], "spaces": ["s1"], "tabs": ["t1"]}
+        got = hidden_eval("(() => { const h = H.normHidden(d); return { m: [...h.machines], s: [...h.spaces], t: [...h.tabs] }; })()", raw)
+        self.assertEqual(got, {"m": ["local"], "s": ["s1"], "t": ["t1"]})
+
+    def test_is_machine_hidden_for_local_and_remote(self):
+        raw = {"machines": ["local", "box1"], "spaces": [], "tabs": []}
+        got = hidden_eval("(() => { const h = H.normHidden(d); return [H.isMachineHidden(h, null), H.isMachineHidden(h, ''), H.isMachineHidden(h, 'box1'), H.isMachineHidden(h, 'box2')]; })()", raw)
+        self.assertEqual(got, [True, True, True, False])
+
+    def test_is_space_hidden_inherits_from_machine(self):
+        raw = {"machines": ["local"], "spaces": ["s-remote"], "tabs": []}
+        got = hidden_eval("""(() => {
+            const h = H.normHidden(d);
+            return [
+                H.isSpaceHidden(h, { id: 's-local', machine: null }),
+                H.isSpaceHidden(h, { id: 's-remote', machine: 'devbox' }),
+                H.isSpaceHidden(h, { id: 's-visible', machine: 'devbox' }),
+            ];
+        })()""", raw)
+        self.assertEqual(got, [True, True, False])
+
+    def test_is_tab_hidden_inherits_from_space_and_machine_and_settled(self):
+        raw = {"machines": ["local"], "spaces": ["s-hidden"], "tabs": ["t-hidden"]}
+        got = hidden_eval("""(() => {
+            const h = H.normHidden(d);
+            const spLocal = { id: 's1', machine: null };
+            const spHidden = { id: 's-hidden', machine: 'devbox' };
+            const spVisible = { id: 's-vis', machine: 'devbox' };
+            return [
+                H.isTabHidden(h, { id: 't1' }, spLocal),
+                H.isTabHidden(h, { id: 't2' }, spHidden),
+                H.isTabHidden(h, { id: 't-hidden' }, spVisible),
+                H.isTabHidden(h, { id: 't-settled', settled: true }, spVisible),
+                H.isTabHidden(h, { id: 't-normal' }, spVisible),
+            ];
+        })()""", raw)
+        self.assertEqual(got, [True, True, True, True, False])
+
+    def test_patch_hidden_toggles_entries(self):
+        raw = {"machines": ["box1"], "spaces": [], "tabs": []}
+        got = hidden_eval("""(() => {
+            let cur = H.patchHidden(d, 'machine', 'local', true);
+            cur = H.patchHidden(cur, 'space', 'sp1', true);
+            cur = H.patchHidden(cur, 'tab', 'tb1', true);
+            cur = H.patchHidden(cur, 'machine', 'box1', false);
+            return cur;
+        })()""", raw)
+        self.assertEqual(set(got["machines"]), {"local"})
+        self.assertEqual(set(got["spaces"]), {"sp1"})
+        self.assertEqual(set(got["tabs"]), {"tb1"})
+
+
+class SessionsHideWiring(unittest.TestCase):
+    def setUp(self):
+        self.src = MAIN.read_text(encoding="utf-8")
+        self.agents_src = Path(ROOT, "mods", "ob-agents", "main.js").read_text(encoding="utf-8")
+        self.tabs_src = Path(ROOT, "mods", "ob-tabs", "main.js").read_text(encoding="utf-8")
+        self.switcher_src = Path(ROOT, "mods", "ob-switcher", "main.js").read_text(encoding="utf-8")
+
+    def test_settle_wording_is_retired_in_sessions_menu(self):
+        self.assertNotIn('"Settle"', self.src)
+        self.assertNotIn('"Unsettle"', self.src)
+        self.assertIn('"Hide space"', self.src)
+        self.assertIn('"Hide machine"', self.src)
+        self.assertIn('"Hide tab"', self.src)
+        self.assertIn('"Show tab"', self.src)
+
+    def test_hidden_drawer_replaces_old_shelf(self):
+        self.assertIn('"row-hidden-hdr"', self.src)
+        self.assertIn('Hidden (${r.count})', self.src)
+        self.assertNotIn('"row-shelf"', self.src)
+
+    def test_agents_panel_preserves_blocked_agents_when_hidden(self):
+        self.assertIn('normStatus(a.status) === "blocked"', self.agents_src)
+        self.assertIn("isMachineHidden", self.agents_src)
+        self.assertIn("isSpaceHidden", self.agents_src)
+        self.assertIn("isTabHidden", self.agents_src)
+
+    def test_tabs_bar_filters_hidden_tabs_unless_active(self):
+        self.assertIn('!isTabHidden(h, x, space) || x.active', self.tabs_src)
+
+    def test_quick_switcher_auto_unhides_selected_hidden_items(self):
+        self.assertIn('updateHidden', self.switcher_src)
+        self.assertIn('patchHidden', self.switcher_src)
+
+    def test_node_row_and_space_node_variables_defined(self):
+        # Regression test for runtime crash: label was undefined in spaceNode, hovered and isSub undefined in nodeRow
+        space_node = re.search(r'const spaceNode = \([\s\S]*?\n    \};', self.src)
+        self.assertIsNotNone(space_node)
+        self.assertNotIn("paneSecondary(label", space_node.group(0))
+
+        node_row = re.search(r'nodeRow\(r, t, sel, now\) \{[\s\S]*?\n  \}', self.src)
+        self.assertIsNotNone(node_row)
+        self.assertIn("const isSub = SUB_KINDS.has(n.kind);", node_row.group(0))
+        self.assertIn("const hovered = this.hover === r.key || cur;", node_row.group(0))
+
+    def test_sessions_imports_ls_helpers_used_by_init(self):
+        # Regression test: init() calls lsGet("hidden") and lsSet("hidden"), which must be imported from ./kit.js,
+        # and kit.js keeps plain unprefixed localStorage JSON helpers (Herdr gives each mod copy its own store).
+        m = re.search(r'import\s*\{([^}]*)\}\s*from\s*"\./kit\.js"', self.src)
+        self.assertIsNotNone(m)
+        imported = {tok.strip() for tok in m.group(1).split(",") if tok.strip()}
+        for sym in ("lsGet", "lsSet"):
+            if f"{sym}(" in self.src:
+                self.assertIn(sym, imported)
+        kit_src = Path(ROOT, "kit", "kit.js").read_text(encoding="utf-8")
+        self.assertNotIn("lsKey", kit_src)
+        self.assertIn("localStorage.getItem(k)", kit_src)
+        self.assertIn("localStorage.setItem(k, JSON.stringify(v))", kit_src)
+
+
 if __name__ == "__main__":
     unittest.main()

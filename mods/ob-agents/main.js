@@ -11,12 +11,13 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
 import {
-  agents, panes, spaces, focused, run, theme, props, nextCommand, settings, setAgentOrder,
+  agents, panes, spaces, focused, run, theme, props, nextCommand, settings, setAgentOrder, shared,
 } from "herdr";
 import {
   S, icon, programIcon, iconButton, treeRow, sectionHeader, emptyState, openMenu, statusMark,
   needsYou, normStatus, takeFocus, machineOf, isBookmarked, toggleBookmark, mainAgents, placedTerminals,
   cleanTitle, sessionTitleOf,
+  normHidden, isMachineHidden, isSpaceHidden, isTabHidden, getHidden,
 } from "./kit.js";
 
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
@@ -158,6 +159,22 @@ export default class Agents extends View {
     const byPriority = this.sort === "priority";
     const ps = panes();
     let list = mainAgents(agents(), placedTerminals(ps));
+    const h = normHidden(shared("ob.hidden") ?? getHidden());
+    const spList = spaces();
+    const spMap = new Map(spList.map((s) => [s.id, s]));
+    const tbMap = new Map(spList.flatMap((s) => (s.tabs ?? []).map((t) => [t.id, { tab: t, space: s }])));
+    list = list.filter((a) => {
+      if (normStatus(a.status) === "blocked") return true;
+      const tabId = a.tab ?? ps.find((p) => p.pane === a.pane || (p.terminal && p.terminal === a.address))?.tab;
+      const match = tabId ? tbMap.get(tabId) : null;
+      const sp = match?.space ?? (a.space ? spMap.get(a.space) : null);
+      const tb = match?.tab;
+      const m = sp ? sp.machine : (a.machine ?? machineOf(a.address));
+      if (isMachineHidden(h, m)) return false;
+      if (isSpaceHidden(h, sp)) return false;
+      if (isTabHidden(h, tb, sp)) return false;
+      return true;
+    });
     this.track(list, now);
     const urgency = new Map(list.map((a) => [a.address, RANK[a.status] ?? 0]));
     const since = (a) => this.changed[a.address]?.at ?? 0;

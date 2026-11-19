@@ -15,6 +15,7 @@ import { panes, spaces, agents, terminals, props, run, nextCommand, shared as _s
 import {
   S, tc, alpha, icon, iconButton, statusMark, needsYou, paneLabelOf, tabLabel, machineLabel, programIcon, openMenu,
   subagentsOf, isBookmarked, toggleBookmark, bindingFor, chordLabel, tilde, stop,
+  normHidden, isTabHidden,
 } from "./kit.js";
 import { follow, DELAY } from "./follow.js"; // focus-to-hover
 
@@ -81,8 +82,9 @@ export default class PaneHeader extends View {
       ], { title: machineLabel(m), width: 250 });
     } else if (seg === "space") {
       if (!space) return;
+      const h = normHidden(shared("ob.hidden"));
       openMenu([
-        ...space.tabs.map((t) => ({ label: tabLabel(t, ps), icon: "tab", checked: t.id === tab?.id, hint: t.settled ? "settled" : undefined, command: "tab.select", args: { id: t.id } })),
+        ...space.tabs.map((t) => ({ label: tabLabel(t, ps), icon: "tab", checked: t.id === tab?.id, hint: isTabHidden(h, t, space) ? "hidden" : undefined, command: "tab.select", args: { id: t.id } })),
         { separator: true },
         { label: "New tab here", icon: "plus", command: "tab.new", args: { space: space.id }, kbd: bindingFor("tab.new") ?? undefined },
       ], { title: space.name || "Space", width: 250 });

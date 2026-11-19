@@ -20,6 +20,7 @@ import {
 import {
   S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel,
   feed, bookmarks, VIEWS, findNode, current, chordParts, kbd, sessionTitleOf,
+  normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden,
 } from "./kit.js";
 import { commandRows } from "./commands.js";
 import { sessionTitles, bestTitle } from "./titles.js";
@@ -151,6 +152,7 @@ export default class Switcher extends View {
     // The session titles each tab holds (its agents' and terminals' titles, the feed's session names): a tab is
     // found by them too, so "herdr-trials" finds the tab whose Claude Code session has that title.
     const titles = sessionTitles(new Map([...where].map(([addr, w]) => [addr, w.tab.id])), { agents: ag, terminals: terms, terms: f?.terms ?? {} });
+    const h = normHidden(shared("ob.hidden") ?? getHidden());
     const items = [];
 
     for (const s of sp) {
@@ -158,17 +160,39 @@ export default class Switcher extends View {
         const mine = ps.filter((p) => p.tab === tb.id);
         const lead = mine.find((p) => p.program?.agent) ?? mine.find((p) => p.focused) ?? mine[0];
         const progs = [...new Set(mine.map((p) => p.program?.name).filter(Boolean))];
+        const hidden = isTabHidden(h, tb, s);
         items.push({
           key: `tab:${tb.id}`, kind: "tab", label: tabText(tb), context: ctxOf(s), words: progs.join(" "), titles: titles.get(tb.id) ?? [],
-          status: tb.status, here: tb.id === cur.tab?.id, bookmarked: isBm("tab", tb.id), settled: tb.settled,
+          status: tb.status, here: tb.id === cur.tab?.id, bookmarked: isBm("tab", tb.id), hidden, settled: hidden,
           lead: () => (lead?.program ? programIcon(lead.program, S.icon) : icon("tab", S.icon)),
-          go: () => { run("space.select", { id: s.id }); run("tab.select", { id: tb.id }); },
+          go: () => {
+            if (hidden) {
+              updateHidden((raw) => {
+                let cur = patchHidden(raw, "machine", s.machine, false);
+                cur = patchHidden(cur, "space", s.id, false);
+                return patchHidden(cur, "tab", tb.id, false);
+              });
+              if (tb.settled) run("tab.unsettle", { id: tb.id });
+            }
+            run("space.select", { id: s.id });
+            run("tab.select", { id: tb.id });
+          },
         });
       }
+      const spaceHidden = isSpaceHidden(h, s);
       items.push({
         key: `space:${s.id}`, kind: "space", label: s.name, context: `${machineLabel(s.machine)} · space · ${(s.tabs ?? []).length} tab${(s.tabs ?? []).length === 1 ? "" : "s"}`,
-        words: "space", status: s.status, here: s.id === cur.space?.id, bookmarked: isBm("space", s.id),
-        lead: () => avatar(s, 16), go: () => run("space.select", { id: s.id }),
+        words: "space", status: s.status, here: s.id === cur.space?.id, bookmarked: isBm("space", s.id), hidden: spaceHidden,
+        lead: () => avatar(s, 16),
+        go: () => {
+          if (spaceHidden) {
+            updateHidden((raw) => {
+              let cur = patchHidden(raw, "machine", s.machine, false);
+              return patchHidden(cur, "space", s.id, false);
+            });
+          }
+          run("space.select", { id: s.id });
+        },
       });
     }
 
@@ -289,8 +313,8 @@ export default class Switcher extends View {
       if (!best && via) best = { score: via.score - 4, hits: [] };
       if (!best && more) best = { score: more.score - 4, hits: [] };
       if (!best) continue;
-      // Settled tabs and where you already are sink a little; bookmarks rise a little.
-      const adj = (it.here ? -2 : 0) + (it.settled ? -1 : 0) + (it.bookmarked ? 1 : 0);
+      // Hidden tabs and where you already are sink a little; bookmarks rise a little.
+      const adj = (it.here ? -2 : 0) + (it.hidden || it.settled ? -1 : 0) + (it.bookmarked ? 1 : 0);
       const row = via && !title ? { ...it, context: [via.title, it.context].filter(Boolean).join(" · ") } : it;
       scored.push({ item: row, hits: best.hits, score: best.score + adj, r: rank.get(it.key) ?? 999 });
     }
@@ -482,7 +506,7 @@ export default class Switcher extends View {
         .child(h_flex().flex_shrink(0).max_w(narrow ? 220 : 380).min_w(0).overflow_hidden().child(label))
         .when(Boolean(it.bookmarked), (el) => el.child(icon("bookmark", S.iconXs, t.accent)))
         .when(Boolean(it.context) && !narrow, (el) => el.child(div().flex_1().min_w(0).truncate().text_size(S.textSm).text_color(t.dim).child(it.context)))
-        .when(Boolean(it.settled), (el) => el.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child("settled"))))
+        .when(Boolean(it.hidden || it.settled), (el) => el.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child("hidden"))))
       .when(Boolean(it.chord), (el) => el.child(kbd(it.chord)))
       .when(Boolean(it.disabled && it.hint && !it.quiet), (el) => el.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child(it.hint)))
       .when(it.status != null, (el) => el.child(statusMark(it.status)))

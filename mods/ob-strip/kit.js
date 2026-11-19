@@ -32,6 +32,48 @@ export { tickerChips, tickerAction, TICKER_MAX } from "./ticker.js";
 // Pure follow rule (kit/follow_target.js): which terminal the right-hand panels show.
 export { followTarget } from "./follow_target.js";
 
+// Pure hidden rules and shared state (kit/hidden.js): hidden machines, spaces, tabs.
+export {
+  mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden,
+} from "./hidden.js";
+import {
+  mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden,
+} from "./hidden.js";
+
+// ---------------------------------------------------------------- localStorage (per mod copy)
+export function lsGet(k, fallback = null) {
+  try {
+    const raw = localStorage.getItem(k);
+    return raw == null ? fallback : JSON.parse(raw) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+export function lsSet(k, v) {
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+  } catch {
+    /* storage off */
+  }
+}
+
+export function getHidden() {
+  let h = shared("ob.hidden");
+  if (!h) {
+    h = lsGet("hidden", null);
+    if (h) setShared("ob.hidden", h);
+  }
+  return h ?? { machines: [], spaces: [], tabs: [] };
+}
+
+export function updateHidden(mutator) {
+  const cur = getHidden();
+  const next = typeof mutator === "function" ? mutator(cur) : mutator;
+  setShared("ob.hidden", next);
+  lsSet("hidden", next);
+  return next;
+}
+
 // ---------------------------------------------------------------- sizes (design px at zoom 1)
 export const S = {
   strip: 40,        // top strip of every column (icon tabs, tab bar)

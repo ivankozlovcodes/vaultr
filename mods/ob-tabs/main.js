@@ -30,6 +30,7 @@ import { isSettingsOpen } from "./settings_open.js";
 import {
   S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, stackOf, isShown, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
+  normHidden, isTabHidden, isSpaceHidden, patchHidden, updateHidden,
 } from "./kit.js";
 
 const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
@@ -172,8 +173,32 @@ export default class Tabs extends View {
     if (verb === "back") return this.go(-1);
     if (verb === "forward") return this.go(1);
     if (verb === "last") {
-      const tabs = (current().space?.tabs ?? []).filter((t) => !t.settled);
+      const h = normHidden(shared("ob.hidden"));
+      const tabs = (current().space?.tabs ?? []).filter((t) => !isTabHidden(h, t, current().space));
       if (tabs.length) run("tab.select", { id: tabs[tabs.length - 1].id });
+      return;
+    }
+    if (verb === "hide-tab") {
+      const sp = spaces().find((s) => (s.tabs ?? []).some((x) => x.id === arg));
+      const h = normHidden(shared("ob.hidden"));
+      const visible = (sp?.tabs ?? []).filter((x) => !isTabHidden(h, x, sp));
+      if (sp && visible.length <= 1) {
+        updateHidden((cur) => patchHidden(cur, "space", sp.id, true));
+        const f = focused();
+        if (f?.space === sp.id) {
+          const nextH = normHidden(shared("ob.hidden"));
+          const nextSpace = spaces().find((s) => s.id !== sp.id && !isSpaceHidden(nextH, s));
+          if (nextSpace) run("space.select", { id: nextSpace.id });
+        }
+      } else {
+        updateHidden((cur) => patchHidden(cur, "tab", arg, true));
+        run("tab.settle", { id: arg });
+      }
+      return;
+    }
+    if (verb === "show-tab") {
+      updateHidden((cur) => patchHidden(cur, "tab", arg, false));
+      run("tab.unsettle", { id: arg });
       return;
     }
     if (verb === "switcher") return this.switcher(arg || "go");
@@ -277,11 +302,12 @@ export default class Tabs extends View {
     const ps = panes();
     const items = [];
     const tabs = c0.space?.tabs ?? [];
+    const h = normHidden(shared("ob.hidden"));
     if (tabs.length) items.push({ header: c0.space.name || "Tabs" });
     for (const tab of tabs) {
       items.push({
         label: tabLabel(tab, ps), icon: "tab", checked: tab.active,
-        hint: tab.settled ? "settled" : tab.status && tab.status !== "idle" ? tab.status : undefined,
+        hint: isTabHidden(h, tab, c0.space) ? "hidden" : tab.status && tab.status !== "idle" ? tab.status : undefined,
         command: "tab.select", args: { id: tab.id },
       });
     }
@@ -302,21 +328,31 @@ export default class Tabs extends View {
   // Right-click menu of one tab.
   tabMenu(space, tab) {
     const ps = panes();
-    const tabs = space.tabs;
-    const i = tabs.findIndex((t) => t.id === tab.id);
+    const all = space.tabs ?? [];
+    const h = normHidden(shared("ob.hidden"));
+    const visibleTabs = all.filter((t) => !isTabHidden(h, t, space));
+    const onlyTab = visibleTabs.length <= 1;
+    const isHidden = isTabHidden(h, tab, space);
+    const i = all.findIndex((t) => t.id === tab.id);
     const lead = ps.find((p) => p.tab === tab.id && p.focused) ?? ps.find((p) => p.tab === tab.id && p.cwd);
     const path = lead?.cwd || place(space, ps);
     const marked = isBookmarked("tab", tab.id);
+    const hideItems = onlyTab
+      ? [{ label: "Hide space", icon: "eye-off", command: `ob-sessions.hide-space:${space.id}` }]
+      : [
+          isHidden
+            ? { label: "Show tab", icon: "eye", command: `ob-tabs.show-tab:${tab.id}` }
+            : { label: "Hide tab", icon: "eye-off", hint: "hide from tab bar and Sessions", command: `ob-tabs.hide-tab:${tab.id}` },
+          { label: "Hide space", icon: "eye-off", command: `ob-sessions.hide-space:${space.id}` },
+        ];
     openMenu([
       { label: "Rename…", icon: "rename", command: "tab.rename", args: { id: tab.id }, kbd: bindingFor("tab.rename") ?? undefined },
       { label: marked ? "Remove bookmark" : "Bookmark", icon: marked ? "bookmark" : "bookmark-plus", command: `ob-tabs.bookmark:${tab.id}` },
       path ? { label: "Copy path", icon: "copy", copy: path } : null,
       { separator: true },
-      tab.settled
-        ? { label: "Unsettle", icon: "pin", command: "tab.unsettle", args: { id: tab.id } }
-        : { label: "Settle", icon: "pin-off", hint: "hide from the tab bar", command: "tab.settle", args: { id: tab.id } },
+      ...hideItems,
       i > 0 ? { label: "Move left", icon: "arrow-left", command: "tab.move", args: { id: tab.id, index: i } } : null,
-      i < tabs.length - 1 ? { label: "Move right", icon: "arrow-right", command: "tab.move", args: { id: tab.id, index: i + 2 } } : null,
+      i < all.length - 1 ? { label: "Move right", icon: "arrow-right", command: "tab.move", args: { id: tab.id, index: i + 2 } } : null,
       { label: "Move to space…", icon: "move", command: `ob-tabs.move-to:${tab.id}` },
       { separator: true },
       { label: "New tab", icon: "plus", command: "tab.new", args: { space: space.id }, kbd: bindingFor("tab.new") ?? undefined },
@@ -369,8 +405,9 @@ export default class Tabs extends View {
     const winButtons = rightHidden && windowButtonsOn();
     const w = appWindow();
     const all = space?.tabs ?? [];
-    // Settled tabs live in Sessions; the active one always shows (selecting a settled tab brings it back).
-    const tabs = all.filter((x) => !x.settled || x.active);
+    const h = normHidden(shared("ob.hidden"));
+    // Hidden tabs live in Sessions; the active one always shows (selecting a hidden tab brings it back).
+    const tabs = all.filter((x) => !isTabHidden(h, x, space) || x.active);
     this.anyWorking = tabs.some((x) => x.status === "working");
 
     // Room for tabs: the bar minus its buttons and a strip of drag space.
