@@ -9,9 +9,10 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { layout, props, run, nextCommand, settings, agents, shared, window as appWindow } from "herdr";
+import { layout, props, run, nextCommand, settings, agents, terminals, shared, window as appWindow } from "herdr";
 import {
   S, NODE, icon, iconButton, stripTab, viewInfo, findNode, findParent, openMenu, subagentCounts, alpha, stop, tc,
+  agentAttention, attentionCounts, getDismissed, terminalsByAddress,
 } from "./kit.js";
 import { HALVES, halfAction, standInFor } from "./halves.js";
 import { stripView } from "./strip_view.js";
@@ -90,7 +91,13 @@ export default class Strip extends View {
 
   badge(id) {
     if (id === "ob-outline") { const n = subagentCounts().live; return n ? { n } : null; }
-    if (id === "ob-agents") { const n = agents().filter((a) => a.status === "blocked").length; return n ? { n, color: tc().blocked } : null; }
+    if (id === "ob-agents") {
+      // The agents that need you, by the same rule as the Agents panel and the status bar (kit/attention.js).
+      const tmap = terminalsByAddress(terminals());
+      const dis = getDismissed();
+      const n = attentionCounts(agents().map((a) => agentAttention(a, tmap, dis))).blocked;
+      return n ? { n, color: tc().blocked } : null;
+    }
     return null;
   }
 

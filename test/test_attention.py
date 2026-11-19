@@ -159,7 +159,8 @@ class RankAndCounts(unittest.TestCase):
 
 
 def read(*parts):
-    return Path(ROOT, *parts).read_text(encoding="utf-8")
+    with open(Path(ROOT, *parts), encoding="utf-8") as f:
+        return f.read()
 
 
 class KitWiring(unittest.TestCase):
@@ -202,6 +203,38 @@ class AgentsWiring(unittest.TestCase):
 
     def test_stale_dismissals_are_pruned(self):
         self.assertIn("pruneDismissedNow(", self.src)
+
+
+class OtherPanelsWiring(unittest.TestCase):
+    def test_status_bar_counts_come_from_the_shared_rule(self):
+        src = read("mods", "ob-status", "main.js")
+        self.assertIn("attentionCounts(", src)
+        self.assertIn("agentAttention(a, tmap, dis)", src)
+
+    def test_agents_tab_badge_comes_from_the_shared_rule(self):
+        src = read("mods", "ob-strip", "main.js")
+        self.assertIn("attentionCounts(", src)
+        self.assertIn("agentAttention(a, tmap, dis)", src)
+
+    def test_sessions_marks_and_pill_come_from_the_shared_rule(self):
+        src = read("mods", "ob-sessions", "main.js")
+        self.assertIn("paneAttention(", src)
+        self.assertIn("this.dis = getDismissed()", src)
+        self.assertIn("spaceAttention(n.space, ps, this.tmap, this.dis)", src)
+        self.assertIn("tabAttention(tab, ps, this.tmap, this.dis)", src)
+
+    def test_bookmarks_pill_comes_from_the_shared_rule(self):
+        src = read("mods", "ob-bookmarks", "main.js")
+        self.assertIn("paneAttention(", src)
+        self.assertIn("attentionStatus(", src)
+
+    def test_truth_panels_keep_the_reported_status(self):
+        # The pane header, Properties and Outline say what the terminal reports.
+        for mod in ("ob-pane", "ob-props", "ob-outline"):
+            with self.subTest(mod=mod):
+                src = read("mods", mod, "main.js")
+                for name in ("attentionStatus(", "agentAttention(", "paneAttention(", "getDismissed(", "ob.dismissed"):
+                    self.assertNotIn(name, src)
 
 
 if __name__ == "__main__":

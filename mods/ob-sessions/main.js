@@ -24,6 +24,7 @@ import {
   chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneLabelOf, paneSecondary, place, openView,
   mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden, getHidden, updateHidden,
   lsGet, lsSet,
+  paneAttention, tabAttention, spaceAttention, getDismissed, terminalsByAddress,
 } from "./kit.js";
 import { Git } from "./git.js";
 import { matchQ } from "./match.js";
@@ -262,11 +263,12 @@ export default class Sessions extends View {
     const by = this.sort;
     const order = new Map(spaces().map((s, i) => [s.id, i]));
     const act = (s) => Math.max(0, ...(s.tabs ?? []).map((x) => x.changed_at ?? 0));
+    const ps = panes();
     const out = [...list];
     if (by === "name") out.sort((a, b) => a.name.localeCompare(b.name));
     else if (by === "name-desc") out.sort((a, b) => b.name.localeCompare(a.name));
     else if (by === "activity") out.sort((a, b) => act(b) - act(a) || order.get(a.id) - order.get(b.id));
-    else if (by === "status") out.sort((a, b) => (RANK[normStatus(b.status)] ?? -1) - (RANK[normStatus(a.status)] ?? -1) || order.get(a.id) - order.get(b.id));
+    else if (by === "status") out.sort((a, b) => (RANK[normStatus(spaceAttention(b, ps, this.tmap, this.dis))] ?? -1) - (RANK[normStatus(spaceAttention(a, ps, this.tmap, this.dis))] ?? -1) || order.get(a.id) - order.get(b.id));
     return out;
   }
   sortTabs(list, ps) {
@@ -276,13 +278,15 @@ export default class Sessions extends View {
     if (by === "name") out.sort((a, b) => label(a).localeCompare(label(b)));
     else if (by === "name-desc") out.sort((a, b) => label(b).localeCompare(label(a)));
     else if (by === "activity") out.sort((a, b) => (b.changed_at ?? 0) - (a.changed_at ?? 0) || a.index - b.index);
-    else if (by === "status") out.sort((a, b) => (RANK[normStatus(b.status)] ?? -1) - (RANK[normStatus(a.status)] ?? -1) || a.index - b.index);
+    else if (by === "status") out.sort((a, b) => (RANK[normStatus(tabAttention(b, ps, this.tmap, this.dis))] ?? -1) - (RANK[normStatus(tabAttention(a, ps, this.tmap, this.dis))] ?? -1) || a.index - b.index);
     return out;
   }
 
   model() {
     const now = Date.now();
     const sp = spaces(), ps = panes();
+    this.tmap = terminalsByAddress(terminals());
+    this.dis = getDismissed(); // marks and pills are attention: a dismissed "Needs you" report shows as idle
     const byKey = new Map();
     const add = (n, parent) => { n.parent = parent ?? null; n.children ??= []; byKey.set(n.key, n); if (parent) parent.children.push(n); return n; };
     const paneNode = (w, tab, p, parent) => {
@@ -915,7 +919,7 @@ export default class Sessions extends View {
           onClick: (_e, cx) => { this.hideSpace(w.id); cx.notify(); },
         }));
       }
-      const st = n.pane ? n.pane.status : w.status;
+      const st = n.pane ? paneAttention(n.pane, this.tmap, this.dis) : spaceAttention(w, ps, this.tmap, this.dis);
       o.right.push(this.status(st, Boolean(n.pane?.program?.agent), t));
     } else if (n.kind === "tab") {
       const tab = n.tab;
@@ -925,14 +929,14 @@ export default class Sessions extends View {
       if (n.secondary) o.after.push(div().min_w(0).flex_shrink(1).truncate().text_size(S.textXs).text_color(t.dim).child(n.secondary));
       if (isTabHidden(this.hiddenState(), tab, n.space) && !compact) o.right.push(this.tag("hidden", t));
       if (tab.status === "working" && tab.working_since && now - tab.working_since > 60000 && !compact) o.right.push(this.tag(ago(tab.working_since, now), t));
-      o.right.push(this.status(n.pane ? n.pane.status : tab.status, Boolean(n.pane?.program?.agent), t));
+      o.right.push(this.status(n.pane ? paneAttention(n.pane, this.tmap, this.dis) : tabAttention(tab, ps, this.tmap, this.dis), Boolean(n.pane?.program?.agent), t));
     } else if (n.kind === "pane") {
       const p = n.pane;
       o.lead = p.mod ? icon("layers", S.iconSm, t.dim) : programIcon(p.program, S.iconSm, selected ? t.foreground : t.muted);
       o.labelColor = selected ? t.foreground : t.muted;
       if (p.terminal) o.after.push(bmMark("terminal", p.terminal));
       if (p.zoomed && !compact) o.right.push(this.tag("zoomed", t));
-      o.right.push(this.status(p.status, Boolean(p.program?.agent), t));
+      o.right.push(this.status(paneAttention(p, this.tmap, this.dis), Boolean(p.program?.agent), t));
     } else if (isSub) {
       const it = n.sub;
       o.height = S.rowSm;
@@ -1083,11 +1087,12 @@ export default class Sessions extends View {
       for (const n of list) {
         if (n.kind !== "space") continue;
         const on = sel && n.reps.space === focused()?.space;
+        const sst = spaceAttention(n.space, ps, this.tmap, this.dis);
         cells.push(h_flex().id(`rail-${n.key}`).relative().h(28).w_full().flex_none().justify_center().items_center().rounded(S.radius)
           .when(on, (e) => e.bg(t.selected)).when(!on, (e) => e.hover((s) => s.bg(t.hover))).cursor_pointer()
           .tooltip(n.label).on_click(() => run("space.select", { id: n.reps.space }))
           .child(programIcon(leadProgram(n.space, n.tab, n.pane, ps), 16, on ? t.foreground : t.muted))
-          .when(["blocked", "done", "working"].includes(n.space.status), (e) => e.child(div().absolute().right(6).bottom(3).child(statusMark(n.space.status, 8)))));
+          .when(["blocked", "done", "working"].includes(sst), (e) => e.child(div().absolute().right(6).bottom(3).child(statusMark(sst, 8)))));
       }
     }
     return v_flex().id("list").flex_1().min_h(0).px(4).gap(1).overflow_y_scroll().children(cells);

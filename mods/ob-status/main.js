@@ -8,8 +8,11 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, machines, panes, run, nextCommand, settings, notify } from "herdr";
-import { S, tc, icon, statusMark, current, machineLabel, tilde, chordLabel, bindingFor, place, copyText } from "./kit.js";
+import { agents, machines, panes, terminals, run, nextCommand, settings, notify } from "herdr";
+import {
+  S, tc, icon, statusMark, current, machineLabel, tilde, chordLabel, bindingFor, place, copyText,
+  agentAttention, attentionCounts, getDismissed, terminalsByAddress,
+} from "./kit.js";
 
 const ORDER = ["blocked", "done", "working", "idle"];
 const WORD = { blocked: "need you", done: "finished", working: "working", idle: "idle" };
@@ -52,9 +55,11 @@ export default class Status extends View {
   render() {
     const t = tc();
     const c = current();
-    const list = agents();
+    const tmap = terminalsByAddress(terminals());
+    const dis = getDismissed();
     const zoom = settings().zoom || 1;
-    const counts = Object.fromEntries(ORDER.map((s) => [s, list.filter((a) => a.status === s).length]));
+    // By attention (kit/attention.js): failed counts as "need you", a dismissed report as idle.
+    const counts = attentionCounts(agents().map((a) => agentAttention(a, tmap, dis)));
     const m = c.machine ?? null;
     const mstate = m ? machines().find((x) => x.name === m)?.layout : "ready";
     const branch = c.pane?.branch ?? c.space?.branch ?? null;

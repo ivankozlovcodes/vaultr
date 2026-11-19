@@ -13,6 +13,7 @@ import {
   S, icon, programIcon, iconButton, treeRow, avatar, emptyState, openMenu, statusMark, needsYou, normStatus,
   sectionHeader, takeFocus, bookmarks, toggleBookmark, tabLabel, paneName, current, feed, bindingFor, chordLabel,
   openView, machineOf, ago,
+  attentionStatus, paneAttention, tabAttention, spaceAttention, getDismissed, terminalsByAddress,
 } from "./kit.js";
 
 const KINDS = [["space", "Spaces"], ["tab", "Tabs"], ["terminal", "Sessions"], ["run", "Runs"]];
@@ -98,7 +99,7 @@ export default class Bookmarks extends View {
     if (b.kind === "space") {
       const s = ctx.sp.find((x) => x.id === b.id);
       if (!s) return { gone: true, lead: icon("folder", S.iconSm, t.dim) };
-      return { label: s.name, status: s.status, lead: avatar(s, 16), machine: s.machine, go: () => run("space.select", { id: s.id }) };
+      return { label: s.name, status: spaceAttention(s, ctx.ps, ctx.tmap, ctx.dis), lead: avatar(s, 16), machine: s.machine, go: () => run("space.select", { id: s.id }) };
     }
     if (b.kind === "tab") {
       const s = ctx.sp.find((x) => (x.tabs ?? []).some((y) => y.id === b.id));
@@ -106,16 +107,16 @@ export default class Bookmarks extends View {
       if (!tab) return { gone: true, lead: icon("tab", S.iconSm, t.dim) };
       const mine = ctx.ps.filter((p) => p.tab === tab.id);
       const lead = mine.length === 1 ? programIcon(mine[0].program, S.iconSm, t.muted) : icon("tab", S.iconSm, t.dim);
-      return { label: tabLabel(tab, ctx.ps), context: s.name, status: tab.status, lead, machine: s.machine,
+      return { label: tabLabel(tab, ctx.ps), context: s.name, status: tabAttention(tab, ctx.ps, ctx.tmap, ctx.dis), lead, machine: s.machine,
         go: () => { run("space.select", { id: s.id }); run("tab.select", { id: tab.id }); } };
     }
     if (b.kind === "terminal") {
       const term = ctx.ts.find((x) => x.address === b.id && x.state === "live");
       if (!term) return { gone: true, lead: icon("terminal", S.iconSm, t.dim) };
       const p = ctx.ps.find((x) => x.terminal === b.id);
-      if (!p) return { label: b.label || term.name || b.id, status: term.status, agent: true, lead: programIcon(term.program, S.iconSm, t.muted), machine: machineOf(b.id), go: () => run("terminal.peek", { terminal: b.id }) };
+      if (!p) return { label: b.label || term.name || b.id, status: attentionStatus(ctx.dis, b.id, term.status, term), agent: true, lead: programIcon(term.program, S.iconSm, t.muted), machine: machineOf(b.id), go: () => run("terminal.peek", { terminal: b.id }) };
       const s = ctx.sp.find((x) => (x.tabs ?? []).some((y) => y.id === p.tab));
-      return { label: b.label || paneName(p), status: p.status, agent: Boolean(p.program?.agent), lead: programIcon(p.program, S.iconSm, t.muted), machine: s?.machine ?? machineOf(b.id),
+      return { label: b.label || paneName(p), status: paneAttention(p, ctx.tmap, ctx.dis), agent: Boolean(p.program?.agent), lead: programIcon(p.program, S.iconSm, t.muted), machine: s?.machine ?? machineOf(b.id),
         go: () => { if (s) run("space.select", { id: s.id }); run("tab.select", { id: p.tab }); run("pane.focus", { pane: p.pane }); } };
     }
     if (b.kind === "run") {
@@ -127,7 +128,8 @@ export default class Bookmarks extends View {
     }
     return { gone: true, lead: icon("bookmark", S.iconSm, t.dim) };
   }
-  ctx() { return { sp: spaces(), ps: panes(), ts: terminals() }; }
+  // Statuses here are attention (kit/attention.js): a dismissed "Needs you" report shows as idle.
+  ctx() { const ts = terminals(); return { sp: spaces(), ps: panes(), ts, tmap: terminalsByAddress(ts), dis: getDismissed() }; }
   open(b) { const r = this.resolve(b, this.ctx()); if (!r.gone) r.go?.(); }
 
   // Bookmark indexes in display order (grouped by kind, folded groups left out).
