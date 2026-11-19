@@ -102,13 +102,13 @@ class QuartzModel(unittest.TestCase):
             }));
         ''', {"W": W, "H": H})
         # charge -100 * repelForce; centre strength; linkDistance 30; collide iterations 3 (graph.inline.ts 169-172)
-        # Machines and spaces push less (-40 x repelForce) and their push stops at 250; machines have a gentle pull to the middle.
-        self.assertEqual(r["local"], {"charge": -50, "broadCharge": -20, "maxChargeDistance": 250, "machineGravity": 0.2,
-                                      "center": 0.3, "linkDistance": 30, "collideIterations": 3, "radial": None})
-        # radial: min(W, max(H, 250)) / 2 * 0.8 at strength 0.2 (graph.inline.ts 174-175)
-        self.assertEqual(r["global"]["radial"], {"radius": 0.8 * min(W, max(H, 250)) / 2, "strength": 0.2})
-        self.assertEqual(r["global"]["charge"], -50)
-        self.assertEqual(r["global"]["center"], 0.2)
+        # Machines and spaces push less (-40 x repelForce) and their push stops at 250; concentric rings replace outer-rim radial.
+        self.assertEqual(r["local"], {"charge": -50, "broadCharge": -20, "maxChargeDistance": 250,
+                                      "center": 0.3, "linkDistance": 30, "collideIterations": 3,
+                                      "ringStrength": 0.14, "sectorStrength": 0.03})
+        self.assertEqual(r["global"], {"charge": -50, "broadCharge": -20, "maxChargeDistance": 250,
+                                       "center": 0.2, "linkDistance": 30, "collideIterations": 3,
+                                       "ringStrength": 0.14, "sectorStrength": 0.03})
         # Quartz keeps d3-force's alphaMin; the damping is Vaultr's: heavier than d3's (0.4, 0.0228) so the graph is not floaty
         self.assertEqual(r["alphaMin"], 0.001)
         self.assertEqual(r["alphaDecay"], 0.06)
@@ -1704,6 +1704,224 @@ class OpenArtifact(unittest.TestCase):
             self.assertIn(e, shape)
         self.assertIn("command -v", shape)
         self.assertIn("editorArgv(", self.body)
+
+
+def single_machine_radial_graph(extra_machines=()):
+    """One active machine with three spaces, panes (including a sibling pair), sub-agents, and a touched note."""
+    nodes = [
+        {"key": "m:laptop", "kind": "m"},
+        {"key": "s:a0", "kind": "s", "parent": "m:laptop"},
+        {"key": "s:a1", "kind": "s", "parent": "m:laptop"},
+        {"key": "s:a2", "kind": "s", "parent": "m:laptop"},
+        {"key": "p:a00", "kind": "p", "parent": "s:a0"},
+        {"key": "p:a01", "kind": "p", "parent": "s:a0"},
+        {"key": "p:a10", "kind": "p", "parent": "s:a1"},
+        {"key": "p:a11", "kind": "p", "parent": "s:a1"},
+        {"key": "p:a20", "kind": "p", "parent": "s:a2"},
+        {"key": "r:s0", "kind": "r", "parent": "p:a00"},
+        {"key": "c:s1", "kind": "c", "parent": "p:a10"},
+        {"key": "h:s2", "kind": "h", "parent": "p:a20"},
+        {"key": "note:/srv/people/vault/plan.md", "kind": "n"},
+    ] + [{"key": f"m:{m}", "kind": "m"} for m in extra_machines]
+    edges = [
+        ["m:laptop", "s:a0", "contain"],
+        ["m:laptop", "s:a1", "contain"],
+        ["m:laptop", "s:a2", "contain"],
+        ["s:a0", "p:a00", "contain"],
+        ["s:a0", "p:a01", "contain"],
+        ["p:a00", "p:a01", "sibling"],
+        ["s:a1", "p:a10", "contain"],
+        ["s:a1", "p:a11", "contain"],
+        ["s:a2", "p:a20", "contain"],
+        ["p:a00", "r:s0", "link"],
+        ["p:a10", "c:s1", "link"],
+        ["p:a20", "h:s2", "link"],
+        ["p:a10", "note:/srv/people/vault/plan.md", "touch", "edit"],
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+class CenteredRadialLayout(unittest.TestCase):
+    """Concentric radial-center layout (sim.js, main.js): single roots sit at (0, 0) and children radiate outward in
+    depth rings; multi-machine roots share an inner hub ring; Local anchors the focused session at (0, 0) and spreads
+    BFS hops outward, clearing stale positions on mode or focus switches."""
+
+    def test_single_machine_global_graph_spreads_outward_in_concentric_rings_from_origin(self):
+        g = single_machine_radial_graph()
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, P.g, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const mean = (ks) => ks.reduce((s, k) => s + rOf(k), 0) / ks.length;
+            console.log(JSON.stringify({
+              machine: rOf("m:laptop"),
+              spaces: mean(["s:a0", "s:a1", "s:a2"]),
+              panes: mean(["p:a00", "p:a01", "p:a10", "p:a11", "p:a20"]),
+              subagents: mean(["r:s0", "c:s1", "h:s2"]),
+              note: rOf("note:/srv/people/vault/plan.md"),
+            }));
+        """, {"g": g, "W": W, "H": H})
+        self.assertLess(r["machine"], 15, r)
+        self.assertLess(r["machine"], r["spaces"], r)
+        self.assertLess(r["spaces"], r["panes"], r)
+        self.assertLess(r["panes"], r["subagents"], r)
+        self.assertLess(r["panes"], r["note"], r)
+
+    def test_single_active_machine_with_isolated_machines_keeps_center_and_tucks_isolated_inside(self):
+        g = single_machine_radial_graph(extra_machines=["spare", "sandbox-vm"])
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, P.g, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const mean = (ks) => ks.reduce((s, k) => s + rOf(k), 0) / ks.length;
+            const iso = ["m:spare", "m:sandbox-vm"];
+            const conn = P.g.nodes.filter((n) => !iso.includes(n.key)).map((n) => rOf(n.key));
+            console.log(JSON.stringify({
+              machine: rOf("m:laptop"),
+              spaces: mean(["s:a0", "s:a1", "s:a2"]),
+              panes: mean(["p:a00", "p:a01", "p:a10", "p:a11", "p:a20"]),
+              R: Math.max(...conn),
+              isoR: iso.map(rOf),
+            }));
+        """, {"g": g, "W": W, "H": H})
+        self.assertLess(r["machine"], 18, r)
+        self.assertLess(r["machine"], r["spaces"], r)
+        self.assertLess(r["spaces"], r["panes"], r)
+        for d in r["isoR"]:
+            self.assertLess(d, 0.75 * r["R"], r)
+
+    def test_multi_machine_global_graph_places_every_parent_closer_to_origin_than_its_children(self):
+        g = three_machines()
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, P.g, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const iso = ["m:spare", "m:sandbox-vm"];
+            const pairs = P.g.edges
+              .filter(([, , k]) => k === "contain")
+              .map(([a, b]) => ({ a, b, ra: rOf(a), rb: rOf(b) }));
+            const R = Math.max(...P.g.nodes.filter((n) => !iso.includes(n.key)).map((n) => rOf(n.key)));
+            console.log(JSON.stringify({ pairs, R, isoR: iso.map(rOf) }));
+        """, {"g": g, "W": W, "H": H})
+        for pair in r["pairs"]:
+            self.assertLess(pair["ra"], pair["rb"], pair)
+        for d in r["isoR"]:
+            self.assertLess(d, 0.75 * r["R"], r)
+
+    def test_local_graph_anchors_focus_at_origin_and_spreads_hops_outward(self):
+        g = {
+            "nodes": [
+                {"key": "m:laptop", "kind": "m"},
+                {"key": "s:A", "kind": "s", "parent": "m:laptop"},
+                {"key": "p:focus", "kind": "p", "parent": "s:A"},
+                {"key": "p:sib", "kind": "p", "parent": "s:A"},
+                {"key": "p:peer0", "kind": "p", "parent": "s:A"},
+                {"key": "p:peer1", "kind": "p", "parent": "s:A"},
+                {"key": "r:sub0", "kind": "r", "parent": "p:focus"},
+                {"key": "r:sub1", "kind": "r", "parent": "p:focus"},
+                {"key": "h:child0", "kind": "h", "parent": "r:sub0"},
+                {"key": "r:peerSub0", "kind": "r", "parent": "p:peer0"},
+                {"key": "note:/srv/people/vault/doc.md", "kind": "n"},
+            ],
+            "edges": [
+                ["m:laptop", "s:A", "contain"],
+                ["s:A", "p:focus", "contain"],
+                ["s:A", "p:sib", "contain"],
+                ["s:A", "p:peer0", "contain"],
+                ["s:A", "p:peer1", "contain"],
+                ["p:focus", "p:sib", "sibling"],
+                ["p:focus", "r:sub0", "link"],
+                ["p:focus", "r:sub1", "link"],
+                ["r:sub0", "h:child0", "link"],
+                ["p:peer0", "r:peerSub0", "link"],
+                ["p:peer1", "note:/srv/people/vault/doc.md", "touch", "edit"],
+            ],
+        }
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, { ...P.g, focus: "p:focus" }, S.QUARTZ.local, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const mean = (ks) => ks.reduce((s, k) => s + rOf(k), 0) / ks.length;
+            const adj = new Map();
+            for (const [a, b, kind] of P.g.edges) {
+              if (kind === "sibling") continue;
+              (adj.get(a) ?? adj.set(a, []).get(a)).push(b);
+              (adj.get(b) ?? adj.set(b, []).get(b)).push(a);
+            }
+            const dist = new Map([["p:focus", 0]]);
+            const q = ["p:focus"];
+            while (q.length) {
+              const cur = q.shift();
+              for (const nxt of adj.get(cur) ?? []) {
+                if (!dist.has(nxt)) { dist.set(nxt, dist.get(cur) + 1); q.push(nxt); }
+              }
+            }
+            const hops = [1, 2, 3].map((d) => [...dist.entries()].filter(([, v]) => v === d).map(([k]) => k));
+            console.log(JSON.stringify({
+              focus: rOf("p:focus"),
+              hops,
+              means: hops.map(mean),
+            }));
+        """, {"g": g, "W": W, "H": H})
+        self.assertLess(r["focus"], 12, r)
+        self.assertLess(r["means"][0], r["means"][1], r)
+        self.assertLess(r["means"][1], r["means"][2], r)
+
+    def test_radial_targets_ignore_sibling_edges_and_mode_switch_clears_positions(self):
+        r = run("""
+            const nodes = [
+              { key: "m:laptop", kind: "m" },
+              { key: "s:A", kind: "s", parent: "m:laptop" },
+              { key: "p:1", kind: "p", parent: "s:A" },
+              { key: "p:2", kind: "p", parent: "s:A" },
+            ];
+            const edges = [
+              ["m:laptop", "s:A", "contain"],
+              ["s:A", "p:1", "contain"],
+              ["s:A", "p:2", "contain"],
+              ["p:1", "p:2", "sibling"],
+            ];
+            const t1 = S.radialTargets(nodes, edges, { linkDistance: 30 });
+            const t2 = S.radialTargets([...nodes].reverse(), [...edges].reverse(), { linkDistance: 30 });
+            const sameTargets = [...t1].every(([k, v]) => {
+              const w = t2.get(k);
+              return w && v.x === w.x && v.y === w.y && v.rRing === w.rRing && v.angle === w.angle;
+            });
+            const sim = S.createSim();
+            S.sync(sim, P.world, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            sim.pos.clear();
+            S.sync(sim, { ...P.world, focus: "p:a000" }, S.QUARTZ.local, P.W, P.H);
+            const alphaOnClear = sim.d3.alpha();
+            S.settle(sim, 5000);
+            const fp = sim.pos.get("p:a000");
+            console.log(JSON.stringify({
+              sRing: t1.get("s:A").rRing,
+              p1Ring: t1.get("p:1").rRing,
+              p2Ring: t1.get("p:2").rRing,
+              sameTargets,
+              alphaOnClear,
+              focusR: Math.hypot(fp.x, fp.y),
+            }));
+        """, {"world": world(), "W": W, "H": H})
+        self.assertEqual(r["p1Ring"], r["p2Ring"], r)
+        self.assertGreater(r["p1Ring"], r["sRing"], r)
+        self.assertTrue(r["sameTargets"], "radialTargets must be deterministic across node/edge reordering")
+        self.assertEqual(r["alphaOnClear"], 1)
+        self.assertLess(r["focusR"], 12, r)
+
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertRegex(src, r"sync\(this\.sim,\s*\{[^}]*focus:\s*g\.focus[^}]*\}", "main.js passes focus: g.focus into sync")
+        mode_line = re.search(r'else if \(verb === "mode"\)\s*\{([^\n]+)\}', src)
+        focus_line = re.search(r'else if \(verb === "focus-on"\)\s*\{([^\n]+)\}', src)
+        self.assertIsNotNone(mode_line)
+        self.assertIsNotNone(focus_line)
+        self.assertIn("this.sim.pos.clear()", mode_line.group(1))
+        self.assertIn("this.sim.pos.clear()", focus_line.group(1))
 
 
 if __name__ == "__main__":

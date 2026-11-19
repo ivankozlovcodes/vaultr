@@ -38,12 +38,17 @@ const ALPHA_DECAY = 0.06;                                // alpha 1 reaches alph
 const DRAG_HEAT = 0.2;                                   // alphaTarget while a node is dragged (Quartz: 1)
 const COLLIDE_ITERATIONS = 3;
 const SIBLING_FACTOR = 0.5;                              // a sibling spring is half the link distance
-// Machines and spaces push each other less than panes do (charge -60 x repelForce against -100), the push stops at
-// 250 world units, and machines are drawn gently to the middle, so disconnected machines (spare, sandbox-vm) do not
-// sit on the rim and connected ones do not fly apart. Everything else keeps Quartz's values.
+// Machines and spaces push each other less than panes do (charge -40 x repelForce against -100), and the push
+// stops at 250 world units. Concentric rings radiate outward from the origin (focus in Local, active machine or root
+// hub in Global), with gentle sector springs pulling each node toward its angular slot.
 const BROAD_CHARGE_FACTOR = 0.4;                         // machines and spaces: -40 x repelForce
 const MAX_CHARGE_DISTANCE = 250;                         // the charge reaches no further than this (world units, zoom 1)
-const MACHINE_GRAVITY = 0.2;                             // pull of each machine toward the centre
+const HUB_RADIUS = 26;                                   // inner hub ring for multi-root Global graphs and extra Local roots
+const ISO_RADIUS = 28;                                   // inner tuck radius for isolated roots alongside one active root
+const RING_STRENGTH = 0.14;                              // radial pull toward each node's concentric depth ring
+const SECTOR_STRENGTH = 0.03;                            // angular pull toward each node's subtree wedge target
+const ANCHOR_STRENGTH = 0.65;                            // center anchor pull for rRing === 0 roots/focus
+const RING_STEP_FACTOR = 1.45;                           // ring spacing as a multiple of linkDistance
 
 // Quartz: 2 + sqrt(number of links) (graph.inline.ts 208-213).
 // Machines and spaces have a fixed size (round frame dots): what hangs off them does not grow them.
@@ -138,20 +143,17 @@ export function animateAlpha(from, to, t, ms = fadeMs(from, to)) {
   return from + (to - from) * e;
 }
 
-// The force parameters a config asks for (graph.inline.ts 169-175). Radial: min(W, max(H, 250)) / 2 * 0.8 at 0.2.
-export function forceSettings(cfg, W, H) {
-  const radial = cfg.enableRadial
-    ? { radius: 0.8 * Math.min(W, Math.max(H, 250)) / 2, strength: 0.2 }
-    : null;
+// The force parameters a config asks for (graph.inline.ts 169-175), with concentric ring and sector springs.
+export function forceSettings(cfg, _W, _H) {
   return {
     charge: -100 * cfg.repelForce,
     broadCharge: -100 * cfg.repelForce * BROAD_CHARGE_FACTOR,
     maxChargeDistance: MAX_CHARGE_DISTANCE,
-    machineGravity: MACHINE_GRAVITY,
     center: cfg.centerForce,
     linkDistance: cfg.linkDistance,
     collideIterations: COLLIDE_ITERATIONS,
-    radial,
+    ringStrength: RING_STRENGTH,
+    sectorStrength: SECTOR_STRENGTH,
   };
 }
 
@@ -191,9 +193,183 @@ export function hoverSet(edges, key) {
   return set;
 }
 
+const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+// Concentric radial layout targets: Map(key -> { x, y, rRing, angle }).
+// Local mode anchors `focus` at (0, 0) and spreads non-sibling BFS hops outward; Global mode anchors a single active
+// root at (0, 0) (tucking isolated roots onto ISO_RADIUS) or places multiple roots on HUB_RADIUS. Deterministic across
+// node and edge reordering.
+export function radialTargets(list, edges, { focus = null, linkDistance = 30 } = {}) {
+  const seen = new Map();
+  for (const n of list ?? []) if (!seen.has(n.key)) seen.set(n.key, n);
+  const out = new Map();
+  if (!seen.size) return out;
+
+  const nonSibling = (edges ?? []).filter(([a, b, k]) => k !== "sibling" && seen.has(a) && seen.has(b));
+  const adjSet = new Map();
+  for (const k of seen.keys()) adjSet.set(k, new Set());
+  for (const [a, b] of nonSibling) {
+    if (a === b) continue;
+    adjSet.get(a).add(b);
+    adjSet.get(b).add(a);
+  }
+  const adj = new Map();
+  for (const [k, s] of adjSet) adj.set(k, [...s].sort(cmp));
+
+  const kids = new Map();
+  const addChild = (p, c) => {
+    let cs = kids.get(p);
+    if (!cs) { cs = []; kids.set(p, cs); }
+    cs.push(c);
+  };
+
+  const ringStep = linkDistance * RING_STEP_FACTOR;
+  const weights = new Map();
+  const wOf = (k) => {
+    if (weights.has(k)) return weights.get(k);
+    const cs = kids.get(k);
+    if (!cs || !cs.length) { weights.set(k, 1); return 1; }
+    let w = 0;
+    for (const c of cs) w += wOf(c);
+    w = Math.max(1, w);
+    weights.set(k, w);
+    return w;
+  };
+
+  const place = (k, a0, a1, r) => {
+    const a = (a0 + a1) / 2;
+    out.set(k, {
+      x: r === 0 ? 0 : Math.cos(a) * r,
+      y: r === 0 ? 0 : Math.sin(a) * r,
+      rRing: r,
+      angle: r === 0 ? 0 : a,
+    });
+    const cs = kids.get(k);
+    if (!cs || !cs.length) return;
+    const total = cs.reduce((s, c) => s + wOf(c), 0) || 1;
+    const nextR = r + ringStep;
+    let cur = a0;
+    for (const c of cs) {
+      const span = ((a1 - a0) * wOf(c)) / total;
+      place(c, cur, cur + span, nextR);
+      cur += span;
+    }
+  };
+
+  const sortedKeys = [...seen.keys()].sort(cmp);
+  if (focus && seen.has(focus)) {
+    const visited = new Set();
+    const bfs = (root) => {
+      visited.add(root);
+      const q = [root];
+      for (let head = 0; head < q.length; head++) {
+        const u = q[head];
+        for (const v of adj.get(u) ?? []) {
+          if (visited.has(v)) continue;
+          visited.add(v);
+          addChild(u, v);
+          q.push(v);
+        }
+      }
+    };
+    bfs(focus);
+    const extraRoots = [];
+    for (const k of sortedKeys) {
+      if (!visited.has(k)) {
+        extraRoots.push(k);
+        bfs(k);
+      }
+    }
+    place(focus, -Math.PI / 2, 1.5 * Math.PI, 0);
+    if (extraRoots.length) {
+      const total = extraRoots.reduce((s, k) => s + wOf(k), 0) || 1;
+      let cur = -Math.PI / 2;
+      for (const k of extraRoots) {
+        const span = (2 * Math.PI * wOf(k)) / total;
+        place(k, cur, cur + span, HUB_RADIUS);
+        cur += span;
+      }
+    }
+    return out;
+  }
+
+  const parentOf = new Map();
+  for (const k of sortedKeys) {
+    const n = seen.get(k);
+    let p = null;
+    if (n.parent && seen.has(n.parent) && n.parent !== k) {
+      p = n.parent;
+    } else if (n.kind === "n" || n.kind === "a") {
+      const nbrs = adj.get(k) ?? [];
+      p = nbrs.find((v) => {
+        const vk = seen.get(v)?.kind;
+        return vk !== "n" && vk !== "a";
+      }) ?? nbrs[0] ?? null;
+    }
+    if (p && p !== k) parentOf.set(k, p);
+  }
+  const state = new Map();
+  for (const k of sortedKeys) {
+    if (state.get(k) === 2) continue;
+    const path = [];
+    const inPath = new Set();
+    let cur = k;
+    while (cur && state.get(cur) !== 2) {
+      if (inPath.has(cur)) {
+        parentOf.delete(cur);
+        break;
+      }
+      inPath.add(cur);
+      path.push(cur);
+      cur = parentOf.get(cur) ?? null;
+    }
+    for (const node of path) state.set(node, 2);
+  }
+
+  const roots = [];
+  for (const k of sortedKeys) {
+    const p = parentOf.get(k);
+    if (p) addChild(p, k);
+    else roots.push(k);
+  }
+  const connRoots = roots.filter((k) => (kids.get(k)?.length ?? 0) > 0);
+  const isoRoots = roots.filter((k) => (kids.get(k)?.length ?? 0) === 0);
+
+  if (connRoots.length === 0) {
+    if (isoRoots.length === 1) {
+      place(isoRoots[0], -Math.PI / 2, 1.5 * Math.PI, 0);
+    } else if (isoRoots.length > 1) {
+      const step = (2 * Math.PI) / isoRoots.length;
+      for (let i = 0; i < isoRoots.length; i++) {
+        const a0 = -Math.PI / 2 + i * step;
+        place(isoRoots[i], a0, a0 + step, HUB_RADIUS);
+      }
+    }
+  } else if (connRoots.length === 1 && isoRoots.length === 0) {
+    place(connRoots[0], -Math.PI / 2, 1.5 * Math.PI, 0);
+  } else if (connRoots.length === 1 && isoRoots.length > 0) {
+    place(connRoots[0], -Math.PI / 2, 1.5 * Math.PI, 0);
+    for (let i = 0; i < isoRoots.length; i++) {
+      const a = Math.PI / 4 + (2 * Math.PI * i) / isoRoots.length;
+      place(isoRoots[i], a, a, ISO_RADIUS);
+    }
+  } else {
+    const ordered = [...connRoots, ...isoRoots];
+    const total = ordered.reduce((s, k) => s + wOf(k), 0) || 1;
+    let cur = -Math.PI / 2;
+    for (const k of ordered) {
+      const span = (2 * Math.PI * wOf(k)) / total;
+      place(k, cur, cur + span, HUB_RADIUS);
+      cur += span;
+    }
+  }
+  return out;
+}
+
 // Takes the new graph. Returns true when the set of nodes or links, or the forces, changed.
 export function sync(sim, graph, cfg, W, H) {
   const f = forceSettings(cfg, W, H);
+  const focus = graph.focus ?? cfg?.focus ?? null;
   const seen = new Map();
   for (const n of graph.nodes ?? []) if (!seen.has(n.key)) seen.set(n.key, n);
   const edges = (graph.edges ?? []).filter(([a, b]) => seen.has(a) && seen.has(b));
@@ -202,10 +378,10 @@ export function sync(sim, graph, cfg, W, H) {
   const siblings = edges.filter(([, , k]) => k === "sibling");
   const deg = new Map();
   for (const [a, b] of links) { deg.set(a, (deg.get(a) ?? 0) + 1); deg.set(b, (deg.get(b) ?? 0) + 1); }
-  const sig = edges.map(([a, b, k]) => `${a}>${b}:${k}`).sort().join("|");
+  const sig = `${focus ?? ""}\u0000` + edges.map(([a, b, k]) => `${a}>${b}:${k}`).sort().join("|");
   const settings = JSON.stringify(f);
 
-  const before = new Set(sim.d3.nodes().map((o) => o.key));
+  const before = new Set(sim.d3.nodes().map((o) => o.key).filter((k) => sim.pos.has(k)));
   const added = [...seen.keys()].filter((k) => !before.has(k));
   const removed = [...before].some((k) => !seen.has(k));
   const wasEmpty = before.size === 0;
@@ -221,21 +397,29 @@ export function sync(sim, graph, cfg, W, H) {
     list.push(o);
   }
   if (sim.pos.size > KEEP) for (const k of [...sim.pos.keys()]) if (!seen.has(k)) sim.pos.delete(k);
+
+  const targets = radialTargets(list, edges, { focus, linkDistance: cfg.linkDistance });
+  for (const o of list) {
+    const t = targets.get(o.key);
+    o.ringR = t?.rRing ?? 0;
+    o.tx = t?.x ?? 0;
+    o.ty = t?.y ?? 0;
+    o.angle = t?.angle ?? 0;
+  }
   seed(sim, list, edges, cfg.linkDistance);
 
   // Forces are removed before the node list changes: d3 re-initialises every force on nodes(), and a link to a
   // node that has left would throw.
-  for (const name of ["charge", "center", "gatherX", "gatherY", "link", "sibling", "collide", "radial"]) sim.d3.force(name, null);
+  for (const name of ["charge", "center", "sectorX", "sectorY", "link", "sibling", "collide", "radial"]) sim.d3.force(name, null);
   sim.d3.nodes(list);
   sim.d3
     .force("charge", forceManyBody().strength((d) => (d.kind === "m" || d.kind === "s" ? f.broadCharge : f.charge)).distanceMax(f.maxChargeDistance))
-    .force("center", forceCenter().strength(f.center))
-    .force("gatherX", forceX(0).strength((d) => (d.kind === "m" ? f.machineGravity : 0)))
-    .force("gatherY", forceY(0).strength((d) => (d.kind === "m" ? f.machineGravity : 0)))
+    .force("radial", forceRadial((d) => d.ringR ?? 0, 0, 0).strength((d) => ((d.ringR ?? 0) === 0 ? 0 : f.ringStrength)))
+    .force("sectorX", forceX((d) => d.tx ?? 0).strength((d) => ((d.ringR ?? 0) === 0 ? ANCHOR_STRENGTH : f.sectorStrength)))
+    .force("sectorY", forceY((d) => d.ty ?? 0).strength((d) => ((d.ringR ?? 0) === 0 ? ANCHOR_STRENGTH : f.sectorStrength)))
     .force("link", forceLink(links.map(([a, b]) => ({ source: a, target: b }))).id((d) => d.key).distance(f.linkDistance))
     .force("sibling", forceLink(siblings.map(([a, b]) => ({ source: a, target: b }))).id((d) => d.key).distance(f.linkDistance * SIBLING_FACTOR))
     .force("collide", forceCollide((d) => d.r).iterations(f.collideIterations));
-  if (f.radial) sim.d3.force("radial", forceRadial(f.radial.radius).strength(f.radial.strength));
 
   const changed = added.length > 0 || removed || sig !== sim.sig || settings !== sim.settings;
   // From nothing (the first sync, or an empty graph that cooled): a fresh layout at full heat. Otherwise a gentle reheat.
@@ -246,8 +430,8 @@ export function sync(sim, graph, cfg, W, H) {
   return changed;
 }
 
-// New nodes go one link distance from a placed neighbour (the parent first), at an angle set by their key. A node with
-// no placed neighbour goes on a ring round what is drawn, or at the origin for the first one.
+// Fresh graphs seed each node at its radial target with <= 1 px deterministic jitter. New nodes in a settled graph
+// seed one link distance outward from a placed neighbour (parent first), or at their radial target if unanchored.
 function seed(sim, list, edges, linkDistance) {
   const current = new Map(list.map((o) => [o.key, o]));
   const near = adjacency(edges);
@@ -256,7 +440,18 @@ function seed(sim, list, edges, linkDistance) {
   const placed = list.filter((o) => Number.isFinite(o.x));
   const isPending = new Set(pending.map((o) => o.key));
   const at = (o, x, y) => { o.x = x; o.y = y; isPending.delete(o.key); };
-  const angle = (o) => hash01(o.key) * Math.PI * 2;
+  const jitter = (o) => {
+    const ja = hash01(o.key) * Math.PI * 2;
+    const jr = 0.5 + 0.5 * hash01(`${o.key}#r`);
+    return [(o.tx ?? 0) + Math.cos(ja) * jr, (o.ty ?? 0) + Math.sin(ja) * jr];
+  };
+  if (placed.length === 0) {
+    for (const o of pending) {
+      const [x, y] = jitter(o);
+      at(o, x, y);
+    }
+    return;
+  }
   while (pending.length) {
     let progress = true;
     while (progress) {
@@ -267,7 +462,8 @@ function seed(sim, list, edges, linkDistance) {
           .map((k) => current.get(k))
           .find((p) => p && Number.isFinite(p.x) && !isPending.has(p.key));
         if (!anchor) { next.push(o); continue; }
-        const a = angle(o);
+        const baseAngle = anchor.x || anchor.y ? Math.atan2(anchor.y, anchor.x) : (o.angle ?? 0);
+        const a = baseAngle + (hash01(o.key) - 0.5) * 0.9;
         at(o, anchor.x + Math.cos(a) * linkDistance, anchor.y + Math.sin(a) * linkDistance);
         placed.push(o);
         progress = true;
@@ -276,14 +472,8 @@ function seed(sim, list, edges, linkDistance) {
     }
     if (pending.length) {
       const o = pending.shift();
-      let cx = 0, cy = 0, rad = 0;
-      if (placed.length) {
-        for (const p of placed) { cx += p.x; cy += p.y; }
-        cx /= placed.length; cy /= placed.length;
-        rad = 120 + 20 * Math.sqrt(list.length);
-      }
-      const a = angle(o);
-      at(o, cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+      const [x, y] = jitter(o);
+      at(o, x, y);
       placed.push(o);
     }
   }

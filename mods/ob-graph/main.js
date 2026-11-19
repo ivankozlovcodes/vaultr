@@ -387,12 +387,12 @@ export default class Graph extends View {
     else if (verb === "select") this.selected = arg || null;
     else if (verb === "open") this.open(arg);
     else if (verb === "menu") this.menu(arg);
-    else if (verb === "mode") { this.mode = arg === "local" ? "local" : "global"; this.refit = true; this.persist(); }
+    else if (verb === "mode") { const next = arg === "local" ? "local" : "global"; if (next !== this.mode) this.sim.pos.clear(); this.mode = next; this.refit = true; this.persist(); }
     else if (verb === "depth") { this.depth = clampDepth(arg); this.refit = true; this.persist(); }
     else if (verb === "labels") { this.labelsAll = arg !== "off"; this.persist(); }
     else if (verb === "active") { this.activeOn = setActive(this.activeOn, this.mode, arg !== "off"); this.refit = true; this.persist(); }
     else if (verb === "notes" || verb === "artifacts") { this.touchOn = setTouch(this.touchOn, this.mode, verb, arg !== "off"); this.refit = true; this.persist(); }
-    else if (verb === "focus-on") { inspect(arg || null); this.mode = "local"; this.refit = true; this.persist(); }
+    else if (verb === "focus-on") { this.sim.pos.clear(); inspect(arg || null); this.mode = "local"; this.refit = true; this.persist(); }
     else if (verb === "bookmark") {
       const n = this.g?.nodes.get(arg);
       if (n?.kind === "s") toggleBookmark({ kind: "space", id: n.space.id, label: n.label, machine: n.space.machine ?? null });
@@ -421,7 +421,7 @@ export default class Graph extends View {
     this.cfg = this.mode === "local" ? { ...QUARTZ.local, depth: this.depth } : QUARTZ.global;
     // A change of nodes or links (or of the forces) reheats gently; a refresh with the same ones changes nothing.
     // sync() moves nothing; it reheats on a change, and the frame loop does the moving.
-    const moved = sync(this.sim, { nodes: g.nodes.values(), edges: g.edges }, this.cfg, this.W, Math.max(this.H, 250));
+    const moved = sync(this.sim, { nodes: g.nodes.values(), edges: g.edges, focus: g.focus }, this.cfg, this.W, Math.max(this.H, 250));
     if (moved) {
       if (this.refit) this.fit(g); else this.autoFit(g);
       this.startLoop();
