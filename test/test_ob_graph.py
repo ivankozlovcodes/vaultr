@@ -1924,5 +1924,33 @@ class CenteredRadialLayout(unittest.TestCase):
         self.assertIn("this.sim.pos.clear()", focus_line.group(1))
 
 
+class LabelPlacementAndDepth(unittest.TestCase):
+    """Non-overlapping label culling (placeLabels) and interactive Local depth cycling (nextDepth)."""
+
+    def test_overlapping_unpinned_labels_cull_lower_priority_while_pinned_and_labelsAll_keep_all(self):
+        r = run("""
+            const items = [
+              { key: "m:hub", kind: "m", label: "server", x: 100, top: 80, maxW: 120, size: 9, height: 14, r: 5, pinned: false },
+              { key: "p:leaf", kind: "p", label: "worker-pane", x: 104, top: 82, maxW: 120, size: 9, height: 14, r: 3, pinned: false },
+              { key: "p:far", kind: "p", label: "distant", x: 260, top: 82, maxW: 120, size: 9, height: 14, r: 3, pinned: false },
+            ];
+            const culled = [...S.placeLabels(items, false)].sort();
+            const forced = [...S.placeLabels(items, true)].sort();
+            const pinned = [...S.placeLabels(items.map((x) => x.key === "p:leaf" ? { ...x, pinned: true } : x), false)].sort();
+            console.log(JSON.stringify({ culled, forced, pinned, d: [1, 2, 3].map((x) => S.nextDepth(x, 1)) }));
+        """, {}, SHAPE)
+        self.assertEqual(r["culled"], ["m:hub", "p:far"], "colliding lower-priority leaf label is culled")
+        self.assertEqual(r["forced"], ["m:hub", "p:far", "p:leaf"], "labelsAll keeps every label")
+        self.assertIn("p:leaf", r["pinned"], "pinned hover/selection label always shows")
+        self.assertEqual(r["d"], [2, 3, 1])
+
+    def test_main_wires_placeLabels_depth_button_and_empty_local_pruning(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertIn("placeLabels(", src)
+        self.assertIn('"g-depth"', src)
+        self.assertIn('"g-foot-depth"', src)
+        self.assertIn('nodes.delete("m:local")', src)
+
+
 if __name__ == "__main__":
     unittest.main()

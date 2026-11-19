@@ -36,7 +36,7 @@ import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, to
 import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
-import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, dotTone } from "./shape.js";
+import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, dotTone, placeLabels, nextDepth } from "./shape.js";
 import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
 import {
   QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
@@ -205,6 +205,11 @@ export default class Graph extends View {
     });
     for (const n of touched.nodes) add(n);
     for (const e of touched.edges) edges.push(e);
+    // On a thin client where remote machines exist and local has no spaces or agents, omit the empty m:local dot.
+    if (nodes.has("m:local") && [...nodes.values()].some((n) => n.kind === "m" && n.machine != null)
+        && !edges.some(([a, b]) => a === "m:local" || b === "m:local")) {
+      nodes.delete("m:local");
+    }
     return { nodes, edges };
   }
 
@@ -486,9 +491,17 @@ export default class Graph extends View {
       .child(txt("g-out", "−", "Zoom out", "zoom-out"))
       .child(txt("g-in", "+", "Zoom in", "zoom-in"))
       .child(iconButton({ id: "g-fit", icon: "maximize", size: 22, iconSize: 13, tip: "Fit to view", onClick: (_e, cx) => { this.command("fit", cx); cx.notify(); } }));
+    const nextD = nextDepth(this.depth, 1);
+    const depthBtn = h_flex().id("g-depth").h(20).px(6).items_center().rounded(S.radius).cursor_pointer()
+      .text_size(S.textXs).font_medium().border_1().border_color(t.border)
+      .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(`Local depth: ${this.depth} hop${this.depth === 1 ? "" : "s"} (click for ${nextD}, or [ / ])`)
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
+      .on_click((_e, cx) => { this.command(`depth:${nextD}`, cx); cx.notify(); }).child(`d${this.depth}`);
     const modeGroup = h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
       .on_mouse_down("left", stop).on_mouse_down("right", stop)
       .child(seg("g-local", "Local", this.mode === "local", "mode:local"))
+      .when(this.mode === "local", (e) => e.child(depthBtn))
       .child(seg("g-global", "Global", this.mode === "global", "mode:global"))
       .child(activeSwitch(this.activeNow(), `active:${this.activeNow() ? "off" : "on"}`));
     // One row when it fits; in a narrow panel the zoom buttons go on a second row (shape.js toolbarRows).
@@ -538,6 +551,8 @@ export default class Graph extends View {
         if (e.key === "=" || e.key === "+") this.zoomAt(1.25, this.W / 2, this.H / 2);
         else if (e.key === "-") this.zoomAt(0.8, this.W / 2, this.H / 2);
         else if (e.key === "0" || e.key === "f") this.fit(this.g);
+        else if (e.key === "[" && this.mode === "local") this.command(`depth:${Math.max(1, this.depth - 1)}`, cx);
+        else if (e.key === "]" && this.mode === "local") this.command(`depth:${Math.min(3, this.depth + 1)}`, cx);
         else if (e.key === "enter" && this.selected) this.open(this.selected);
         else if (e.key === "escape") { this.selected = null; this.nodeDrag = null; release(this.sim); this.startLoop(); }
         else return;
@@ -576,8 +591,9 @@ export default class Graph extends View {
       ...linkBatches(restLinks).map((b, i) => layer(`e-${i}`, b.segs, 1, alpha(t.muted, b.alpha))),
       ...linkBatches(litLinks).map((b, i) => layer(`eh-${i}`, b.segs, 1.5, alpha(t.accent, b.alpha))),
     ];
-    const nodes = [], labels = [];
+    const nodes = [], labelItems = [];
     const L = labelLayout(k, this.cfg.scale);
+    const lw = 120;
     for (const n of g.nodes.values()) {
       const p = this.sim.pos.get(n.key);
       if (!p || !Number.isFinite(p.x)) continue;
@@ -596,26 +612,36 @@ export default class Graph extends View {
       }
       const tip = [n.label, n.kind === "p" ? n.program?.name : null, n.status ? `${n.status}` : null, n.address ?? null].filter(Boolean).join(" · ");
       nodes.push(div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).rounded_full().bg(color)
-        .border_1().border_color(this.hover === n.key || this.selected === n.key ? t.foreground : t.canvas)
+        .border_1().border_color(this.hover === n.key || this.selected === n.key || g.focus === n.key ? t.foreground : t.canvas)
         .opacity(na).cursor_pointer().tooltip(tip));
-      // Labels: the hovered neighbourhood and selected node in a chrome pill; frames always; the rest fade in with zoom.
+      // Labels: hovered neighbourhood and selected/focused nodes are pinned; the rest place without overlap until `#` forces all.
       const pill = (this.hover != null && this.near.has(n.key)) || this.selected === n.key;
-      const shown = pill || this.labelsAll || fp.label ? 1 : labelOpacity(k, this.cfg.opacityScale);
+      const pinned = pill || g.focus === n.key;
+      const shown = pinned || this.labelsAll || fp.label ? 1 : labelOpacity(k, this.cfg.opacityScale);
       const la = shown * na;
-      if (la > 0.01) {
-        const lw = 120;
-        const labelColor = this.hover === n.key || this.selected === n.key || fp.label ? t.foreground : t.muted;
-        if (pill) {
-          labels.push(h_flex().id(`${nodeId(n.key)}-l`).absolute().left(x - lw / 2).top(y + rs + LABEL_GAP).w(lw).h(L.height).justify_center().items_center()
-            .opacity(la)
-            .child(div().max_w(lw).truncate().px(4).rounded(3).bg(alpha(t.chrome, 0.9))
-              .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium().text_color(labelColor)
-              .child(n.label)));
-        } else {
-          labels.push(div().id(`${nodeId(n.key)}-l`).absolute().left(x - lw / 2).top(y + rs + LABEL_GAP).w(lw).h(L.height).text_center().truncate()
-            .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium().text_color(labelColor).opacity(la)
-            .child(n.label));
-        }
+      if (la > 0.05) {
+        labelItems.push({
+          key: n.key, kind: n.kind, label: n.label, x, top: y + rs + LABEL_GAP, maxW: lw,
+          size: L.size, height: L.height, r: p.r, active: st === "working" || st === "blocked",
+          pinned, pill, la, fpLabel: fp.label,
+        });
+      }
+    }
+    const chosenLabels = placeLabels(labelItems, this.labelsAll);
+    const labels = [];
+    for (const it of labelItems) {
+      if (!chosenLabels.has(it.key)) continue;
+      const labelColor = this.hover === it.key || this.selected === it.key || g.focus === it.key || it.fpLabel ? t.foreground : t.muted;
+      if (it.pill) {
+        labels.push(h_flex().id(`${nodeId(it.key)}-l`).absolute().left(it.x - lw / 2).top(it.top).w(lw).h(L.height).justify_center().items_center()
+          .opacity(it.la)
+          .child(div().max_w(lw).truncate().px(4).rounded(3).bg(alpha(t.chrome, 0.9))
+            .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium().text_color(labelColor)
+            .child(it.label)));
+      } else {
+        labels.push(div().id(`${nodeId(it.key)}-l`).absolute().left(it.x - lw / 2).top(it.top).w(lw).h(L.height).text_center().truncate()
+          .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium().text_color(labelColor).opacity(it.la)
+          .child(it.label));
       }
     }
     const f = feed();
@@ -712,7 +738,11 @@ export default class Graph extends View {
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_mouse_down("right", (_e, cx) => cx.stop_propagation())
         .child(div().child(`${g.nodes.size} nodes`))
         .when(live > 0, (e) => e.child(div().text_color(t.working).child(`${live} live`)))
-        .when(this.mode === "local", (e) => e.child(div().child(`depth ${this.depth}`)))
+        .when(this.mode === "local", (e) => e.child(div().id("g-foot-depth").px(4).rounded(3).cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(`Cycle Local depth (${this.depth} → ${nextDepth(this.depth, 1)})`)
+          .on_click((_e, cx) => { this.command(`depth:${nextDepth(this.depth, 1)}`, cx); cx.notify(); })
+          .child(`depth ${this.depth}`)))
         .when(bad.length > 0, (e) => e.child(h_flex().gap(3).items_center().tooltip(`Couldn't scan: ${bad.join(", ")}`).child(icon("alert", 11, t.blocked)).child(div().text_color(t.blocked).child(bad.join(", "))))));
   }
 }

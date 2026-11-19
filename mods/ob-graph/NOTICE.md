@@ -6,7 +6,7 @@ at commit `d25a6eab` (package version 4.5.2): `quartz/components/Graph.tsx` (def
 as data; the drawing is Herdr's own (gpui), not Quartz's Pixi renderer. Vaultr's own changes to the simulation: machines and
 spaces push less, and nodes are pulled onto concentric depth rings around a common origin (ring strength 0.14, step 1.45 x linkDistance, sector pull 0.03, center anchor 0.65); heavier damping (velocityDecay 0.8, alphaDecay 0.06, drag
 heat 0.2 where d3 has 0.4 and 0.0228 and Quartz drags at 1) so the graph is not floaty; node radius grows with the links to a node (base 3, +1.8 x sqrt of its links beyond the first,
-capped at 11; Quartz: 2 + sqrt of its links), with fixed radii for machines (5) and spaces (4.5); every node is drawn as a round theme-accented dot with a cutout border.
+capped at 11; Quartz: 2 + sqrt of its links), with fixed radii for machines (5) and spaces (4.5); every node is drawn as a round theme-accented dot with a cutout border; overlapping node labels are culled while hovered and focused labels stay shown.
 
 ## Quartz (MIT)
 

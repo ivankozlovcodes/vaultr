@@ -88,3 +88,44 @@ export function dotTone(r) {
   if (r > 3.5) return 0.75;
   return 0.55;
 }
+
+const KIND_RANK = { m: 4, s: 3, p: 2, r: 1, c: 1, h: 1, n: 1, a: 1 };
+
+// Selects non-overlapping labels by priority so resting frames and zoomed labels never double-print on top of each
+// other. Pinned labels (hovered neighbourhood, selected, or Local focus) always show and claim their boxes first; when
+// `labelsAll` is on, every candidate shows. Returns a Set of `key`s to draw.
+export function placeLabels(items, labelsAll = false) {
+  const list = items ?? [];
+  if (labelsAll) return new Set(list.map((it) => it.key));
+  const boxOf = (it) => {
+    const w = Math.min(it.maxW ?? 120, 10 + String(it.label ?? "").length * (it.size ?? 9) * 0.58);
+    return { l: it.x - w / 2, r: it.x + w / 2, t: it.top, b: it.top + (it.height ?? 14) };
+  };
+  const overlaps = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+  const placed = [];
+  const chosen = new Set();
+  for (const it of list) {
+    if (!it.pinned) continue;
+    chosen.add(it.key);
+    placed.push(boxOf(it));
+  }
+  const rest = list.filter((it) => !it.pinned).sort((a, b) => {
+    const ka = (KIND_RANK[a.kind] ?? 0) + (a.active ? 0.5 : 0);
+    const kb = (KIND_RANK[b.kind] ?? 0) + (b.active ? 0.5 : 0);
+    if (kb !== ka) return kb - ka;
+    if ((b.r ?? 0) !== (a.r ?? 0)) return (b.r ?? 0) - (a.r ?? 0);
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  for (const it of rest) {
+    const box = boxOf(it);
+    if (placed.some((o) => overlaps(box, o))) continue;
+    chosen.add(it.key);
+    placed.push(box);
+  }
+  return chosen;
+}
+
+export function nextDepth(d, step = 1) {
+  const cur = Math.max(1, Math.min(3, Number(d) || 1));
+  return ((cur - 1 + step + 3) % 3) + 1;
+}
