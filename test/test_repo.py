@@ -22,10 +22,13 @@ with open(os.path.join(ROOT, "keys", "vaultr-keys.json"), encoding="utf-8") as f
 
 
 def tracked():
-    """Files git tracks (what the repo ships); the plain tree when this is not a git checkout."""
+    """Tracked plus untracked, non-ignored files in the repo; the plain tree when this is not a git checkout."""
     try:
-        out = subprocess.run(["git", "-C", ROOT, "ls-files", "-z"], capture_output=True, check=True).stdout
-        return [os.path.join(ROOT, p) for p in out.decode().split("\0") if p]
+        out = subprocess.run(
+            ["git", "-C", ROOT, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            capture_output=True, check=True,
+        ).stdout
+        return [os.path.join(ROOT, p) for p in out.decode().split("\0") if p and os.path.isfile(os.path.join(ROOT, p))]
     except (OSError, subprocess.CalledProcessError):
         found = []
         for d, dirs, files in os.walk(ROOT):
@@ -164,6 +167,33 @@ class Repo(unittest.TestCase):
                 p = subprocess.run(["node", "--check", copy], capture_output=True, text=True)
                 self.assertEqual(p.returncode, 0, f"{os.path.relpath(path, ROOT)}: {p.stderr.strip()}")
 
+    def test_untracked_non_ignored_js_file_is_included_in_parse_check(self):
+        with tempfile.TemporaryDirectory(dir=home_guard.TMP) as tmp:
+            subprocess.run(["git", "-C", tmp, "init", "-q"], check=True)
+            with open(os.path.join(tmp, ".gitignore"), "w", encoding="utf-8") as f:
+                f.write("ignored.js\n")
+            with open(os.path.join(tmp, "staged.js"), "w", encoding="utf-8") as f:
+                f.write("export const ok = 1;\n")
+            subprocess.run(["git", "-C", tmp, "add", ".gitignore", "staged.js"], check=True)
+            untracked_ok = os.path.join(tmp, "mods", "ob-new", "main.js")
+            os.makedirs(os.path.dirname(untracked_ok), exist_ok=True)
+            with open(untracked_ok, "w", encoding="utf-8") as f:
+                f.write("export const fresh = 2;\n")
+            ignored = os.path.join(tmp, "ignored.js")
+            with open(ignored, "w", encoding="utf-8") as f:
+                f.write("this is not valid js;\n")
+            with mock.patch(f"{__name__}.ROOT", tmp):
+                walked = suffix(tracked(), ".js", ".mjs")
+                self.assertIn(untracked_ok, walked)
+                self.assertIn(os.path.join(tmp, "staged.js"), walked)
+                self.assertNotIn(ignored, walked)
+                if shutil.which("node"):
+                    self.test_js_parses()
+                    with open(untracked_ok, "w", encoding="utf-8") as f:
+                        f.write("export const = ;\n")
+                    with self.assertRaises(AssertionError):
+                        self.test_js_parses()
+
     def test_shell_parses(self):
         for path in suffix(tracked(), ".sh"):
             with self.subTest(file=os.path.relpath(path, ROOT)):
@@ -179,7 +209,7 @@ class Repo(unittest.TestCase):
     def test_nothing_personal_is_tracked(self):
         # Paths into a person's home, and names read at run time so they are written nowhere: the login name, this
         # machine's host name and the person's Herdr machines (`hc machine ls`, names and hosts of 3+ letters).
-        # Only files git tracks are checked.
+        # Tracked and untracked non-ignored files are checked.
         patterns = [rb"/home/[A-Za-z][A-Za-z0-9._-]*", rb"/Users/[A-Za-z][A-Za-z0-9._-]*"]
         for word in personal_words():
             patterns.append(rb"(?i)(?<![A-Za-z0-9_-])" + re.escape(word.encode()) + rb"(?![A-Za-z0-9_-])")
