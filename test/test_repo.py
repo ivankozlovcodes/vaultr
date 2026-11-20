@@ -15,7 +15,8 @@ ROOT = home_guard.ROOT
 MODS = os.path.join(ROOT, "mods")
 ALL_MODS = sorted(d for d in os.listdir(MODS) if os.path.isdir(os.path.join(MODS, d)))
 OB_MODS = [d for d in ALL_MODS if d.startswith("ob-")]
-KEYS = json.load(open(os.path.join(ROOT, "keys", "vaultr-keys.json")))
+with open(os.path.join(ROOT, "keys", "vaultr-keys.json"), encoding="utf-8") as f:
+    KEYS = json.load(f)
 
 
 def tracked():
@@ -125,7 +126,8 @@ class Repo(unittest.TestCase):
 
     def test_kit_imports_what_it_reexports_and_uses(self):
         # `export { x } from "./y.js"` does not bind x in kit.js: a kit function that calls x throws "x is not defined".
-        src = open(os.path.join(ROOT, "kit", "kit.js")).read()
+        with open(os.path.join(ROOT, "kit", "kit.js"), encoding="utf-8") as f:
+            src = f.read()
         reexported, imported = set(), set()
         for kind, names in re.findall(r"^(export|import)\s*\{([^}]*)\}\s*from", src, re.M):
             (reexported if kind == "export" else imported).update(n.strip() for n in names.split(",") if n.strip())

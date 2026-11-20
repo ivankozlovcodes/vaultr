@@ -1,0 +1,55 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate JSON files
+        run: |
+          for f in layouts/*.json keys/*.json mods/*/mod.json; do
+            test -f "$f"
+            python3 -m json.tool "$f" >/dev/null
+          done
+
+      - name: Run unittest suite
+        run: |
+          set -o pipefail
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          PYTHONDONTWRITEBYTECODE=1 python3 -W error::ResourceWarning -m unittest discover -s test -v 2>&1 | tee "$log"
+          ! grep -q "ResourceWarning" "$log"
+
+      - name: Smoke test install.sh and uninstall
+        run: |
+          app_dir="$(mktemp -d)"
+          trap 'rm -rf "$app_dir"' EXIT
+          HERDR_APP_HOME="$app_dir" ./install.sh
+          test -f "$app_dir/layouts/vaultr.json"
+          test -L "$app_dir/mods/ob-tabs"
+          HERDR_APP_HOME="$app_dir" ./install.sh --uninstall
+          test ! -e "$app_dir/layouts/vaultr.json"
+          test ! -L "$app_dir/mods/ob-tabs"

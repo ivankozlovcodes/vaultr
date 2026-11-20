@@ -143,12 +143,14 @@ class Secondary(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is not installed")
 class Exports(unittest.TestCase):
     def test_kit_re_exports_the_naming_rule_like_the_agent_helpers(self):
-        text = open(os.path.join(ROOT, "kit", "kit.js"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "kit", "kit.js"), encoding="utf-8") as f:
+            text = f.read()
         self.assertIn('from "./names.js"', text)
         self.assertIn("paneLabel", text)
 
     def test_sync_copies_names_js_into_every_mod(self):
-        text = open(os.path.join(ROOT, "kit", "sync.sh"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "kit", "sync.sh"), encoding="utf-8") as f:
+            text = f.read()
         self.assertIn("names.js", text)
 
 

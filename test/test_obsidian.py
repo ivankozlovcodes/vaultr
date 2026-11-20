@@ -97,7 +97,8 @@ class SettingsStamp(unittest.TestCase):
 class PanelReloads(unittest.TestCase):
     """Weak: the Notes panel polls the settings stamp and re-watches a new root. Only the source shows it (no app here)."""
     def test_panel_polls_settings_and_rewatches_a_new_root(self):
-        src = open(os.path.join(ROOT, "mods", "obsidian", "panel.js"), encoding="utf-8").read()
+        with open(os.path.join(ROOT, "mods", "obsidian", "panel.js"), encoding="utf-8") as f:
+            src = f.read()
         self.assertIn("cx.timer.every(SETTINGS_EVERY, (cx) => this.checkSettings(cx))", src)
         self.assertIn("vault.stamp()", src)
         self.assertIn("c.root !== this.root", src)
@@ -105,7 +106,8 @@ class PanelReloads(unittest.TestCase):
     def test_a_failed_watch_polls_once_and_a_rewatch_stops_it(self):
         # Weak (source only): a failed watchFolder starts one 15 s reload poll. It used to start a new one per failure
         # and never stop any; the handle is kept, cancelled when the folder is watched again, and checks its gen.
-        src = open(PANEL, encoding="utf-8").read()
+        with open(PANEL, encoding="utf-8") as f:
+            src = f.read()
         watch = src[src.index("  watch(root, cx) {"):src.index("  toggle(path) {")]
         self.assertIn("this.poll?.cancel()", watch)
         self.assertIn("this.poll = cx.timer.every(", watch)
@@ -145,7 +147,8 @@ class DailyVault(unittest.TestCase):
 class WiringNoVault(unittest.TestCase):
     """Source checks: the daily command and the Notes panel use the no-fallback rule and show the empty state."""
     def read(self, path):
-        return open(path, encoding="utf-8").read()
+        with open(path, encoding="utf-8") as f:
+            return f.read()
 
     def test_daily_command_says_set_your_vault_and_uses_the_rule(self):
         src = self.read(OB_TABS)
