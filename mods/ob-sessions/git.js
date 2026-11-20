@@ -1,3 +1,4 @@
+// Portions derived from the Herdr app (Apache-2.0) and modified for Vaultr; see NOTICE and LICENSE-herdr.
 // ob-sessions git tail: branch, ahead/behind and repo per space place (carried over from the earlier spaces mod).
 // One look at a time per place; local repos are watched (watchFolder); remote ones are looked at
 // again on the fallback. Never throws: a machine that is away just leaves the place "unsure".

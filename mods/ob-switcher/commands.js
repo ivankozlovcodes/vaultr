@@ -1,9 +1,10 @@
+// Portions derived from the Herdr app (Apache-2.0) and modified for Vaultr; see NOTICE and LICENSE-herdr.
 // Command mode of the quick switcher (a query starting with ">"): Vaultr's own commands and Herdr's app commands
 // as one list, fuzzy-matched together. Pure functions, no Herdr or gpui imports, so test/test_ob_switcher.py runs
 // them under node. The switcher passes its fuzzy matcher in as `match(query, text) -> { score, hits } | null`.
 //
 // Sources, both live: Vaultr's rows come from the switcher's own model; Herdr's from commands() (every app command
-// and its arguments) and keys() (the key bindings, for the hints). Nothing is copied into this file.
+// and its arguments) and keys() (the key bindings, for the hints).
 
 import { allowsRow, sinkDisabled } from "./modes.js";
 

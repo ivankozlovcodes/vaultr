@@ -1,3 +1,4 @@
+// Portions derived from the Herdr app (Apache-2.0) and modified for Vaultr; see NOTICE and LICENSE-herdr.
 // ob-sessions: the Obsidian file explorer, for sessions. machine > space > tab > pane > sub-agents.
 // Carries the earlier spaces mod forward (machine groups, connection state, hide/fold machines, Connect for
 // rebuilt machines, login guidance, colored avatars, git tail, worktrees under their repo, drag to
