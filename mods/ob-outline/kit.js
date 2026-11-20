@@ -521,7 +521,7 @@ export function isShown(root, id) {
 export const NODE = {
   left: "ob-left", leftTop: "ob-lt", leftTopStrip: "ob-lt-strip", leftTopStack: "ob-lt-stack",
   leftBottomStack: "ob-lb-stack", footer: "ob-footer",
-  center: "ob-center", tabbar: "ob-tabbar", main: "ob-main", statusRow: "ob-statusrow", statusrow: "ob-statusrow", status: "ob-status", feed: "ob-feed",
+  center: "ob-center", tabbar: "ob-tabbar", main: "ob-main", statusrow: "ob-statusrow", status: "ob-status",
   right: "ob-right", rightTop: "ob-rt", rightTopStrip: "ob-rt-strip", rightTopStack: "ob-rt-stack", rightBottomStack: "ob-rb-stack",
 };
 // Every sidebar view (a stack child id = its slot): title and icon for ob-strip, the switcher and menus.

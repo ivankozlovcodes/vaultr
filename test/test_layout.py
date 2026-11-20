@@ -4,11 +4,16 @@ import home_guard  # noqa: F401  (first: every test on a throwaway home)
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = home_guard.ROOT
 LAYOUT = os.path.join(ROOT, "layouts", "vaultr.json")
 MODS = os.path.join(ROOT, "mods")
+NODE = shutil.which("node")
 # Herdr's own mods, used by the layout but not shipped in mods/
 SHIPPED = {"files", "changes"}
 
@@ -55,6 +60,59 @@ def hideable_ids():
         src = f.read()
     block = re.search(r"export const NODE = \{(.*?)\};", src, re.S).group(1)
     return set(re.findall(r'"(ob-[a-z-]+)"', block)) - {"ob-center", "ob-tabbar", "ob-main"}
+
+
+def run_kit(body, layout_tree=None):
+    folder = tempfile.mkdtemp(prefix="kit-layout-")
+    try:
+        for fp in Path(ROOT, "kit").glob("*.js"):
+            text = fp.read_text(encoding="utf-8")
+            if fp.name == "kit.js":
+                text = (text.replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                            .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                            .replace('from "herdr"', 'from "./herdr.js"'))
+            (Path(folder) / fp.name).write_text(text, encoding="utf-8")
+        (Path(folder) / "gpui-kit.js").write_text(
+            "const el = () => new Proxy(() => el(), { get: () => el }); export const div = el, svg = el, image = el;\n",
+            encoding="utf-8",
+        )
+        (Path(folder) / "gpui-base.js").write_text(
+            "const el = () => new Proxy(() => el(), { get: () => el }); export const h_flex = el, v_flex = el;\n",
+            encoding="utf-8",
+        )
+        (Path(folder) / "herdr.js").write_text(
+            f"const LAYOUT = {json.dumps(layout_tree or {})};\n"
+            "export const theme = () => ({});\n"
+            "export const run = () => {};\n"
+            "export const exec = async () => ({ code: 0, stdout: '' });\n"
+            "export const openOverlay = () => {};\n"
+            "export const closeOverlay = () => {};\n"
+            "export const layout = () => LAYOUT;\n"
+            "export const shared = () => undefined;\n"
+            "export const setShared = () => {};\n"
+            "export const keys = () => [];\n"
+            "export const spaces = () => [];\n"
+            "export const agents = () => [];\n"
+            "export const terminals = () => [];\n"
+            "export const panes = () => [];\n"
+            "export const focused = () => null;\n"
+            "export const home = () => '/srv/home';\n"
+            "export const appHome = () => '/app';\n"
+            "export const readTextFile = async () => null;\n"
+            "export const window = () => ({ platform: 'linux' });\n",
+            encoding="utf-8",
+        )
+        script = (
+            f'import * as K from "{(Path(folder) / "kit.js").as_uri()}";\n'
+            f'const r = (() => {{ {body} }})();\n'
+            'console.log(JSON.stringify(r));\n'
+        )
+        out = subprocess.run([NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=60)
+        if out.returncode != 0:
+            raise AssertionError(out.stderr.strip() or "node failed")
+        return json.loads(out.stdout)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 class Layout(unittest.TestCase):
@@ -144,6 +202,22 @@ class Layout(unittest.TestCase):
             top, bottom = parent["children"]
             seen[column] = [(k.get("resizable", True), k.get("min")) for k in (top, bottom)]
         self.assertEqual(seen["ob-left"], seen["ob-right"])
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_view_tables_agree_with_the_layout(self):
+        tables = run_kit("return { views: K.VIEWS, node: K.NODE };")
+        stack_children = {
+            c["id"]
+            for n in walk(self.layout) if n.get("type") == "stack"
+            for c in (n.get("children") or [])
+        }
+        view_keys = set(tables["views"])
+        self.assertEqual(sorted(stack_children - view_keys), [], "stack children missing from VIEWS")
+        self.assertEqual(sorted(view_keys - stack_children), [], "VIEWS keys not in any layout stack")
+        layout_ids = {n["id"] for n in walk(self.layout) if "id" in n}
+        bad_nodes = {k: v for k, v in tables["node"].items() if v not in layout_ids}
+        self.assertEqual(bad_nodes, {}, "NODE values missing from layout")
+        self.assertTrue(hideable_ids().issubset(layout_ids))
 
 
 if __name__ == "__main__":
