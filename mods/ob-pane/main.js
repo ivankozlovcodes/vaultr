@@ -11,24 +11,45 @@
 //   more:<paneId>   crumb:<paneId>@<machine|space|tab>   bookmark:<paneId>
 
 import { View, div } from "gpui-kit";
-import { h_flex } from "gpui-base";
-import { panes, spaces, agents, terminals, props, run, nextCommand, shared as _shared, settings, notify, layout, window as appWindow } from "herdr";
+import { h_flex, v_flex, ScrollHandle, Scrollbar } from "gpui-base";
+import {
+  panes, spaces, agents, terminals, props, run, nextCommand, shared as _shared, settings, notify,
+  layout, window as appWindow, openOverlay, closeOverlay, keys,
+} from "herdr";
 import {
   S, tc, alpha, icon, iconButton, statusMark, needsYou, paneLabelOf, tabLabel, machineLabel, programIcon, openMenu,
   subagentsOf, isBookmarked, toggleBookmark, bindingFor, chordLabel, tilde, stop,
-  normHidden, isTabHidden, NODE, findNode, paneLightsLeftPad,
+  normHidden, isTabHidden, NODE, findNode, paneLightsLeftPad, isChildTerminalOf, provider, ago, copyText,
 } from "./kit.js";
 import { follow, DELAY } from "./follow.js"; // focus-to-hover
 import { isChildTerminal, detachItem, DETACH_ICON, DETACH_TIP } from "./detach.js";
+import { latestPrompt } from "./prompt.js";
 
 const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
 
 const tip = (title, action) => { const k = action ? bindingFor(action) : null; return k ? `${title} (${chordLabel(k)})` : title; };
 
+const fmtTs = (ts) => {
+  if (!ts) return "";
+  const ms = typeof ts === "number" ? ts : Date.parse(ts);
+  if (!Number.isFinite(ms)) return "";
+  const a = ago(ms);
+  return a === "now" ? "just now" : `${a} ago`;
+};
+
 export default class PaneHeader extends View {
   init(_p, cx) {
     this.w = 0;
     this.hovered = false;
+    this.dialogHandle = cx.focus_handle();
+    this.scroll = ScrollHandle.new();
+    this.keysSig = "";
+    if (props()?.overlay) {
+      this.bindDialogKeys(cx);
+      cx.timer.after(0, () => { try { this.dialogHandle.focus(); } catch {} });
+      cx.timer.after(60, () => { try { this.dialogHandle.focus(); } catch {} });
+      return;
+    }
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -61,6 +82,25 @@ export default class PaneHeader extends View {
     if (verb === "more") this.moreMenu(x);
     else if (verb === "crumb") this.crumbMenu(x, j < 0 ? "tab" : arg.slice(j + 1));
     else if (verb === "bookmark") this.bookmark(x);
+    else if (verb === "prompts") this.openPrompts(x);
+  }
+
+  bindDialogKeys(cx) {
+    if (typeof cx.bind_keys !== "function") return;
+    cx.bind_keys([{ keystroke: "escape", action: "ob_pane.close_prompts", context: "ObPanePrompts" }]);
+  }
+
+  openPrompts(x) {
+    if (!x?.addr) return;
+    const { p, ps, tab } = x;
+    const pTitle = paneLabelOf(p, tab ? tabLabel(tab, ps) : "");
+    openOverlay({
+      mod: "ob-pane",
+      kind: "dialog",
+      width: 680,
+      height: 480,
+      props: { view: "prompts", terminal: x.addr, title: pTitle },
+    });
   }
 
   bookmark(x) {
@@ -127,10 +167,13 @@ export default class PaneHeader extends View {
     const labels = term?.labels && typeof term.labels === "object" ? term.labels : {};
     const toProgram = labels["herdr.right-click"] === "program";
     const marked = isBookmarked("terminal", addr);
+    const sess = provider.session(addr);
+    const canPrompts = Boolean(sess && provider.of(sess)?.can("prompts"));
     openMenu([
       tab ? { label: "Rename tab…", icon: "rename", command: "tab.rename", args: { id: tab.id }, kbd: bindingFor("tab.rename") ?? undefined } : null,
       { label: marked ? "Remove bookmark" : "Bookmark", icon: marked ? "bookmark" : "bookmark-plus", command: `ob-pane.bookmark:${p.pane}` },
       { separator: true },
+      canPrompts ? { label: "Prompt history…", icon: "history", command: `ob-pane.prompts:${p.pane}` } : null,
       { label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${addr}` },
       { label: "Show subagents", icon: "subagents", command: `ob-tabs.open:ob-outline@term:${addr}` },
       { label: "Copy address", icon: "copy", copy: addr, hint: addr },
@@ -149,6 +192,7 @@ export default class PaneHeader extends View {
   }
 
   render(cx) {
+    if (props()?.overlay) return this.promptsDialog(cx);
     const zenActive = Boolean(shared()?.["ob.zen"]?.active);
     const pr = props() ?? {};
     return follow(this, pr.pane, this.header(cx, zenActive), pr.delay ?? DELAY);
@@ -185,7 +229,7 @@ export default class PaneHeader extends View {
     }
     if (addr) {
       const sub = subagentsOf(addr);
-      const kids = terminals().filter((tm) => tm.parent === addr && tm.state === "live").length;
+      const kids = terminals().filter((tm) => isChildTerminalOf(tm, addr)).length;
       const live = sub.live + kids;
       const total = sub.total + kids;
       if (total > 0 && w >= 260) {
@@ -283,12 +327,8 @@ export default class PaneHeader extends View {
       .when(Boolean(p.zoomed), (e) => e.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child("zoomed")));
     const crumbRow = h_flex().min_w(0).gap(1).items_center().text_size(S.textSm).children(crumbs).child(title);
 
-    return h_flex().id("root").relative().size_full().pl(leftPad).pr(6).gap(2).items_center().bg(t.background).border_b(1).border_color(t.border)
-      .text_size(S.textSm)
-      .on_size_change((s, cx) => { const w0 = s.width / (settings().zoom || 1); if (Math.abs(w0 - this.w) > 1) { this.w = w0; cx.notify(); } })
-      .on_hover((hv, cx) => { if (hv !== this.hovered) { this.hovered = hv; cx.notify(); } })
-      .on_click(() => { if (!p.focused) run("pane.focus", { pane: p.pane }); })
-      // Wide: the crumb sits centered over the whole header, clear of both sides (Obsidian's view title).
+    // Wide: the crumb sits centered over the top row, clear of both sides (Obsidian's view title).
+    const topBar = h_flex().id("top-bar").relative().w_full().h(30).flex_none().pl(leftPad).pr(6).gap(2).items_center()
       .when(wide, (e) => e.child(h_flex().absolute().top(0).bottom(0).left(side).right(side).items_center().justify_center().child(crumbRow)))
       .when(Boolean(addr), (e) => e
         .child(small("back", "arrow-left", tip("Navigate back", "ob-tabs.back"), () => run("ob-tabs.back"), { disabled: !canBack }))
@@ -296,5 +336,158 @@ export default class PaneHeader extends View {
       .when(!wide, (e) => e.child(h_flex().flex_1().min_w(0).pl(4).child(crumbRow)))
       .when(wide, (e) => e.child(div().flex_1()))
       .child(h_flex().flex_none().gap(2).items_center().children(right));
+
+    return v_flex().id("root").size_full().bg(t.background).border_b(1).border_color(t.border)
+      .text_size(S.textSm)
+      .on_size_change((s, cx) => { const w0 = s.width / (settings().zoom || 1); if (Math.abs(w0 - this.w) > 1) { this.w = w0; cx.notify(); } })
+      .on_hover((hv, cx) => { if (hv !== this.hovered) { this.hovered = hv; cx.notify(); } })
+      .on_click(() => { if (!p.focused) run("pane.focus", { pane: p.pane }); })
+      .child(topBar)
+      .child(this.promptRow(t, x, w));
+  }
+
+  promptRow(t, x, w) {
+    const { p, addr } = x;
+    const bar = h_flex().id(`prompt-bar-${p.pane}`).h(26).w_full().flex_none().border_t(1).border_color(alpha(t.border, 0.55)).bg(alpha(t.chrome, 0.45));
+    if (!addr) return bar;
+    const sess = provider.session(addr);
+    const canPrompts = Boolean(sess && provider.of(sess)?.can("prompts"));
+    const lp = canPrompts ? latestPrompt(sess) : null;
+    if (lp) {
+      const tipText = `${lp.full.slice(0, 320)}${lp.full.length > 320 ? "…" : ""}\nClick for full prompt & history`;
+      return bar.id(`prompt-${p.pane}`).px(10).gap(7).items_center().cursor_pointer().hover((s) => s.bg(t.hover))
+        .tooltip(tipText)
+        .on_mouse_down("left", stop)
+        .on_click((_e, cx) => { cx.stop_propagation(); this.openPrompts(this.ctx() ?? x); })
+        .child(div().flex_none().text_size(S.textXs).font_medium().text_color(t.accent).child("❯"))
+        .child(div().flex_1().min_w(0).truncate().text_size(S.textSm).text_color(p.focused ? t.foreground : t.muted).child(lp.text))
+        .when(lp.count > 1 && w >= 320, (e) => e.child(
+          div().flex_none().px(5).py(1).rounded(S.radius).bg(t.raised).text_size(S.textXs).text_color(t.dim)
+            .child(w >= 460 ? `${lp.count} prompts` : String(lp.count))
+        ))
+        .when(this.hovered && w >= 280, (e) => e.child(
+          h_flex().id(`copy-prompt-${p.pane}`).size(20).flex_none().items_center().justify_center().rounded(S.radius)
+            .text_color(t.dim).hover((s) => s.bg(t.raised).text_color(t.foreground))
+            .tooltip("Copy latest prompt")
+            .on_mouse_down("left", stop)
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              copyText(cx, lp.full);
+              notify({ title: "Copied prompt", body: lp.text, level: "info", timeout: 1500 });
+            })
+            .child(icon("copy", S.iconXs))
+        ));
+    }
+    if (canPrompts) {
+      return bar.px(10).gap(7).items_center().text_size(S.textXs).text_color(t.dim)
+        .child(div().flex_none().text_color(t.dim).child("❯"))
+        .child(div().flex_1().min_w(0).truncate().child("Waiting for prompt…"));
+    }
+    if (p.cwd) {
+      return bar.px(10).gap(6).items_center().text_size(S.textXs).text_color(t.dim)
+        .cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.muted))
+        .tooltip(`${p.cwd} · click to copy`)
+        .on_mouse_down("left", stop)
+        .on_click((_e, cx) => {
+          cx.stop_propagation();
+          copyText(cx, p.cwd);
+          notify({ title: "Copied path", body: p.cwd, level: "info", timeout: 1500 });
+        })
+        .child(icon("folder", S.iconXs))
+        .child(div().min_w(0).truncate().child(tilde(p.cwd)));
+    }
+    return bar;
+  }
+
+  promptsDialog(cx) {
+    let sig = "";
+    try { sig = JSON.stringify(keys?.() ?? ""); } catch { sig = ""; }
+    if (sig !== this.keysSig) {
+      const first = this.keysSig === "";
+      this.keysSig = sig;
+      if (!first) cx.timer.after(0, (cx) => this.bindDialogKeys(cx));
+    }
+    const t = tc();
+    const pr = props() ?? {};
+    const addr = pr.terminal;
+    const overlayId = pr.overlay;
+    const sess = addr ? provider.session(addr) : null;
+    const canPrompts = Boolean(sess && provider.of(sess)?.can("prompts"));
+    const lp = canPrompts ? latestPrompt(sess) : null;
+    const history = lp?.history ?? [];
+
+    const pillBtn = (id, ic, label, onClick) => h_flex().id(id).h(24).px(8).gap(5).flex_none().items_center().rounded(S.radius).cursor_pointer()
+      .border_1().border_color(t.input).bg(t.background).text_size(S.textXs).text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_mouse_down("left", stop)
+      .on_click(onClick)
+      .child(icon(ic, S.iconXs))
+      .child(div().whitespace_nowrap().child(label));
+
+    const promptBody = (fullText) => v_flex().w_full().gap(3).children(
+      String(fullText ?? "").split("\n").map((line) =>
+        div().w_full().whitespace_normal().text_size(S.text).text_color(t.foreground).child(line || " ")
+      )
+    );
+
+    const header = h_flex().id("prompts-header").h(38).px(12).flex_none().border_b(1).border_color(t.border).items_center().justify_between().gap(8)
+      .child(h_flex().min_w(0).flex_1().gap(7).items_center()
+        .child(icon("history", S.iconSm, t.accent))
+        .child(div().min_w(0).truncate().text_size(S.text).font_semibold().text_color(t.foreground).child(pr.title || addr || "Prompts"))
+        .child(div().flex_none().text_size(S.textXs).text_color(t.dim).child(`(${history.length})`)))
+      .child(h_flex().flex_none().gap(6).items_center()
+        .child(pillBtn("prompts-transcript", "scroll", "Transcript", (_e, cx) => {
+          cx.stop_propagation();
+          closeOverlay(overlayId);
+          if (addr) run(`ob-tabs.open:ob-outline@term:${addr}`);
+        }))
+        .when(Boolean(lp), (e) => e.child(pillBtn("prompts-copy-latest", "copy", "Copy latest", (_e, cx) => {
+          cx.stop_propagation();
+          copyText(cx, lp.full);
+          notify({ title: "Copied prompt", body: lp.text, level: "info", timeout: 1500 });
+        })))
+        .child(iconButton({ id: "close-prompts", icon: "x", tip: "Close (Esc)", onClick: () => closeOverlay(overlayId) })));
+
+    const body = h_flex().flex_1().min_h(0).relative().bg(t.background)
+      .child(v_flex().id("prompts-scroll").size_full().overflow_y_scroll().track_scroll(this.scroll).p(12).gap(10)
+        .when(!lp, (e) => e.child(
+          div().flex_1().w_full().py(40).text_center().text_size(S.textSm).text_color(t.dim).child("No prompts recorded for this session yet.")
+        ))
+        .when(Boolean(lp), (e) => e
+          .child(v_flex().id("prompt-card-0").w_full().flex_none().p(12).gap(8).rounded(S.radiusLg).bg(t.raised).border_1().border_color(alpha(t.accent, 0.45))
+            .child(h_flex().w_full().items_center().justify_between().gap(8)
+              .child(h_flex().gap(8).items_center()
+                .child(div().text_size(S.textXs).font_medium().text_color(t.accent).child("LATEST PROMPT"))
+                .when(Boolean(fmtTs(lp?.ts)), (el) => el.child(div().text_size(S.textXs).text_color(t.dim).child(fmtTs(lp.ts)))))
+              .child(pillBtn("prompt-copy-0", "copy", "Copy", (_e, cx) => {
+                cx.stop_propagation();
+                copyText(cx, lp.full);
+                notify({ title: "Copied prompt", body: lp.text, level: "info", timeout: 1500 });
+              })))
+            .child(promptBody(lp?.full)))
+          .when(history.length > 1, (el) => el
+            .child(div().flex_none().text_size(S.textXs).font_medium().text_color(t.dim).pt(4).child(`EARLIER IN THIS SESSION (${history.length - 1})`))
+            .children(history.slice(1).map((item, idx) => {
+              const meta = [item.step != null ? `#${item.step}` : null, fmtTs(item.ts)].filter(Boolean).join(" · ") || `Earlier #${idx + 1}`;
+              return v_flex().id(`prompt-card-${idx + 1}`).w_full().flex_none().bg(t.background).border_1().border_color(t.border).rounded(S.radiusLg).p(10).gap(6)
+                .child(h_flex().w_full().items_center().justify_between().gap(8)
+                  .child(div().text_size(S.textXs).text_color(t.dim).child(meta))
+                  .child(pillBtn(`prompt-copy-${idx + 1}`, "copy", "Copy", (_e, cx) => {
+                    cx.stop_propagation();
+                    copyText(cx, item.full);
+                    notify({ title: "Copied prompt", body: item.text, level: "info", timeout: 1500 });
+                  })))
+                .child(promptBody(item.full));
+            })))))
+      .child(Scrollbar.vertical("prompts-scroll").absolute().inset_0());
+
+    return v_flex().id("prompts-dialog").size_full().min_h(0).bg(t.chrome).text_color(t.foreground)
+      .border_1().border_color(t.border).rounded(S.radiusLg).overflow_hidden()
+      .track_focus(this.dialogHandle)
+      .key_context("ObPanePrompts")
+      .on_action("ob_pane.close_prompts", (_a, cx) => { cx.stop_propagation(); closeOverlay(overlayId); })
+      .on_key_down((e, cx) => { if (e.key === "escape") { cx.stop_propagation(); closeOverlay(overlayId); } })
+      .child(header)
+      .child(body);
   }
 }

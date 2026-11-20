@@ -107,7 +107,7 @@ def sessions(procs, _all_runs):
     for pid, p in procs.items():
         s = load(os.path.join(CHOME, ".claude", "sessions", f"{pid}.json")) or {}
         sid = s.get("sessionId")
-        entry = {"pid": pid, "kind": "claude", "cwd": s.get("cwd") or p["cwd"], "session": sid, "name": s.get("name"), "agents": []}
+        entry = {"pid": pid, "kind": "claude", "cwd": s.get("cwd") or p["cwd"], "session": sid, "name": s.get("name"), "agents": [], "turns": []}
         if sid:
             files = glob.glob(os.path.join(CHOME, ".claude", "projects", "*", sid + ".jsonl"))
             entry["transcript"] = files[0] if files else None
@@ -117,6 +117,7 @@ def sessions(procs, _all_runs):
                 entry["updatedAt"] = None
             evs = events(records_of(files[0])) if files else []
             entry["lastTool"] = last_tool_from_events(evs) if files else None
+            entry["turns"] = user_turns_from_events(evs) if files else []
             TOUCHES[f"term:{p['term']}"] = touch_rows(touches_from_events(evs))
         out[p["term"]] = entry
     return out

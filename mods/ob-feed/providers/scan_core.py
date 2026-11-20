@@ -69,6 +69,19 @@ def clip(s, n):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def headline(text, limit=160):
+    if not isinstance(text, str):
+        return None
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("---") or s.startswith("```"):
+            continue
+        s = re.sub(r'^[#>*\-\s"]+', "", s).strip()
+        if s:
+            return clip(" ".join(s.split()), limit)
+    return None
+
+
 def short_model(m):
     if not m:
         return None
@@ -147,6 +160,40 @@ def events_for(pid_id, recs):
         if r["sniff"](recs):
             return r["events"](recs)
     return []
+
+
+def user_turns_from_events(ev_list):
+    grouped = []
+    cur_gid = None
+    cur_parts = []
+    cur_ts = None
+
+    def flush():
+        if not cur_parts:
+            return
+        cleaned = "\n".join(cur_parts).strip()
+        if not cleaned or re.match(r"^\s*<hc\b", cleaned):
+            return
+        short_txt = headline(cleaned, 160)
+        if short_txt:
+            grouped.append({"text": short_txt, "full": clip(cleaned, 1600), "ts": cur_ts})
+
+    for e in ev_list:
+        if e.get("k") != "user" or e.get("is_prompt") is False:
+            continue
+        txt = e.get("text")
+        if not isinstance(txt, str):
+            continue
+        gid = e.get("turn_group")
+        if gid is not None and gid == cur_gid:
+            cur_parts.append(txt)
+        else:
+            flush()
+            cur_gid = gid
+            cur_parts = [txt]
+            cur_ts = e.get("ts")
+    flush()
+    return grouped[-12:]
 
 
 def last_tool_from_events(ev_list):

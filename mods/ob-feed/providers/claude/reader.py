@@ -91,7 +91,7 @@ def events(records):
     out = []
     tools = {}
     seen_touch = set()
-    for r in records or []:
+    for rec_i, r in enumerate(records or []):
         if not isinstance(r, dict):
             continue
         typ = r.get("type")
@@ -115,11 +115,17 @@ def events(records):
                     elif x.get("type") == "text":
                         raw = x.get("text", "")
                         if isinstance(raw, str) and raw.strip() and not raw.lstrip().startswith("<system-reminder>"):
-                            out.append({"k": "user", "text": raw, "ts": ts})
+                            out.append({"k": "user", "text": raw, "ts": ts, "turn_group": rec_i})
             elif isinstance(c, str) and c.strip():
                 if c.lstrip().startswith(("<local-command", "<command-", "Caveat:")):
                     continue
-                out.append({"k": "user", "text": c, "ts": ts})
+                out.append({
+                    "k": "user",
+                    "text": c,
+                    "ts": ts,
+                    "turn_group": rec_i,
+                    "is_prompt": not c.strip().startswith("<system-reminder>"),
+                })
             continue
 
         mid = msg.get("id")

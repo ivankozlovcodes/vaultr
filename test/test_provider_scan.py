@@ -549,5 +549,69 @@ class ProgramIdentity(unittest.TestCase):
         )
 
 
+class UserPrompts(ScanFixture):
+    """Recent human prompts are extracted from Claude Code and pi session transcripts, skipping noise and callbacks."""
+
+    def main_path(self):
+        return os.path.join(self.home, ".claude", "projects", "proj-a", SID + ".jsonl")
+
+    def write_main(self, recs):
+        with open(self.main_path(), "w", encoding="utf-8") as f:
+            f.write("\n".join(line(r) for r in recs) + "\n")
+
+    def run_scan(self, **extra):
+        opts = {"claude": True, "claudeHome": self.home, "piHome": self.home, "limit": 40,
+                "procs": [{"pid": PID, "term": TERM, "comm": "claude", "cwd": "/srv/example"}]}
+        opts.update(extra)
+        return json.loads(scan_opts(opts))
+
+    def test_claude_user_prompts_collect_headline_and_multiline_full_skipping_noise(self):
+        self.write_main([
+            {"type": "user", "isMeta": True, "timestamp": ts(1), "message": {"role": "user", "content": "meta line"}},
+            {"type": "user", "timestamp": ts(2), "message": {"role": "user", "content": "<local-command-caveat>ignore</local-command-caveat>"}},
+            {"type": "user", "timestamp": ts(3), "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+            {"type": "user", "timestamp": ts(4), "message": {"role": "user", "content": "Caveat: helper text"}},
+            {"type": "user", "timestamp": ts(5), "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}},
+            {"type": "user", "timestamp": ts(6), "message": {"role": "user", "content": [
+                {"type": "text", "text": "<system-reminder>hidden</system-reminder>"},
+                {"type": "text", "text": "# First task\nLine two detail"},
+            ]}},
+            {"type": "user", "timestamp": ts(7), "message": {"role": "user", "content": '  <hc from="t9" event="ready">done</hc>'}},
+        ])
+        turns = self.run_scan()["terms"][TERM]["turns"]
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]["text"], "First task")
+        self.assertEqual(turns[0]["full"], "# First task\nLine two detail")
+        self.assertEqual(turns[0]["ts"], ts(6))
+
+    def test_claude_user_prompts_keep_at_most_twelve_newest(self):
+        self.write_main([
+            {"type": "user", "timestamp": ts(i), "message": {"role": "user", "content": f"Prompt {i}"}}
+            for i in range(1, 16)
+        ])
+        turns = self.run_scan()["terms"][TERM]["turns"]
+        self.assertEqual(len(turns), 12)
+        self.assertEqual([t["text"] for t in turns], [f"Prompt {i}" for i in range(4, 16)])
+
+    def test_pi_session_user_prompts_are_collected_skipping_hc_callbacks(self):
+        sess_dir = os.path.join(self.home, ".pi", "agent", "sessions", "--srv-example--")
+        os.makedirs(sess_dir)
+        sess = os.path.join(sess_dir, "2026-11-14T09-00-00-000Z_prompts.jsonl")
+        with open(sess, "w", encoding="utf-8") as f:
+            f.write("\n".join(line(r) for r in [
+                {"type": "message", "timestamp": ts(1), "message": {"role": "user", "content": "Fix layout spacing\nKeep border 1px"}},
+                {"type": "message", "timestamp": ts(2), "message": {"role": "assistant", "content": [{"type": "text", "text": "Working"}]}},
+                {"type": "message", "timestamp": ts(3), "message": {"role": "user", "content": [{"type": "text", "text": "And verify header width"}]}},
+                {"type": "message", "timestamp": ts(4), "message": {"role": "user", "content": '<hc from="t2" event="ready">worker done</hc>'}},
+            ]) + "\n")
+        out = json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home, "limit": 40, "procs": [
+            {"pid": 778, "term": "pfix2", "comm": "pi", "cwd": "/srv/example", "start": None}]}))
+        turns = out["terms"]["pfix2"]["turns"]
+        self.assertEqual(len(turns), 2)
+        self.assertEqual(turns[0]["text"], "Fix layout spacing")
+        self.assertEqual(turns[0]["full"], "Fix layout spacing\nKeep border 1px")
+        self.assertEqual(turns[1]["text"], "And verify header width")
+
+
 if __name__ == "__main__":
     unittest.main()

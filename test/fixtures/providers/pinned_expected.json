@@ -114,6 +114,18 @@
         "kind": "pi",
         "cwd": "/srv/work/studio",
         "session": "<FIXTURE>/home/.pi/agent/sessions/--srv-work-studio--/2026-04-02T08-00-00-000Z_s1.jsonl",
+        "turns": [
+          {
+            "text": "Audit studio config",
+            "full": "Audit studio config\nVerify LighthouseBeacon paths.",
+            "ts": "2026-04-02T08:00:02.000Z"
+          },
+          {
+            "text": "Try editing studio.json directly.",
+            "full": "Try editing studio.json directly.",
+            "ts": "2026-04-02T08:00:08.000Z"
+          }
+        ],
         "guess": false
       },
       "tpi2": {
@@ -121,6 +133,18 @@
         "kind": "pi",
         "cwd": "/srv/work/studio-guess",
         "session": "<FIXTURE>/home/.pi/agent/sessions/--srv-work-studio-guess--/2026-04-02T08-00-00-000Z_s2.jsonl",
+        "turns": [
+          {
+            "text": "Audit studio config",
+            "full": "Audit studio config\nVerify LighthouseBeacon paths.",
+            "ts": "2026-04-02T08:00:02.000Z"
+          },
+          {
+            "text": "Try editing studio.json directly.",
+            "full": "Try editing studio.json directly.",
+            "ts": "2026-04-02T08:00:08.000Z"
+          }
+        ],
         "guess": true
       },
       "tcl1": {
@@ -168,6 +192,18 @@
           }
         ],
         "transcript": "<FIXTURE>/home/.claude/projects/proj-work/claude-sess-01.jsonl",
+        "turns": [
+          {
+            "text": "Inspect LighthouseBeacon build",
+            "full": "# Inspect LighthouseBeacon build\nCheck plan.md and patch app.py.",
+            "ts": "2026-04-01T10:00:03.000Z"
+          },
+          {
+            "text": "Edit app.py, update plan.md, write report.md, and run tests.",
+            "full": "Edit app.py, update plan.md, write report.md, and run tests.",
+            "ts": "2026-04-01T10:00:09.000Z"
+          }
+        ],
         "updatedAt": 1700000200000,
         "lastTool": {
           "tool": "Bash",

@@ -209,6 +209,16 @@ export function makeProvider({ feed, exec, readTextFile, appHome }) {
       const sess = info.session ?? null;
       const txRaw = info.transcript ?? (looksLikePath(sess) ? sess : null);
       const transcript = p && !p.can("transcript") ? null : txRaw;
+      const prompts = p?.can("prompts") && Array.isArray(info.turns)
+        ? info.turns
+            .filter((t) => t && typeof t === "object" && typeof t.text === "string" && t.text.trim())
+            .map((t) => ({
+              step: typeof t.step === "number" && Number.isFinite(t.step) ? t.step : null,
+              text: t.text.trim(),
+              full: typeof t.full === "string" && t.full.trim() ? t.full.trim() : t.text.trim(),
+              ts: t.ts ?? null,
+            }))
+        : [];
       const title = info.title ?? info.name ?? null;
       out.push({
         address,
@@ -218,6 +228,7 @@ export function makeProvider({ feed, exec, readTextFile, appHome }) {
         name: title,
         session: sess,
         transcript,
+        prompts,
         lastTool: info.lastTool ?? null,
         pid: info.pid ?? null,
         cwd: info.cwd ?? null,

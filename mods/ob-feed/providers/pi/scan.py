@@ -166,7 +166,7 @@ def runs(procs):
 def sessions(procs, all_runs):
     terms = {}
     for pid, p in procs.items():
-        t = {"pid": pid, "kind": "pi", "cwd": p["cwd"], "session": None, "guess": True}
+        t = {"pid": pid, "kind": "pi", "cwd": p["cwd"], "session": None, "guess": True, "turns": []}
         owned = [r for r in all_runs if r.get("ownerPid") == pid and r.get("parentSession")]
         if owned:
             t["session"], t["guess"] = owned[0]["parentSession"], False
@@ -195,6 +195,8 @@ def sessions(procs, all_runs):
         try:
             evs = events(records_of(path))
             pi_acc[key] = merge_touch_dicts(pi_acc.get(key, {}), touches_from_events(evs))
+            if key.startswith("term:") and key[5:] in terms:
+                terms[key[5:]]["turns"] = user_turns_from_events(evs)
         except Exception as e:
             ERRORS.append(f"touches: {e}")
     for key, d in pi_acc.items():

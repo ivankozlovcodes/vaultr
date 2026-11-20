@@ -143,6 +143,26 @@ class ProviderFoldersConformance(unittest.TestCase):
                 self.assertEqual(quota_path.is_file(), "quota" in caps,
                                  f"{pid}: quota.py must exist if and only if 'quota' is in caps")
 
+                if "prompts" in caps:
+                    reader_path = pdir / "reader.py"
+                    self.assertTrue(reader_path.is_file(), f"{pid}: prompts cap requires reader.py")
+                    reader_src = _read_text(reader_path)
+                    scan_src = _read_text(pdir / "scan.py")
+                    self.assertIn("turn_group", reader_src, f"{pid}: reader.py must mark turn_group for prompts")
+                    self.assertIn("user_turns_from_events(", scan_src,
+                                  f"{pid}: scan.py must derive prompts via user_turns_from_events(evs)")
+                    for forbidden in (
+                        "_user_turns",
+                        "collect_turns",
+                        "isMeta",
+                        "<system-reminder>",
+                        "<local-command",
+                        "recordType",
+                        "tool_result",
+                    ):
+                        self.assertNotIn(forbidden, scan_src,
+                                         f"{pid}: scan.py must not parse transcript records for prompts ({forbidden})")
+
     def test_core_drivers_name_no_provider_id_or_name(self):
         tokens = set()
         for pid in _index_ids():

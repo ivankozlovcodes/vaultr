@@ -1,9 +1,8 @@
 """Pinned-output contract tests for the four agent-transcript consumers (scanner, viewer, usage, search).
 
-Before mods/ob-feed/providers/scan_core.py exists, these tests run the four monolith scripts directly with
-`python3 -I -c <text> ...`; once the provider folder layout exists, the same tests run the assembled scripts
-built by kit/provider.js. Additive `"provider"` keys are stripped before comparing against the pinned JSON
-snapshots in test/fixtures/providers/pinned_expected.json.
+Each test runs the assembled script built by kit/provider.js with `python3 -I -c <text> ...`. Additive
+`"provider"` keys are stripped before comparing against the pinned JSON snapshots in
+test/fixtures/providers/pinned_expected.json.
 """
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
 import json
@@ -20,7 +19,6 @@ from pathlib import Path
 
 ROOT = home_guard.ROOT
 PROVIDERS_DIR = Path(ROOT, "mods", "ob-feed", "providers")
-SCAN_CORE = PROVIDERS_DIR / "scan_core.py"
 PROVIDER_JS = Path(ROOT, "kit", "provider.js")
 NODE = shutil.which("node")
 
@@ -37,11 +35,6 @@ EXPECTED_PATH = PROVIDER_FIX / "pinned_expected.json"
 CLAUDE_PID = 10000001
 PI_GUESS_PID = 10000002
 NORMALIZED_PI_PID = 7701
-
-
-def _read_text(path):
-    with open(path, encoding="utf-8") as f:
-        return f.read()
 
 
 def _assembled_script(mode):
@@ -100,23 +93,19 @@ def _run_python_script(script_text, args, env=None):
 
 
 def run_scanner(opts, env=None):
-    script = _assembled_script("scan") if SCAN_CORE.exists() else _read_text(Path(ROOT, "kit", "scan_pi.py"))
-    return _run_python_script(script, [json.dumps(opts)], env=env)
+    return _run_python_script(_assembled_script("scan"), [json.dumps(opts)], env=env)
 
 
 def run_viewer(args, env=None):
-    script = _assembled_script("entries") if SCAN_CORE.exists() else _read_text(Path(ROOT, "mods", "ob-outline", "transcript.py"))
-    return _run_python_script(script, [str(a) for a in args], env=env)
+    return _run_python_script(_assembled_script("entries"), [str(a) for a in args], env=env)
 
 
 def run_usage(args, env=None):
-    script = _assembled_script("usage") if SCAN_CORE.exists() else _read_text(Path(ROOT, "mods", "ob-props", "usage.py"))
-    return _run_python_script(script, [str(a) for a in args], env=env)
+    return _run_python_script(_assembled_script("usage"), [str(a) for a in args], env=env)
 
 
 def run_search(opts, env=None):
-    script = _assembled_script("search") if SCAN_CORE.exists() else _read_text(Path(ROOT, "mods", "ob-search", "transcript_search.py"))
-    return _run_python_script(script, [json.dumps(opts)], env=env)
+    return _run_python_script(_assembled_script("search"), [json.dumps(opts)], env=env)
 
 
 def strip_additive_provider(obj):

@@ -215,7 +215,10 @@ export default class Feed extends View {
         if (!info || typeof info !== "object") continue;
         const addr = addrOn(m, term);
         const prov = str(info.provider, 20);
-        terms[addr] = { provider: prov, pid: num(info.pid), cwd: str(info.cwd, 600), session: str(info.session, 600), sessionGuess: Boolean(info.guess), name: str(info.name, 120), transcript: str(info.transcript, 600), updatedAt: num(info.updatedAt),
+        const turns = arr(info.turns).slice(-12)
+          .map((t) => (t && typeof t === "object" ? { step: num(t.step), text: str(t.text, 160) ?? "", full: str(t.full ?? t.text, 1600) ?? "", ts: str(t.ts, 40) ?? num(t.ts) } : null))
+          .filter((t) => t && t.text);
+        terms[addr] = { provider: prov, pid: num(info.pid), cwd: str(info.cwd, 600), session: str(info.session, 600), sessionGuess: Boolean(info.guess), name: str(info.name, 120), transcript: str(info.transcript, 600), updatedAt: num(info.updatedAt), turns,
           lastTool: info.lastTool && typeof info.lastTool === "object" ? { tool: str(info.lastTool.tool, 40), args: str(info.lastTool.args, 40) } : null };
         for (const a of arr(info.agents)) {
           if (!a || typeof a.id !== "string") continue;

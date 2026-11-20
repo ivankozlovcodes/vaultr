@@ -265,9 +265,8 @@ class Repo(unittest.TestCase):
                 data = f.read()
             for m in re.finditer(pat, data):
                 bad.append(f"{rel}: {m.group(0).decode(errors='replace')}")
-            if rel != "test/test_providers_pinned.py":
-                for m in re.finditer(removed_scripts, data):
-                    bad.append(f"{rel}: {m.group(0).decode(errors='replace')}")
+            for m in re.finditer(removed_scripts, data):
+                bad.append(f"{rel}: {m.group(0).decode(errors='replace')}")
         self.assertEqual(bad, [])
 
     def test_every_on_mouse_down_names_its_button(self):

@@ -30,7 +30,7 @@ def run_facade(js_body):
 
 PROVIDERS_SETUP = """
 const PROVIDERS = {
-  alpha: { id: "alpha", name: "Alpha Agent", noun: "worker", caps: ["title", "transcript", "usage", "search", "subagents"] },
+  alpha: { id: "alpha", name: "Alpha Agent", noun: "worker", caps: ["title", "prompts", "transcript", "usage", "search", "subagents"] },
   beta: { id: "beta", name: "Beta Runner", noun: "batch", caps: ["subagents", "search", "transcript"] },
   plain: { id: "plain", name: "Plain Tool", noun: "tool", caps: [] },
 };
@@ -158,6 +158,43 @@ return {
         self.assertFalse(got["t1Guess"])
         self.assertIsNone(got["ofT1"])
         self.assertEqual(got["subs"], [["local:r1", None]])
+
+    def test_session_prompts_gated_by_prompts_cap(self):
+        got = run_facade(PROVIDERS_SETUP + """
+const feedData = {
+  v: 2,
+  providers: PROVIDERS,
+  terms: {
+    t1: { provider: "alpha", name: "With prompts", turns: [{ text: "hello", full: "hello world", ts: 100, extra: "drop" }] },
+    t2: { provider: "beta", name: "No prompts cap", turns: [{ text: "hidden", full: "hidden", ts: 200 }] },
+    t3: { provider: "plain", name: "Plain", turns: [{ text: "also hidden" }] },
+    t4: { name: "No provider", turns: [{ text: "unknown hidden" }] },
+    t5: { provider: "alpha", name: "Empty turns" },
+  },
+};
+const p = makeProvider({ feed: () => feedData, exec: async () => ({ code: 0, stdout: "{}" }), readTextFile, appHome: () => "/app" });
+const s1 = p.session("t1");
+return {
+  canAlpha: p.of(s1)?.can("prompts"),
+  canBeta: p.of(p.session("t2"))?.can("prompts"),
+  t1Prompts: s1.prompts,
+  t1ItemKeys: Object.keys(s1.prompts[0]).sort(),
+  hasTurns: ["t1", "t2", "t3", "t4", "t5"].map((id) => Object.hasOwn(p.session(id), "turns")),
+  t2Prompts: p.session("t2").prompts,
+  t3Prompts: p.session("t3").prompts,
+  t4Prompts: p.session("t4").prompts,
+  t5Prompts: p.session("t5").prompts,
+};
+""")
+        self.assertTrue(got["canAlpha"])
+        self.assertFalse(got["canBeta"])
+        self.assertEqual(got["t1Prompts"], [{"step": None, "text": "hello", "full": "hello world", "ts": 100}])
+        self.assertEqual(got["t1ItemKeys"], ["full", "step", "text", "ts"])
+        self.assertEqual(got["hasTurns"], [False, False, False, False, False])
+        self.assertEqual(got["t2Prompts"], [])
+        self.assertEqual(got["t3Prompts"], [])
+        self.assertEqual(got["t4Prompts"], [])
+        self.assertEqual(got["t5Prompts"], [])
 
 
 @unittest.skipUnless(NODE, "node is not installed")

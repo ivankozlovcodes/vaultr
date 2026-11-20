@@ -88,7 +88,7 @@ def events(records):
     out = []
     tools = {}
     seen_touch = set()
-    for r in records or []:
+    for rec_i, r in enumerate(records or []):
         if not isinstance(r, dict):
             continue
         ts = r.get("ts") or r.get("timestamp")
@@ -100,7 +100,7 @@ def events(records):
                 msg_d = r.get("message") if isinstance(r.get("message"), dict) else {}
                 t = r.get("text") or _text_of(msg_d.get("content"))
                 if role == "user" and t:
-                    out.append({"k": "user", "text": t, "ts": ts})
+                    out.append({"k": "user", "text": t, "ts": ts, "turn_group": rec_i})
                 elif role == "assistant" and t:
                     out.append({"k": "assistant", "text": t, "ts": ts})
             elif rt == "tool_start":
@@ -132,7 +132,7 @@ def events(records):
         if role == "user":
             t = _text_of(c)
             if t.strip():
-                out.append({"k": "user", "text": t, "ts": ts})
+                out.append({"k": "user", "text": t, "ts": ts, "turn_group": rec_i})
         elif role == "assistant":
             u = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
             tid = msg.get("responseId") or r.get("id")

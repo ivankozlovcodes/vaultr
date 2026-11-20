@@ -94,7 +94,7 @@
               "background": "background",
               "border": { "width": 1, "color": "border" },
               "focus": { "width": 1, "color": "accent" },
-              "header": { "content": { "mod": "ob-pane" }, "height": 32, "position": "top", "reveal": "always" },
+              "header": { "content": { "mod": "ob-pane" }, "height": 56, "position": "top", "reveal": "always" },
               "lone": true
             }
           }
