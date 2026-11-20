@@ -14,7 +14,7 @@
 // Commands (ob-settings.<cmd>): tab:<id>  close  herdr, and the tabs' own (see hotkeys.js).
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { props, closeOverlay, nextCommand, run, shared, setShared } from "herdr";
+import { props, closeOverlay, nextCommand, run, shared, setShared, keys } from "herdr";
 import { S, tc, icon, iconButton } from "./kit.js";
 import * as vault from "./vault.js";
 import * as hotkeys from "./hotkeys.js";
@@ -48,7 +48,9 @@ export default class Settings extends View {
   init(_p, cx) {
     this.tabId = lastTab();
     this.state = {};
+    this.keysSig = "";
     this.handle = cx.focus_handle();
+    this.bindKeys(cx);
     this.takeRequest(cx);
     for (const t of TABS) t.mod?.init?.(this, cx);
     // Deferred: setShared re-renders every mod, so not inside init.
@@ -66,6 +68,20 @@ export default class Settings extends View {
 
   // The View's cleanup hook: the dialog is going, so ob-tabs must stop treating it as open.
   close() { this.closed = true; try { this.beat?.cancel(); } catch { /* already gone */ } setShared(OPEN, false); }
+
+  bindKeys(cx) {
+    if (typeof cx.bind_keys !== "function") return;
+    cx.bind_keys([
+      { keystroke: "escape", action: "ob_settings.escape", context: "ObSettings" },
+    ]);
+  }
+
+  escape(cx) {
+    const hk = this.tabId === "hotkeys" ? this.state.hotkeys : null;
+    if (hk?.capture) { hk.press("escape", cx); cx.notify(); return; }
+    if (hk?.pending) { hk.pending = null; cx.notify(); return; }
+    this.dismiss();
+  }
 
   // A request from ob-tabs: show that tab, then clear the request (deferred, see init).
   takeRequest(cx) {
@@ -101,8 +117,16 @@ export default class Settings extends View {
   render(cx) {
     const t = tc();
     this.takeRequest(cx);
-    return v_flex().id("root").track_focus(this.handle).size_full().min_h(0).bg(t.popover).text_color(t.foreground)
-      .on_key_down((e, cx) => { if (e.key === "escape") { cx.stop_propagation(); this.dismiss(); } })
+    let sig = "";
+    try { sig = JSON.stringify(keys()); } catch { sig = ""; }
+    if (sig !== this.keysSig) {
+      const first = this.keysSig === "";
+      this.keysSig = sig;
+      if (!first) cx.timer.after(0, (cx) => this.bindKeys(cx));
+    }
+    return v_flex().id("root").key_context("ObSettings").track_focus(this.handle).size_full().min_h(0).bg(t.popover).text_color(t.foreground)
+      .on_action("ob_settings.escape", (_e, cx) => this.escape(cx))
+      .on_key_down((e, cx) => { if (e.key === "escape") { cx.stop_propagation(); this.escape(cx); } })
       .child(this.header(t))
       .child(h_flex().flex_1().min_h(0).items_start()
         .child(this.nav(t, cx))

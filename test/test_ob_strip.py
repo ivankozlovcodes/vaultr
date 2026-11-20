@@ -202,12 +202,20 @@ class StripView(unittest.TestCase):
         self.assertEqual(set(left["half"]), set(right["half"]))
 
     def test_main_js_draws_the_strip_from_this_view(self):
-        with open(MAIN) as f:
+        with open(MAIN, encoding="utf-8") as f:
             src = f.read()
         self.assertIn('from "./strip_view.js"', src)
         self.assertIn("stripView(", src)
         self.assertIn(".label", src)
         self.assertIn("view.half.tip", src)
+
+    def test_toggle_left_tooltip_uses_dynamic_bindingFor_not_hardcoded_ctrl_b(self):
+        with open(MAIN, encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn('chordLabel', src.split('from "./kit.js"')[0])
+        self.assertIn('bindingFor', src.split('from "./kit.js"')[0])
+        self.assertIn('tip("Close left sidebar", "layout.toggle:ob-left")', src)
+        self.assertNotIn('tip: "Close left sidebar (Ctrl+B)"', src)
 
 
 if __name__ == "__main__":

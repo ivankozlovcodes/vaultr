@@ -127,7 +127,7 @@ def run_main(body, titles=None):
                      "mainAgents", "placedTerminals", "normHidden", "isMachineHidden", "isSpaceHidden", "isTabHidden",
                      "getHidden", "isHidden", "hideItem", "unhideItem", "hiddenSummary",
                      "agentAttention", "attentionRank", "attentionCounts", "isNeedsYou", "isDismissed", "dismissStamp",
-                     "getDismissed", "setDismissed", "pruneDismissedNow", "terminalsByAddress",
+                     "getDismissed", "setDismissed", "pruneDismissedNow", "terminalsByAddress", "hasMod",
                      "dismissedSet", "needsYouShown", "dismissNeedsYou", "restoreNeedsYou", "pruneDismissed"]
         Path(folder, "kit.js").write_text(
             'export { cleanTitle } from "./names.js";\n'

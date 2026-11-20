@@ -7,7 +7,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, run, closeOverlay, openOverlay, nextCommand } from "herdr";
+import { props, run, closeOverlay, openOverlay, nextCommand, keys } from "herdr";
 import { S, icon, kbd, tc, alpha } from "./kit.js";
 
 export default class Menu extends View {
@@ -15,6 +15,8 @@ export default class Menu extends View {
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.at = -1; // keyboard cursor in pickable(); none until an arrow key or the pointer moves
+    this.keysSig = "";
+    this.bindKeys(cx);
     cx.timer.after(60, () => this.handle.focus());
     cx.spawn(async (cx) => {
       for (;;) {
@@ -25,6 +27,20 @@ export default class Menu extends View {
         } catch (e) { console.log(`ob-menu: ${c} failed: ${e?.message ?? e}`); }
       }
     });
+  }
+
+  bindKeys(cx) {
+    if (typeof cx.bind_keys !== "function") return;
+    cx.bind_keys([
+      { keystroke: "escape", action: "ob_menu.escape", context: "ObMenu" },
+      { keystroke: "down", action: "ob_menu.down", context: "ObMenu" },
+      { keystroke: "up", action: "ob_menu.up", context: "ObMenu" },
+      { keystroke: "tab", action: "ob_menu.down", context: "ObMenu" },
+      { keystroke: "shift-tab", action: "ob_menu.up", context: "ObMenu" },
+      { keystroke: "home", action: "ob_menu.home", context: "ObMenu" },
+      { keystroke: "end", action: "ob_menu.end", context: "ObMenu" },
+      { keystroke: "enter", action: "ob_menu.enter", context: "ObMenu" },
+    ]);
   }
 
   items() { return Array.isArray(props()?.items) ? props().items.filter(Boolean) : []; }
@@ -39,14 +55,27 @@ export default class Menu extends View {
     if (it.command) run(it.command, it.args ?? {});
   }
 
-  render() {
+  render(cx) {
     const t = tc();
+    let sig = "";
+    try { sig = JSON.stringify(keys()); } catch { sig = ""; }
+    if (sig !== this.keysSig) {
+      const first = this.keysSig === "";
+      this.keysSig = sig;
+      if (!first) cx.timer.after(0, (cx) => this.bindKeys(cx));
+    }
     const list = this.items();
     const pick = this.pickable();
     if (this.at >= pick.length) this.at = pick.length - 1;
     const cur = pick[this.at]?.[1];
     const title = props()?.title;
-    return v_flex().id("ob-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(S.text)
+    return v_flex().id("ob-menu").key_context("ObMenu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(S.text)
+      .on_action("ob_menu.escape", () => closeOverlay(props()?.overlay))
+      .on_action("ob_menu.down", (_e, cx) => { if (!pick.length) return; this.at = (this.at + 1) % pick.length; cx.notify(); })
+      .on_action("ob_menu.up", (_e, cx) => { if (!pick.length) return; this.at = this.at <= 0 ? pick.length - 1 : this.at - 1; cx.notify(); })
+      .on_action("ob_menu.home", (_e, cx) => { if (!pick.length) return; this.at = 0; cx.notify(); })
+      .on_action("ob_menu.end", (_e, cx) => { if (!pick.length) return; this.at = pick.length - 1; cx.notify(); })
+      .on_action("ob_menu.enter", (_e, cx) => { if (pick[this.at]) this.choose(pick[this.at][1], cx); })
       .on_key_down((e, cx) => {
         if (e.key === "escape") { closeOverlay(props()?.overlay); return; }
         if (!pick.length) return;

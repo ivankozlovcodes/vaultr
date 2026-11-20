@@ -15,14 +15,15 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle, Scrollbar } from "gpui-base";
 import {
-  props, run, closeOverlay, nextCommand, shared, spaces, panes, agents, terminals, layout, settings, commands, keys,
+  props, run, closeOverlay, nextCommand, shared, spaces, panes, agents, terminals, layout, layouts, settings, commands, keys,
+  window as appWindow,
 } from "herdr";
 import {
   S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel,
   feed, bookmarks, VIEWS, findNode, current, chordParts, kbd, sessionTitleOf,
   normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden, parentAddrOf,
 } from "./kit.js";
-import { commandRows } from "./commands.js";
+import { commandRows, VAULTR_COMMANDS } from "./commands.js";
 import { sessionTitles, bestTitle } from "./titles.js";
 import { MODES, nextMode, placeholder, headerLabel, tabHint, modeForQuery, queryForMode, bodyOf, allowsRow } from "./modes.js";
 
@@ -46,17 +47,22 @@ export default class Switcher extends View {
     this.recent = ls("recent", []).filter((k) => typeof k === "string");
     this.scroll = ScrollHandle.new();
     this.handle = cx.focus_handle();
+    this.keysSig = "";
+    const hasBindKeys = typeof cx.bind_keys === "function";
+    this.bindKeys(cx);
     // One input per mode (an InputState's placeholder is fixed); a mode change swaps them, keeping the text.
     this.inputs = {};
     for (const m of ["go", "views", "commands", "move"]) {
       const inp = InputState.new({ placeholder: m === "move" ? "Find a space or a position…" : placeholder(m) });
       inp.on("change", (_e, cx) => { if (this.input !== inp) return; this.typed(inp.value()); this.reveal(); cx.notify(); });
-      inp.on("submit", (_e, cx) => {
-        // Shift/Ctrl+Enter are handled in on_key_down (which runs first and stops the event); this
-        // guard covers an Input that submits on them anyway.
-        if (this.input !== inp || Date.now() - (this.modEnterAt ?? 0) < 200) return;
-        this.accept(cx, "open");
-      });
+      if (!hasBindKeys) {
+        inp.on("submit", (_e, cx) => {
+          // Shift/Ctrl+Enter are handled in on_key_down (which runs first and stops the event); this
+          // guard covers an Input that submits on them anyway.
+          if (this.input !== inp || Date.now() - (this.modEnterAt ?? 0) < 200) return;
+          this.accept(cx, "open");
+        });
+      }
       this.inputs[m] = inp;
     }
     this.input = this.inputs[this.mode];
@@ -70,6 +76,25 @@ export default class Switcher extends View {
         cx.notify();
       }
     });
+  }
+
+  bindKeys(cx) {
+    if (typeof cx.bind_keys !== "function") return;
+    cx.bind_keys([
+      { keystroke: "escape", action: "ob_switcher.escape", context: "ObSwitcher" },
+      { keystroke: "down", action: "ob_switcher.down", context: "ObSwitcher" },
+      { keystroke: "up", action: "ob_switcher.up", context: "ObSwitcher" },
+      { keystroke: "ctrl-n", action: "ob_switcher.down", context: "ObSwitcher" },
+      { keystroke: "ctrl-p", action: "ob_switcher.up", context: "ObSwitcher" },
+      { keystroke: "pagedown", action: "ob_switcher.pagedown", context: "ObSwitcher" },
+      { keystroke: "pageup", action: "ob_switcher.pageup", context: "ObSwitcher" },
+      { keystroke: "tab", action: "ob_switcher.tab", context: "ObSwitcher" },
+      { keystroke: "shift-tab", action: "ob_switcher.shift_tab", context: "ObSwitcher" },
+      { keystroke: "enter", action: "ob_switcher.open", context: "ObSwitcher" },
+      { keystroke: "shift-enter", action: "ob_switcher.create", context: "ObSwitcher" },
+      { keystroke: "ctrl-enter", action: "ob_switcher.right", context: "ObSwitcher" },
+      { keystroke: "cmd-enter", action: "ob_switcher.right", context: "ObSwitcher" },
+    ]);
   }
 
   close() { closeOverlay(props()?.overlay); }
@@ -251,11 +276,14 @@ export default class Switcher extends View {
       });
     }
 
-    // Commands (Zen mode, palette actions).
-    items.push({
-      key: "cmd:ob-tabs.zen", kind: "command", route: "ob-tabs.zen", label: "Toggle Zen mode", context: "Zen mode: Toggle", words: "zen mode toggle focus",
-      lead: () => icon("minimize", S.icon), go: () => run("ob-tabs.zen"),
-    });
+    // Commands (Vaultr actions for Command Palette and Everything mode).
+    for (const c of VAULTR_COMMANDS) {
+      items.push({
+        key: `cmd:${c.route}`, kind: "command", route: c.route, label: c.label,
+        context: c.context, words: `${c.route} ${c.words}`,
+        lead: () => icon(c.icon, S.icon), go: () => run(c.route),
+      });
+    }
 
     // Bookmarks whose target is gone still show (dimmed) so they can be found and removed.
     const byKey = new Map(items.map((it) => [it.key, it]));
@@ -280,7 +308,11 @@ export default class Switcher extends View {
       // Vaultr's commands and Herdr's app commands (commands.js), one list. Each row runs its route.
       const cmdText = bodyOf(query);
       const vaultr = items.filter((it) => it.route && it.kind === "command");
-      const scored = commandRows({ vaultr, herdr: commands(), keys: keys(), query: cmdText, match: fuzzy })
+      const platform = appWindow()?.platform ?? "linux";
+      const curLayout = shared("layout") || "vaultr";
+      const scored = commandRows({
+        vaultr, herdr: commands(), keys: keys(), query: cmdText, layout: curLayout, platform, layouts: layouts(), match: fuzzy,
+      })
         .map((r) => ({
           ...r,
           item: {
@@ -435,8 +467,15 @@ export default class Switcher extends View {
   }
 
   // ---------------------------------------------------------------- render
-  render() {
+  render(cx) {
     const t = tc();
+    let sig = "";
+    try { sig = JSON.stringify(keys()); } catch { sig = ""; }
+    if (sig !== this.keysSig) {
+      const first = this.keysSig === "";
+      this.keysSig = sig;
+      if (!first) cx.timer.after(0, (cx) => this.bindKeys(cx));
+    }
     const rows = this.rows();
     const picks = this.picks(rows);
     this.at = Math.max(0, Math.min(this.at, picks.length - 1));
@@ -450,8 +489,18 @@ export default class Switcher extends View {
     const listH = Math.min(listMax, contentH);
     const tab = current().tab;
     const tabName = tab ? tabLabel(tab, panes() ?? []) : "";
-    return v_flex().id("root").track_focus(this.handle).w_full().min_h(0).bg(t.popover).text_color(t.foreground)
+    return v_flex().id("root").key_context("ObSwitcher").track_focus(this.handle).w_full().min_h(0).bg(t.popover).text_color(t.foreground)
       .on_size_change((s, cx) => { const w = s.width / zoom; if (Math.abs(w - this.width) > 1) { this.width = w; cx.notify(); } })
+      .on_action("ob_switcher.escape", () => this.close())
+      .on_action("ob_switcher.down", (_e, cx) => { this.move(1); cx.notify(); })
+      .on_action("ob_switcher.up", (_e, cx) => { this.move(-1); cx.notify(); })
+      .on_action("ob_switcher.pagedown", (_e, cx) => { this.move(8); cx.notify(); })
+      .on_action("ob_switcher.pageup", (_e, cx) => { this.move(-8); cx.notify(); })
+      .on_action("ob_switcher.tab", (_e, cx) => { if (this.mode !== "move") { this.cycleMode(1); cx.notify(); } })
+      .on_action("ob_switcher.shift_tab", (_e, cx) => { if (this.mode !== "move") { this.cycleMode(-1); cx.notify(); } })
+      .on_action("ob_switcher.open", (_e, cx) => this.accept(cx, "open"))
+      .on_action("ob_switcher.create", (_e, cx) => this.accept(cx, "create"))
+      .on_action("ob_switcher.right", (_e, cx) => this.accept(cx, "right"))
       .on_key_down((e, cx) => this.onKey(e, cx))
       .when(this.mode === "move", (el) => el.child(h_flex().h(34).flex_none().px(16).pt(10).gap(8).items_center()
         .child(icon("move", S.iconSm, t.muted))

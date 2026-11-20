@@ -2,10 +2,13 @@
 keeps its own name. A tab that holds exactly one pane and shows as that pane's row shows the pane's label under its
 name when the two differ. The tree is built from live Herdr lists, so these are wiring checks on the source."""
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
+import glob
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -38,6 +41,10 @@ class MacKeys(unittest.TestCase):
         # On macOS install.sh binds cmd-enter where keys/ says ctrl-enter; the tree's own key handler takes both.
         src = MAIN.read_text(encoding="utf-8")
         self.assertRegex(src, r'case "ctrl-enter": case "cmd-enter": if \(this\.once\("open-right"\)\)')
+
+    def test_cmd_backspace_closes_selected_row_like_delete(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertRegex(src, r'case "delete": case "cmd-backspace": if \(this\.once\("close"\)\)')
 
 
 MATCH = Path(ROOT, "mods", "ob-sessions", "match.js")
@@ -212,6 +219,57 @@ class SessionsHideWiring(unittest.TestCase):
         self.assertNotIn("lsKey", kit_src)
         self.assertIn("localStorage.getItem(k)", kit_src)
         self.assertIn("localStorage.setItem(k, JSON.stringify(v))", kit_src)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class WorktreeModGate(unittest.TestCase):
+    def test_hasMod_checks_mod_json_or_main_js_under_appHome(self):
+        with tempfile.TemporaryDirectory(prefix="kit-hasmod-") as folder:
+            for path in glob.glob(os.path.join(ROOT, "kit", "*.js")):
+                shutil.copy(path, os.path.join(folder, os.path.basename(path)))
+            kit_src = Path(folder, "kit.js").read_text(encoding="utf-8")
+            kit_src = (kit_src
+                       .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                       .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                       .replace('from "herdr"', 'from "./herdr.js"'))
+            Path(folder, "kit.js").write_text(kit_src, encoding="utf-8")
+            Path(folder, "gpui-kit.js").write_text("export const div = () => null; export const svg = () => null; export const image = () => null;\n", encoding="utf-8")
+            Path(folder, "gpui-base.js").write_text("export const h_flex = () => null; export const v_flex = () => null;\n", encoding="utf-8")
+            herdr_fns = ["theme", "run", "openOverlay", "closeOverlay", "layout", "shared", "setShared", "keys", "spaces", "agents", "terminals", "panes", "focused", "home", "window"]
+            Path(folder, "herdr.js").write_text(
+                "".join(f"export const {n} = () => [];\n" for n in herdr_fns)
+                + 'const FILES = new Map([\n'
+                + '  ["/app/mods/worktree/mod.json", "{}"],\n'
+                + '  ["/app/mods/only-main/main.js", "export default class {}"],\n'
+                + ']);\n'
+                + 'export const appHome = () => "/app";\n'
+                + 'export const readTextFile = async (p) => {\n'
+                + '  if (p.includes("/boom/")) throw new Error("read fail");\n'
+                + '  return FILES.get(p) ?? null;\n'
+                + '};\n',
+                encoding="utf-8",
+            )
+            code = (
+                f'import {{ hasMod }} from "{Path(folder, "kit.js").as_uri()}";\n'
+                'const out = await Promise.all(['
+                'hasMod("worktree"), hasMod("only-main"), hasMod("missing"), hasMod("boom")'
+                ']);\n'
+                'console.log(JSON.stringify(out));'
+            )
+            res = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(json.loads(res.stdout), [True, True, False, False])
+
+    def test_sessions_probes_worktree_mod_and_gates_worktree_menu_items(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertIn('hasMod', src.split('from "./kit.js"')[0])
+        self.assertIn('this.hasWorktreeMod = false;', src)
+        self.assertIn('hasMod("worktree")', src)
+        self.assertIn('if (g && this.hasWorktreeMod)', src)
+        block = src[src.index('if (g && this.hasWorktreeMod)'):src.index('items.push({ label: "Move up"', src.index('if (g && this.hasWorktreeMod)'))]
+        self.assertIn('New worktree…', block)
+        self.assertIn('Open worktree…', block)
+        self.assertIn('Remove worktree…', block)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = home_guard.ROOT
 ANCHOR = os.path.join(ROOT, "mods", "ob-settings", "menu_anchor.js")
@@ -318,5 +320,291 @@ class PanelScopeWiring(unittest.TestCase):
         with open(HOTKEYS, encoding="utf-8") as f:
             src = f.read()
         for needle in ("scopeWarning(", "panelOnlyTag(", "listedIn(", "moveKey(", "Add to Vaultr layout",
-                       "Move to Vaultr layout", "scopeInfo("):
+                       "Move to Vaultr layout", "scopeInfo(", "captureKeystroke(", "missingArg"):
             self.assertIn(needle, src)
+
+
+REGISTRY_RULES = os.path.join(ROOT, "mods", "ob-settings", "registry_rules.js")
+SAMPLE_CMDS = [
+    {"name": "tab.new", "args": [{"name": "name", "required": False}]},
+    {"name": "tab.select", "args": [{"name": "index", "required": False}, {"name": "id", "required": False}]},
+    {"name": "space.select", "args": [{"name": "index", "required": False}, {"name": "id", "required": False}]},
+    {"name": "space.move", "args": [{"name": "id", "required": True}, {"name": "index", "required": True}]},
+    {"name": "pane.split", "args": [{"name": "direction", "required": True}]},
+    {"name": "pane.go", "args": [{"name": "direction", "required": True}]},
+    {"name": "pane.swap", "args": [{"name": "direction", "required": False}]},
+    {"name": "layout.switch", "args": [{"name": "name", "required": False}]},
+    {"name": "layout.clone", "args": [{"name": "name", "required": True}, {"name": "as", "required": False}]},
+    {"name": "mod.clone", "args": [{"name": "name", "required": True}, {"name": "as", "required": False}]},
+    {"name": "mod.open", "args": [{"name": "name", "required": True}]},
+    {"name": "app.theme", "args": [{"name": "name", "required": True}]},
+]
+
+
+def registry_js(body, arg):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node is not installed")
+    if not os.path.exists(REGISTRY_RULES):
+        raise AssertionError(f"missing {REGISTRY_RULES}")
+    code = (f"import * as m from {json.dumps(REGISTRY_RULES)};"
+            "const A = JSON.parse(process.env.A);"
+            f"const r = (() => {{ {body} }})();"
+            "process.stdout.write(JSON.stringify(r === undefined ? null : r));")
+    res = subprocess.run([node, "--input-type=module", "-e", code], env={**os.environ, "A": json.dumps(arg)},
+                         capture_output=True, text=True, timeout=60)
+    if res.returncode != 0:
+        raise AssertionError(f"node failed:\n{res.stderr}")
+    return json.loads(res.stdout)
+
+
+class RegistryActions(unittest.TestCase):
+    def test_named_actions_drop_bare_required_arg_commands_and_include_select_numbers(self):
+        rows = registry_js("return m.buildRegistry({ commands: A.cmds, keys: [], platform: 'macos' });",
+                           {"cmds": SAMPLE_CMDS})
+        by_action = {r["action"]: r for r in rows}
+        self.assertIn("layout.clone:vaultr", by_action)
+        self.assertEqual(by_action["layout.clone:vaultr"]["title"], "Duplicate Vaultr layout")
+        self.assertNotIn("layout.clone", by_action)
+        self.assertNotIn("mod.clone", by_action)
+        for n in range(1, 10):
+            self.assertEqual(by_action[f"tab.select:{n}"]["title"], f"Go to tab {n}")
+            self.assertEqual(by_action[f"space.select:{n}"]["title"], f"Go to space {n}")
+        self.assertEqual([r["action"] for r in rows if r.get("missingArg")], [])
+
+    def test_existing_broken_bare_binding_is_flagged_with_missing_arg_so_user_can_remove_it(self):
+        keys = [
+            {"section": "layout:vaultr", "keys": "cmd-shift-x", "action": "pane.split"},
+            {"section": "global", "keys": "ctrl-shift-m", "action": '{"command":"space.move","args":{"id":"s1"}}'},
+            {"section": "layout:vaultr", "keys": "cmd-\\", "action": "pane.split:right"},
+            {"section": "global", "keys": "ctrl-alt-r", "action": '{"command":"pane.split","args":{"direction":"right"}}'},
+        ]
+        rows = registry_js("return m.buildRegistry({ commands: A.cmds, keys: A.keys, platform: 'macos' });",
+                           {"cmds": SAMPLE_CMDS, "keys": keys})
+        by_action = {r["action"]: r for r in rows}
+        self.assertEqual(by_action["pane.split"]["missingArg"], "direction")
+        self.assertEqual(by_action['{"command":"space.move","args":{"id":"s1"}}']["missingArg"], "index")
+        self.assertIsNone(by_action['{"command":"pane.split","args":{"direction":"right"}}'].get("missingArg"))
+        self.assertIsNone(by_action["pane.split:right"].get("missingArg"))
+
+
+class MacChordCapture(unittest.TestCase):
+    def test_writeForm_normalizes_uppercase_and_redundant_shift_on_shifted_symbols(self):
+        self.assertEqual(keysfile_js("return m.writeForm('cmd-P');", {}), "cmd-shift-p")
+        self.assertEqual(keysfile_js("return m.writeForm('cmd-shift-|');", {}), "cmd-|")
+        self.assertEqual(keysfile_js("return m.writeForm('cmd-|');", {}), "cmd-|")
+        self.assertEqual(keysfile_js("return m.writeForm('cmd-shift-\\\\');", {}), "cmd-shift-\\")
+        self.assertEqual(keysfile_js("return m.writeForm('cmd-backspace');", {}), "cmd-backspace")
+        self.assertEqual(keysfile_js("return m.canon('cmd-P');", {}), "cmd-shift-p")
+        self.assertEqual(keysfile_js("return m.canon('cmd-|');", {}), "cmd-shift-\\")
+
+    def test_captureKeystroke_keeps_cmd_and_fn_backspace_and_escape(self):
+        cases = [
+            ({"key": "backspace", "modifiers": {"platform": True}, "keystroke": "cmd-backspace"}, "cmd-backspace"),
+            ({"key": "escape", "modifiers": {"platform": True}, "keystroke": "cmd-escape"}, "cmd-escape"),
+            ({"key": "backspace", "modifiers": {"function": True}, "keystroke": "fn-backspace"}, "fn-backspace"),
+            ({"key": "backspace", "modifiers": {}, "keystroke": "backspace"}, "backspace"),
+            ({"key": "escape", "modifiers": {}, "keystroke": "escape"}, "escape"),
+            ({"key": "|", "modifiers": {"platform": True}, "keystroke": "cmd-|"}, "cmd-|"),
+        ]
+        for event, want in cases:
+            self.assertEqual(keysfile_js("return m.captureKeystroke(A.e);", {"e": event}), want)
+
+
+class HotkeysCaching(unittest.TestCase):
+    def test_effectivePairs_memoizes_by_array_identity_avoiding_repeat_scans(self):
+        out = keysfile_js("""
+            const base = Array.from({ length: 200 }, (_, i) => ({
+              key: i % 50 === 0 ? "ctrl-dup" : `ctrl-${i}`,
+              action: `act.${i}`,
+            }));
+            let reads = 0;
+            const proxied = new Proxy(base, {
+              get(target, prop, receiver) {
+                if (typeof prop === "string" && /^\\d+$/.test(prop)) reads++;
+                return Reflect.get(target, prop, receiver);
+              },
+            });
+            const first = m.effectivePairs(proxied);
+            let sameRef = true;
+            for (let r = 0; r < 149; r++) {
+              const next = m.effectivePairs(proxied);
+              if (!Object.is(first, next)) sameRef = false;
+            }
+            const fresh = m.effectivePairs([...base]);
+            return {
+              reads,
+              sameRef,
+              freshIsNew: !Object.is(first, fresh),
+              firstLen: first.length,
+              lastDupAction: first.find((p) => p.key === "ctrl-dup")?.action,
+              emptySame: Object.is(m.effectivePairs([]), m.effectivePairs([])),
+            };
+        """, {})
+        # 150 row checks on a 200-pair section would read >= 30,000 elements uncached; WeakMap reads once.
+        self.assertEqual(out["reads"], 200)
+        self.assertTrue(out["sameRef"])
+        self.assertTrue(out["freshIsNew"])
+        self.assertEqual(out["firstLen"], 197)
+        self.assertEqual(out["lastDupAction"], "act.150")
+        self.assertTrue(out["emptySame"])
+
+    def test_canon_cache_correctness_eviction_and_speed(self):
+        out = keysfile_js("""
+            const samples = ["cmd-P", "cmd-|", "ctrl-alt-shift-k", "ctrl-k ctrl-s", "cmd-backspace"];
+            const cold = samples.map((s) => m.canon(s));
+            const warm = samples.map((s) => m.canon(s));
+            for (let i = 0; i < 2100; i++) m.canon(`ctrl-alt-k${i}`);
+            const afterEvict = samples.map((s) => m.canon(s));
+            const t0 = performance.now();
+            for (let r = 0; r < 4000; r++) {
+              for (const s of samples) m.canon(s);
+            }
+            const cachedMs = performance.now() - t0;
+            return { cold, warm, afterEvict, cachedMs };
+        """, {})
+        want = ["cmd-shift-p", "cmd-shift-\\", "ctrl-alt-shift-k", "ctrl-k ctrl-s", "cmd-backspace"]
+        self.assertEqual(out["cold"], want)
+        self.assertEqual(out["warm"], want)
+        self.assertEqual(out["afterEvict"], want)
+        self.assertLess(out["cachedMs"], 200)
+
+    def test_hotkeys_uses_effectiveOf_memo_and_avoids_version_numbers(self):
+        with open(HOTKEYS, encoding="utf-8") as f:
+            hk_src = f.read()
+        with open(KEYSFILE, encoding="utf-8") as f:
+            kf_src = f.read()
+        self.assertIn("effectiveOf(", hk_src)
+        self.assertIn("const EFFECTIVE = new WeakMap();", hk_src)
+        for src in (hk_src, kf_src):
+            self.assertNotRegex(src, r"0\.1\.1[0-9]\b")
+
+
+class SettingsOverlayKeys(unittest.TestCase):
+    """ObSettings binds Escape under ObSettings key_context and cancels Hotkeys capture/pending before closing."""
+
+    def test_ob_settings_escape_precedence_and_keys_reload_rebind(self):
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node is not installed")
+        with tempfile.TemporaryDirectory(prefix="ob-settings-keys-") as folder:
+            shutil.copy(os.path.join(ROOT, "mods", "ob-settings", "main.js"), os.path.join(folder, "main.js"))
+            src = Path(folder, "main.js").read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            Path(folder, "main.js").write_text(src, encoding="utf-8")
+            el_stub = (
+                "const proxyEl = () => {\n"
+                "  const rec = { keyContext: null, actions: {} };\n"
+                "  const p = new Proxy(() => p, {\n"
+                "    get(_t, prop) {\n"
+                '      if (prop === "__rec") return rec;\n'
+                '      if (prop === "when") return (cond, fn) => { if (cond) fn(p); return p; };\n'
+                '      if (prop === "key_context") return (ctx) => { rec.keyContext = ctx; return p; };\n'
+                '      if (prop === "on_action") return (name, fn) => { rec.actions[name] = fn; return p; };\n'
+                "      return () => p;\n"
+                "    },\n"
+                "  });\n"
+                "  return p;\n"
+                "};\n"
+            )
+            Path(folder, "gpui-kit.js").write_text(
+                el_stub + "export class View {}\nexport const div = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "gpui-base.js").write_text(
+                el_stub + "export const h_flex = () => proxyEl();\nexport const v_flex = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "herdr.js").write_text(
+                "export const state = { keys: [{ section: 'global', keys: 'a', action: 'b' }], closed: [], shared: {} };\n"
+                "export const props = () => ({ overlay: 'st-ov' });\n"
+                "export const closeOverlay = (ov) => state.closed.push(ov);\n"
+                "export const nextCommand = () => new Promise(() => {});\n"
+                "export const run = () => {};\n"
+                "export const shared = (k) => state.shared[k];\n"
+                "export const setShared = (k, v) => { state.shared[k] = v; };\n"
+                "export const keys = () => state.keys;\n",
+                encoding="utf-8",
+            )
+            Path(folder, "kit.js").write_text(
+                el_stub
+                + "export const S = { text: 13, textSm: 12, textLg: 15, iconSm: 14, radiusLg: 6 };\n"
+                + "export const tc = () => ({});\n"
+                + "export const icon = () => proxyEl();\n"
+                + "export const iconButton = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "vault.js").write_text(
+                el_stub + "export const render = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "hotkeys.js").write_text(
+                el_stub
+                + "export const presses = [];\n"
+                + "export function init(host) {\n"
+                + "  host.state.hotkeys = {\n"
+                + "    capture: 'pane.split:right',\n"
+                + "    pending: { action: 'a', chord: 'b', others: ['c'] },\n"
+                + "    press(ch) { presses.push(ch); this.capture = null; },\n"
+                + "  };\n"
+                + "}\n"
+                + "export const render = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import Settings from "{Path(folder, "main.js").as_uri()}";\n'
+                f'import {{ state }} from "{Path(folder, "herdr.js").as_uri()}";\n'
+                f'import {{ presses }} from "{Path(folder, "hotkeys.js").as_uri()}";\n'
+                "const binds = [];\n"
+                "const timers = [];\n"
+                "let notifies = 0;\n"
+                "const cx = {\n"
+                "  focus_handle: () => ({ focus() {} }),\n"
+                "  bind_keys: (list) => binds.push(list),\n"
+                "  timer: { after: (_ms, fn) => timers.push(fn), every: () => ({ cancel() {} }) },\n"
+                "  spawn: () => {},\n"
+                "  notify: () => { notifies++; },\n"
+                "};\n"
+                "const s = new Settings();\n"
+                "s.init({}, cx);\n"
+                "s.tabId = 'hotkeys';\n"
+                "const root = s.render(cx).__rec;\n"
+                "root.actions['ob_settings.escape'](null, cx);\n"
+                "const closedAfterCapture = state.closed.length;\n"
+                "const pendingAfterCapture = Boolean(s.state.hotkeys.pending);\n"
+                "root.actions['ob_settings.escape'](null, cx);\n"
+                "const closedAfterPending = state.closed.length;\n"
+                "const pendingAfterSecond = s.state.hotkeys.pending;\n"
+                "root.actions['ob_settings.escape'](null, cx);\n"
+                "state.keys = [{ section: 'global', keys: 'c', action: 'd' }];\n"
+                "s.render(cx);\n"
+                "for (const fn of timers.splice(0)) fn(cx);\n"
+                "console.log(JSON.stringify({\n"
+                "  bindCount: binds.length,\n"
+                "  firstBind: binds[0],\n"
+                "  keyContext: root.keyContext,\n"
+                "  presses,\n"
+                "  closedAfterCapture,\n"
+                "  pendingAfterCapture,\n"
+                "  closedAfterPending,\n"
+                "  pendingAfterSecond,\n"
+                "  closedFinal: state.closed,\n"
+                "  notifies,\n"
+                "}));\n"
+            )
+            res = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            got = json.loads(res.stdout)
+            self.assertEqual(got["bindCount"], 2)  # initial bind in init() + rebind after keys() changed
+            self.assertEqual(got["firstBind"], [{"keystroke": "escape", "action": "ob_settings.escape", "context": "ObSettings"}])
+            self.assertEqual(got["keyContext"], "ObSettings")
+            self.assertEqual(got["presses"], ["escape"])
+            self.assertEqual(got["closedAfterCapture"], 0)
+            self.assertTrue(got["pendingAfterCapture"])
+            self.assertEqual(got["closedAfterPending"], 0)
+            self.assertIsNone(got["pendingAfterSecond"])
+            self.assertEqual(got["closedFinal"], ["st-ov"])
+            self.assertGreaterEqual(got["notifies"], 2)

@@ -6,7 +6,7 @@ import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import {
   theme, run, openOverlay, closeOverlay, layout, shared, setShared, keys, spaces, agents,
-  terminals, panes, focused, home, window as appWindow,
+  terminals, panes, focused, home, appHome, readTextFile, window as appWindow,
 } from "herdr";
 
 // This copy's mod folder name (sync.sh writes it).
@@ -517,6 +517,14 @@ export const VIEWS = {
   "ob-graph": { title: "Graph", icon: "graph" },
   "ob-outline": { title: "Outline", icon: "list" },
 };
+export async function hasMod(name) {
+  try {
+    const dir = `${appHome()}/mods/${name}`;
+    return (await readTextFile(`${dir}/mod.json`)) !== null || (await readTextFile(`${dir}/main.js`)) !== null;
+  } catch {
+    return false;
+  }
+}
 export function viewInfo(node) {
   const v = VIEWS[node?.id];
   if (v) return v;
@@ -539,10 +547,11 @@ export function takeFocus(view, cx, slot, handle, then) {
 }
 
 // ---------------------------------------------------------------- keys
+const isMac = () => { const p = appWindow()?.platform; return p ? p === "macos" : String(home() ?? "").startsWith("/Users/"); };
 // "ctrl-shift-p" -> ["Ctrl", "Shift", "P"]; "ctrl--" -> ["Ctrl", "-"]; mac symbols on macOS.
 export function chordParts(k) {
   if (!k) return [];
-  const mac = appWindow()?.platform === "macos";
+  const mac = isMac();
   const raw = k.endsWith("--") ? [...k.slice(0, -2).split("-"), "-"] : k.split("-");
   const NAMES = mac
     ? { cmd: "⌘", ctrl: "⌃", shift: "⇧", alt: "⌥", option: "⌥", secondary: "⌘" }
@@ -550,14 +559,19 @@ export function chordParts(k) {
   const KEYS = { left: "←", right: "→", up: "↑", down: "↓", enter: "Enter", escape: "Esc", space: "Space", backspace: "⌫", tab: "Tab", pageup: "PgUp", pagedown: "PgDn", "\\": "\\" };
   return raw.map((p) => NAMES[p.toLowerCase()] ?? KEYS[p.toLowerCase()] ?? (p.length === 1 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1)));
 }
-export function chordLabel(k) { return chordParts(k).join(appWindow()?.platform === "macos" ? "" : "+"); }
-// The chord that runs `action` in this layout: layout:obsidian first, then global (terminal keys
+export function chordLabel(k) { return chordParts(k).join(isMac() ? "" : "+"); }
+// The chord that runs `action` in this layout: layout:vaultr first, then global (terminal keys
 // only when inTerminal). `action` is the keys.json string ("app.palette", "ob-tabs.open:ob-search").
+// An action may hold one chord per platform ("ctrl-b" and "cmd-b"), and keys() lists a section's
+// chords by name ("cmd-b" first), so within a section the chord for this keyboard wins: one with
+// ⌘ on macOS, one without ⌘/Super elsewhere.
 export function bindingFor(action, inTerminal = false) {
   const all = keys();
+  const mac = isMac();
   const order = [...(inTerminal ? ["terminal"] : []), `layout:${LAYOUT}`, "global"];
   for (const sec of order) {
-    const k = all.find((b) => b.section === sec && b.action === action);
+    const mine = all.filter((b) => b.section === sec && b.action === action);
+    const k = mine.find((b) => /(^|-)(cmd|super|win)-/.test(b.keys) === mac) ?? mine[0];
     if (k) return k.keys;
   }
   return null;

@@ -24,7 +24,7 @@ import { v_flex, h_flex, InputState, Input, ScrollHandle, Scrollbar } from "gpui
 import { keys, appHome, readTextFile, writeTextFile, shared, setShared, settings, window as appWindow } from "herdr";
 import { S, tc, alpha, icon, iconButton, chordParts, openMenu, tilde } from "./kit.js";
 import { menuAnchor } from "./menu_anchor.js";
-import { parseKeys, applyEdit, moveKey, effectivePairs, canon, writeForm, boundElsewhere, DEFAULT_SCOPE, scopeInfo, scopeWarning, listedIn, panelOnlyTag } from "./keysfile.js";
+import { parseKeys, applyEdit, moveKey, effectivePairs, canon, writeForm, captureKeystroke, boundElsewhere, DEFAULT_SCOPE, scopeInfo, scopeWarning, listedIn, panelOnlyTag } from "./keysfile.js";
 import { registry, GROUPS, LAYOUT_SCOPE, SESSIONS_SCOPE, defaultsIn, chainOf, scopeTitle, scopeShort, scopeWhere, titleFor } from "./registry.js";
 
 const FIXED_SCOPES = [LAYOUT_SCOPE, "global", "terminal", SESSIONS_SCOPE];
@@ -66,6 +66,16 @@ function plainCtrl(chord) {
   return m ? m[1] : null;
 }
 const isModScope = (s) => s.startsWith("mod:");
+// effectivePairs of a section, kept while its pair list is the same array (until keys.json is read
+// again). Every row asks for the same few sections on each render, staying within the 50 ms render budget.
+const EFFECTIVE = new WeakMap();
+const NO_PAIRS = [];
+function effectiveOf(pairs) {
+  if (!pairs) return NO_PAIRS;
+  let out = EFFECTIVE.get(pairs);
+  if (!out) { out = effectivePairs(pairs); EFFECTIVE.set(pairs, out); }
+  return out;
+}
 // One edit of the file text: a move of a key between two sections, or a change to one section.
 function applyOp(text, scope, op) {
   if (op.kind === "move") return moveKey(text, scope, op.to, op.chord, op.action);
@@ -171,7 +181,7 @@ class Hotkeys {
   // The chips of one row in scope S.
   chips(row, S, secs, rows) {
     const out = [];
-    const eff = (name) => effectivePairs(secs[name] ?? []);
+    const eff = (name) => effectiveOf(secs[name]);
     const effS = eff(S);
     const term = S === "terminal" ? [] : eff("terminal");
     const termOf = (chord) => term.find((q) => canon(q.key) === canon(chord) && q.action !== row.action)?.action ?? null;
@@ -483,14 +493,11 @@ class Hotkeys {
   onKey(e, cx) {
     if (this.capture) {
       cx.stop_propagation();
-      const k = e.key;
-      if (k === "escape" && !(e.modifiers?.control || e.modifiers?.alt || e.modifiers?.shift)) this.press("escape", cx);
-      else if (k === "backspace" && !(e.modifiers?.control || e.modifiers?.alt || e.modifiers?.shift)) this.press("backspace", cx);
-      else this.press(e.keystroke, cx);
+      this.press(captureKeystroke(e), cx);
       cx.notify();
       return;
     }
-    if (e.key === "escape") {
+    if (captureKeystroke(e) === "escape") {
       cx.stop_propagation();
       if (this.pending) { this.pending = null; cx.notify(); return; }
       this.host.dismiss();
@@ -597,6 +604,9 @@ class Hotkeys {
     const sameAsDefault = d !== undefined && sorted(own.map((c) => c.chord)) === sorted(d);
     const showRestore = d !== undefined && !sameAsDefault;
     const warns = [];
+    if (r.missingArg && own.length) {
+      warns.push({ tone: "blocked", text: `Requires "${r.missingArg}" argument (cannot run as written). Remove this key or bind a specific command.` });
+    }
     for (const c of r.chips) {
       if (c.kind === "pending") warns.push({ tone: "blocked", text: `${label(c.chord)} is already ${c.conflictTitles.join(", ")} ${scopeWhere(S_)}.`, pending: true });
       else if (c.conflict?.length) {
@@ -670,13 +680,14 @@ class Hotkeys {
   // A key chip: "Ctrl + B" pill; its x removes it (own keys only).
   chip(t, r, c, i, editable) {
     const id = `hk-c-${r.action}-${i}`;
-    const conflict = c.kind === "pending" || (c.conflict?.length ?? 0) > 0 || c.shadowed;
+    const conflict = c.kind === "pending" || (c.conflict?.length ?? 0) > 0 || c.shadowed || (c.kind === "own" && Boolean(r.missingArg));
     const amber = !conflict && (c.term || c.takes);
     const inherited = c.kind === "inherited";
     const fg = conflict ? t.blocked : amber ? t.working : inherited ? t.dim : t.foreground;
     const border = conflict ? alpha(t.blocked, 0.7) : amber ? alpha(t.working, 0.6) : inherited ? t.border : t.input;
     const bg = conflict ? alpha(t.blocked, 0.14) : amber ? alpha(t.working, 0.1) : inherited ? alpha(t.raised, 0) : t.raised;
     const tips = [];
+    if (c.kind === "own" && r.missingArg) tips.push(`Needs "${r.missingArg}" argument (cannot run as written)`);
     if (c.kind === "pending") tips.push(`Already ${c.conflictTitles.join(", ")}: Reassign or Cancel`);
     if (c.conflict?.length && c.kind !== "pending") tips.push(`Also bound to ${c.conflictTitles.join(", ")} ${scopeWhere(this.scope)}`);
     if (c.shadowed) tips.push("keys.json lists this key twice; the later entry wins");

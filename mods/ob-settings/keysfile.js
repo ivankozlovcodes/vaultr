@@ -18,7 +18,7 @@ const MOD_WORDS = {
   cmd: "cmd", super: "cmd", win: "cmd", meta: "cmd", platform: "cmd", command: "cmd",
   fn: "fn", function: "fn",
 };
-const MOD_ORDER = ["ctrl", "alt", "shift", "cmd", "fn"];
+const MOD_ORDER = ["ctrl", "alt", "cmd", "shift", "fn"];
 const KEY_ALIAS = { esc: "escape", return: "enter", del: "delete", pgup: "pageup", pgdn: "pagedown", " ": "space", ins: "insert" };
 // US layout: a shifted symbol is the same physical chord as shift + its base key ("ctrl-|" = "ctrl-shift-\").
 const SHIFTED = {
@@ -47,21 +47,32 @@ export function parseStroke(stroke) {
 
 // Canonical form for comparing chords: modifiers in a fixed order, key lowercased, aliases and
 // US shifted symbols folded. Sequences ("ctrl-k ctrl-s") are canonicalized stroke by stroke.
+// Cached by spelling: the Hotkeys list compares every row's chords with every binding on each
+// render, keeping within the 50 ms render budget.
+const CANON = new Map();
 export function canon(chord) {
-  return String(chord ?? "").trim().split(/\s+/).map((stroke) => {
+  const raw = String(chord ?? "");
+  let out = CANON.get(raw);
+  if (out !== undefined) return out;
+  out = raw.trim().split(/\s+/).map((stroke) => {
     const p = parseStroke(stroke);
     if (!p) return stroke.toLowerCase();
-    let key = p.key.length === 1 ? p.key.toLowerCase() : p.key.toLowerCase();
-    key = KEY_ALIAS[key] ?? key;
     const mods = new Set(p.mods);
+    if (/^[A-Z]$/.test(p.key)) mods.add("shift");
+    let key = p.key.toLowerCase();
+    key = KEY_ALIAS[key] ?? key;
     if (SHIFTED[key]) { key = SHIFTED[key]; mods.add("shift"); }
     return [...MOD_ORDER.filter((m) => mods.has(m)), key].join("-");
   }).join(" ");
+  if (CANON.size >= 2000) CANON.clear();
+  CANON.set(raw, out);
+  return out;
 }
 
 // The spelling we write for a new binding: modifiers ctrl, alt, shift, cmd, fn (the order the
 // person's file uses: "ctrl-alt-c", "alt-shift-h"), the platform word kept as given, key lowercased
-// when it is a letter. Returns null for something that isn't a chord (a lone modifier, empty).
+// when it is a letter (an uppercase letter adds shift; shifted punctuation drops redundant shift
+// so it matches GPUI's keystroke dispatch). Returns null for something that isn't a chord.
 export function writeForm(chord) {
   const strokes = String(chord ?? "").trim().split(/\s+/).filter(Boolean);
   if (!strokes.length) return null;
@@ -70,17 +81,35 @@ export function writeForm(chord) {
     const p = parseStroke(stroke);
     if (!p) return null;
     if (MOD_WORDS[p.key.toLowerCase()]) return null; // "ctrl-shift" alone
+    const modsSet = new Set(p.mods);
+    let key = p.key;
+    if (/^[A-Z]$/.test(key)) {
+      modsSet.add("shift");
+      key = key.toLowerCase();
+    } else {
+      key = KEY_ALIAS[key.toLowerCase()] ?? (key.length > 1 ? key.toLowerCase() : key);
+    }
+    if (SHIFTED[key]) modsSet.delete("shift");
     // The platform modifier keeps the word it was given ("super", "cmd"); others use our words.
     const word = (m) => {
       if (m !== "cmd") return m;
-      const w = p.words[p.mods.indexOf(m)];
+      const idx = p.mods.indexOf(m);
+      const w = idx >= 0 ? p.words[idx] : "cmd";
       return ["super", "win", "cmd"].includes(w) ? w : "cmd";
     };
-    const mods = MOD_ORDER.filter((m) => p.mods.includes(m)).map(word);
-    const key = /^[A-Za-z]$/.test(p.key) ? p.key.toLowerCase() : (KEY_ALIAS[p.key.toLowerCase()] ?? (p.key.length > 1 ? p.key.toLowerCase() : p.key));
+    const mods = MOD_ORDER.filter((m) => modsSet.has(m)).map(word);
     out.push([...mods, key].join("-"));
   }
   return out.join(" ");
+}
+
+// Translate a GPUI on_key_down event into "escape" (cancel), "backspace" (clear), or the chord string.
+export function captureKeystroke(e) {
+  const m = e?.modifiers;
+  const mod = Boolean(m?.control || m?.alt || m?.shift || m?.platform || m?.function);
+  if (e?.key === "escape" && !mod) return "escape";
+  if (e?.key === "backspace" && !mod) return "backspace";
+  return e?.keystroke ?? "";
 }
 
 // ------------------------------------------------------------------ scanning
@@ -181,10 +210,22 @@ export function parseKeys(text) {
 }
 
 // The bindings of one section as the app sees them (last duplicate wins), in file order.
+// Memoized per pairs array so Hotkeys rows and boundElsewhere stay within the 50 ms render budget.
+const EFFECTIVE_PAIRS = new WeakMap();
+const NO_PAIRS = [];
 export function effectivePairs(pairs) {
-  const last = new Map();
-  pairs.forEach((p, i) => last.set(p.key, i));
-  return pairs.filter((p, i) => last.get(p.key) === i);
+  if (!Array.isArray(pairs) || !pairs.length) return NO_PAIRS;
+  let out = EFFECTIVE_PAIRS.get(pairs);
+  if (out) return out;
+  const seen = new Set();
+  const rev = [];
+  for (let i = pairs.length - 1; i >= 0; i--) {
+    const p = pairs[i];
+    if (!seen.has(p.key)) { seen.add(p.key); rev.push(p); }
+  }
+  out = rev.reverse();
+  EFFECTIVE_PAIRS.set(pairs, out);
+  return out;
 }
 
 // Where else `action` is bound: [{section, chord}] for every section other than `scope`, in file order.

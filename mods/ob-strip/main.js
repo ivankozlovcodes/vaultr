@@ -12,10 +12,13 @@ import { h_flex } from "gpui-base";
 import { layout, props, run, nextCommand, settings, agents, terminals, shared, window as appWindow } from "herdr";
 import {
   S, NODE, icon, iconButton, stripTab, viewInfo, findNode, findParent, openMenu, subagentCounts, alpha, stop, tc,
-  agentAttention, attentionCounts, getDismissed, terminalsByAddress,
+  agentAttention, attentionCounts, getDismissed, terminalsByAddress, chordLabel, bindingFor,
 } from "./kit.js";
 import { HALVES, halfAction, standInFor } from "./halves.js";
 import { stripView } from "./strip_view.js";
+
+// Append the live chord from keys.json (e.g. "(Ctrl+B)" or "(⌘B)" on macOS) to a tooltip title.
+const tip = (title, action) => { const k = bindingFor(action); return k ? `${title} (${chordLabel(k)})` : title; };
 
 // The four groups of the layout: [stack id, node to hide/show for the group, title].
 const GROUPS = [
@@ -148,7 +151,7 @@ export default class Strip extends View {
       .child(h_flex().id("strip-fill").flex_1().min_w(0).h_full().items_center().px(4)
         .when(Boolean(stack), (e) => e.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(stack, null); }))
         .child(div().min_w(0).flex_shrink(1).truncate().text_size(S.textSm).font_semibold().text_color(t.foreground).child(view.label)))
-      .when(sideToggle, (e) => e.child(iconButton({ id: "toggle-left", icon: "panel-left", size: S.tab, tip: "Close left sidebar (Ctrl+B)", onClick: () => run("layout.hide", { id: NODE.left }) })))
+      .when(sideToggle, (e) => e.child(iconButton({ id: "toggle-left", icon: "panel-left", size: S.tab, tip: tip("Close left sidebar", "layout.toggle:ob-left"), onClick: () => run("layout.hide", { id: NODE.left }) })))
       .when(half?.kind === "collapse", (e) => e.child(iconButton({ id: "half-collapse", icon: "minimize", size: S.tab, tip: view.half.tip, onClick: () => run("layout.hide", { id: half.node }) })))
       .when(half?.kind === "restore", (e) => e.child(iconButton({ id: "half-restore", icon: "split-down", size: S.tab, tip: view.half.tip, onClick: () => run("layout.show", { id: half.node }) })))
       .when(winButtons, (e) => e

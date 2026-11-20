@@ -23,7 +23,7 @@ import {
   avatar, emptyState, inputFrame, openMenu, ago, dur, tilde, highlight, takeFocus, bindingFor,
   chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneLabelOf, paneSecondary, place, openView,
   mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden, getHidden, updateHidden,
-  lsGet, lsSet,
+  lsGet, lsSet, hasMod,
   paneAttention, tabAttention, spaceAttention, getDismissed, terminalsByAddress,
 } from "./kit.js";
 import { Git } from "./git.js";
@@ -124,6 +124,8 @@ export default class Sessions extends View {
     this.lastAct = {};
     this.copied = null;
     this.rows = [];
+    this.hasWorktreeMod = false;
+    cx.spawn(async (cx) => { this.hasWorktreeMod = await hasMod("worktree"); cx.notify(); });
     this.refreshMachines(cx);
     cx.timer.every(15000, (cx) => this.refreshMachines(cx));
     cx.timer.every(30000, (cx) => cx.notify()); // elapsed times and the git fallback
@@ -736,7 +738,7 @@ export default class Sessions extends View {
       items.push({ label: "Rename…", icon: "rename", command: "space.rename", args: { id: w.id }, kbd: "shift-f2" });
       items.push({ label: bm("space", w.id), icon: isBookmarked("space", w.id) ? "bookmark" : "bookmark-plus", command: me(`bookmark:${n.key}`) });
       if (cwd) items.push({ label: "Copy path", icon: "copy", copy: cwd });
-      if (g) {
+      if (g && this.hasWorktreeMod) {
         items.push({ separator: true });
         items.push({ label: "New worktree…", icon: "git-branch", overlay: { mod: "worktree", kind: "dialog", width: 460, height: 280, props: { space: w.id, folder: cwd, action: "new" } } });
         items.push({ label: "Open worktree…", icon: "folder-open", overlay: { mod: "worktree", kind: "dialog", width: 560, height: 480, props: { space: w.id, folder: cwd, action: "open" } } });
@@ -1198,7 +1200,7 @@ export default class Sessions extends View {
       case "enter": this.activateRow(r); break;
       case "space": if (r?.foldable) this.setOpen(r.node, !r.open); break;
       case "f2": if (this.once("rename")) this.rename(r?.node); break;
-      case "delete": if (this.once("close")) this.close(r?.node); break;
+      case "delete": case "cmd-backspace": if (this.once("close")) this.close(r?.node); break;
       case "ctrl-enter": case "cmd-enter": if (this.once("open-right")) this.openRight(r?.node); break;
       case "shift-f10": case "menu": if (r) this.menu(r.key); break;
       case "/": this.input.focus(); break;

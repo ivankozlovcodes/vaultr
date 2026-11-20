@@ -237,6 +237,7 @@ class Repo(unittest.TestCase):
             if line.startswith("- "):
                 paths.extend(re.findall(r"mods/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", line))
         self.assertTrue(paths)
+        self.assertIn("mods/ob-settings/registry_rules.js", paths)
         for rel in paths:
             with self.subTest(path=rel):
                 self.assertTrue(os.path.exists(os.path.join(ROOT, rel)), f"missing {rel} named in NOTICE")

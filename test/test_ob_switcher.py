@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,7 +23,29 @@ VAULTR = [
 HERDR = [
     {"name": "tab.new", "args": [{"name": "name", "required": False}], "about": "Make a tab in this space."},
     {"name": "pane.split", "args": [{"name": "direction", "required": True}], "about": "Split the pane."},
+    {"name": "pane.go", "args": [{"name": "direction", "required": True}], "about": "Focus neighbor pane."},
+    {"name": "pane.swap", "args": [{"name": "direction", "required": False}, {"name": "pane", "required": False}, {"name": "target", "required": False}], "about": "Swap panes."},
+    {"name": "tab.select", "args": [{"name": "index", "required": False}, {"name": "id", "required": False}], "about": "Show a tab."},
+    {"name": "space.select", "args": [{"name": "index", "required": False}, {"name": "id", "required": False}], "about": "Show a space."},
+    {"name": "layout.switch", "args": [{"name": "name", "required": False}], "about": "Show a layout."},
     {"name": "space.move", "args": [{"name": "id", "required": True}, {"name": "index", "required": True}], "about": "Move a space."},
+    {"name": "tab.move", "args": [{"name": "id", "required": True}, {"name": "index", "required": True}], "about": "Move a tab."},
+    {"name": "pane.focus", "args": [{"name": "pane", "required": False}], "about": "Focus a pane."},
+    {"name": "terminal.keep", "args": [{"name": "terminal", "required": True}], "about": "Keep a terminal."},
+    {"name": "terminal.park", "args": [{"name": "terminal", "required": True}], "about": "Park a terminal."},
+    {"name": "terminal.kill", "args": [{"name": "terminal", "required": True}], "about": "Kill a terminal."},
+    {"name": "terminal.show", "args": [{"name": "terminal", "required": False}], "about": "Show a terminal."},
+    {"name": "agent.focus", "args": [{"name": "terminal", "required": True}], "about": "Focus an agent."},
+    {"name": "layout.set", "args": [{"name": "layout", "required": True}], "about": "Set layout."},
+    {"name": "layout.toggle", "args": [{"name": "id", "required": True}], "about": "Toggle layout node."},
+    {"name": "layout.show", "args": [{"name": "id", "required": True}], "about": "Show layout node."},
+    {"name": "layout.hide", "args": [{"name": "id", "required": True}], "about": "Hide layout node."},
+    {"name": "layout.resize", "args": [{"name": "id", "required": True}], "about": "Resize layout node."},
+    {"name": "layout.select", "args": [{"name": "stack", "required": True}, {"name": "child", "required": True}], "about": "Select layout child."},
+    {"name": "mod.open", "args": [{"name": "name", "required": True}], "about": "Open mod."},
+    {"name": "overlay.close", "args": [{"name": "id", "required": False}], "about": "Close overlay."},
+    {"name": "tab.settle", "args": [{"name": "id", "required": False}], "about": "Settle tab."},
+    {"name": "tab.unsettle", "args": [{"name": "id", "required": False}], "about": "Unsettle tab."},
     {"name": "app.palette", "args": [], "about": "Toggle the command palette."},
     {"name": "ob-tabs.zen", "args": [], "about": "A Herdr command that duplicates a Vaultr route."},
 ]
@@ -49,8 +72,8 @@ def run_node(body):
     return json.loads(out.stdout)
 
 
-def rows(query):
-    return run_node(f'return C.commandRows({{ vaultr: VAULTR, herdr: HERDR, keys: KEYS, query: {json.dumps(query)}, match: MATCH }})'
+def rows(query, extra=""):
+    return run_node(f'return C.commandRows({{ vaultr: VAULTR, herdr: HERDR, keys: KEYS, query: {json.dumps(query)}, match: MATCH{extra} }})'
                     '.map((r) => ({ route: r.item.route, label: r.item.label, chord: r.item.chord ?? null, '
                     'disabled: !!r.item.disabled, hint: r.item.hint ?? null, source: r.item.source, kind: r.item.kind }));')
 
@@ -73,7 +96,9 @@ class MergedList(unittest.TestCase):
         labels = [r["label"] for r in rows("")]
         self.assertEqual(labels[0], "Toggle Zen mode")
         self.assertIn("tab.new", labels)
-        self.assertIn("pane.split", labels)
+        routes = [r["route"] for r in rows("")]
+        self.assertIn("pane.split:right", routes)
+        self.assertIn("pane.split:down", routes)
 
     def test_herdr_palette_entry_is_present_once_and_routes_to_app_palette(self):
         palette = [r for r in rows("") if r["route"] == "app.palette"]
@@ -117,24 +142,76 @@ class KeyHints(unittest.TestCase):
         # "tab.new:x" is bound; the bare command's hint must come from its own binding, not the argument form.
         self.assertEqual(run_node('return C.chordFor(KEYS, "tab.new:x", "vaultr");'), "ctrl-x")
 
+    def test_macos_prefers_cmd_chord_over_ctrl_for_same_action(self):
+        k = [
+            {"section": "layout:vaultr", "keys": "ctrl-\\", "action": "pane.split:right"},
+            {"section": "layout:vaultr", "keys": "cmd-\\", "action": "pane.split:right"},
+            {"section": "global", "keys": "ctrl-shift-p", "action": "app.palette"},
+            {"section": "global", "keys": "cmd-shift-p", "action": "app.palette"},
+        ]
+        self.assertEqual(run_node(f'return C.chordFor({json.dumps(k)}, "pane.split:right", "vaultr", "macos");'), "cmd-\\")
+        self.assertEqual(run_node(f'return C.chordFor({json.dumps(k)}, "pane.split:right", "vaultr", "linux");'), "ctrl-\\")
+        self.assertEqual(run_node(f'return C.chordFor({json.dumps(k)}, "app.palette", "vaultr", "macos");'), "cmd-shift-p")
+        mac_rows = rows("", f', keys: {json.dumps(k)}, platform: "macos"')
+        split = next(r for r in mac_rows if r["route"] == "pane.split:right")
+        self.assertEqual(split["chord"], "cmd-\\")
+
+    def test_object_binding_matches_shorthand_route(self):
+        k = [
+            {"section": "layout:vaultr", "keys": "alt-r", "action": '{"command":"pane.split","args":{"direction":"right"}}'},
+            {"section": "global", "keys": "cmd-3", "action": '{"args":{"index":3},"command":"tab.select"}'},
+            {"section": "global", "keys": "ctrl-alt-d", "action": '{"command":"pane.split","args":{"direction":"down"}}'},
+        ]
+        self.assertEqual(run_node(f'return C.chordFor({json.dumps(k)}, "pane.split:right", "vaultr", "macos");'), "alt-r")
+        self.assertEqual(run_node(f'return C.chordFor({json.dumps(k)}, "pane.split:down", "vaultr", "macos");'), "ctrl-alt-d")
+        self.assertEqual(run_node(f'return C.chordFor({json.dumps(k)}, "tab.select:3", "vaultr", "macos");'), "cmd-3")
+        self.assertIsNone(run_node(f'return C.chordFor({json.dumps(k)}, "pane.split", "vaultr", "macos");'))
+
 
 @unittest.skipUnless(NODE, "node is not installed")
 class Arguments(unittest.TestCase):
-    def test_command_with_required_arguments_is_listed_but_not_runnable(self):
-        split = next(r for r in rows("") if r["route"] == "pane.split")
-        self.assertTrue(split["disabled"])
-        self.assertEqual(split["hint"], "needs: direction")
+    def test_parameterized_commands_are_expanded_and_runnable(self):
+        out = rows("", ', layouts: ["vaultr", "main"]')
+        routes = {r["route"]: r for r in out}
+        for route in [
+            "pane.split:right", "pane.split:down",
+            "pane.go:left", "pane.go:right", "pane.go:up", "pane.go:down",
+            "pane.swap:left", "pane.swap:right", "pane.swap:up", "pane.swap:down",
+            *(f"tab.select:{i}" for i in range(1, 10)),
+            *(f"space.select:{i}" for i in range(1, 10)),
+            "layout.switch", "layout.switch:vaultr", "layout.switch:main",
+        ]:
+            self.assertIn(route, routes, route)
+            self.assertFalse(routes[route]["disabled"], route)
+            self.assertIsNone(routes[route]["hint"], route)
+        self.assertFalse(any(r["disabled"] for r in out))
 
-    def test_greyed_rows_sort_after_every_runnable_row(self):
-        labels = [r for r in rows("")]
-        last_runnable = max(i for i, r in enumerate(labels) if not r["disabled"])
-        first_disabled = min(i for i, r in enumerate(labels) if r["disabled"])
-        self.assertLess(last_runnable, first_disabled)
-        self.assertEqual(labels[-1]["disabled"], True)
+    def test_pointer_only_and_bare_required_commands_are_hidden(self):
+        routes = {r["route"] for r in rows("")}
+        hidden = {
+            "pane.split", "pane.go", "pane.swap", "tab.select", "space.select",
+            "space.move", "tab.move", "pane.focus", "terminal.keep", "terminal.park",
+            "terminal.kill", "terminal.show", "agent.focus", "layout.set", "layout.toggle",
+            "layout.show", "layout.hide", "layout.resize", "layout.select", "mod.open",
+            "overlay.close", "tab.settle", "tab.unsettle",
+        }
+        self.assertEqual(routes & hidden, set())
 
-    def test_several_required_arguments_are_named_in_order(self):
-        move = next(r for r in rows("") if r["route"] == "space.move")
-        self.assertEqual(move["hint"], "needs: id, index")
+    def test_vaultr_commands_table_covers_all_vaultr_commands(self):
+        vaultr_cmds = run_node('return C.VAULTR_COMMANDS;')
+        routes = {c["route"] for c in vaultr_cmds}
+        for route in [
+            "pane.split:right", "pane.split:down",
+            "layout.toggle:ob-left", "layout.toggle:ob-right",
+            "ob-tabs.copy-path", "ob-tabs.copy-address", "ob-tabs.daily",
+            "ob-tabs.bookmark", "ob-tabs.back", "ob-tabs.forward", "ob-tabs.last",
+            "ob-tabs.settings:hotkeys", "mod.open:ob-settings", "ob-tabs.tab-list",
+            "ob-tabs.new", "ob-tabs.switcher:views", "ob-tabs.switcher:move",
+            "ob-tabs.open:ob-sessions@reveal", "ob-tabs.toggle:ob-outline",
+            "ob-sessions.collapse-all",
+            "ob-sessions.expand-all", "ob-feed.refresh", "ob-graph.fit", "ob-tabs.zen",
+        ]:
+            self.assertIn(route, routes, route)
 
     def test_commands_mode_drops_view_rows(self):
         # Views have their own mode: a Vaultr view row never appears in the command list.
@@ -153,6 +230,13 @@ class CommandModeWiring(unittest.TestCase):
             src = f.read()
         self.assertIn('m === "commands"', src)
         self.assertIn('modeForQuery', src)
+
+    def test_switcher_registers_vaultr_commands_and_passes_platform(self):
+        with open(os.path.join(ROOT, "mods", "ob-switcher", "main.js"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("VAULTR_COMMANDS", src)
+        self.assertIn("appWindow()?.platform", src)
+        self.assertIn("layouts:", src)
 
 
 MODES_MODULE = os.path.join(ROOT, "mods", "ob-switcher", "modes.js")
@@ -332,6 +416,228 @@ class AgentNames(unittest.TestCase):
 
     def test_an_agent_row_is_labelled_by_its_session_title_then_its_program(self):
         self.assertIn('label: sessionTitleOf(a.address) || a.program?.name || a.app || "agent"', self.src)
+
+
+def el_stub_js():
+    return (
+        "const proxyEl = () => {\n"
+        "  const rec = { keyContext: null, actions: {} };\n"
+        "  const p = new Proxy(() => p, {\n"
+        "    get(_t, prop) {\n"
+        '      if (prop === "__rec") return rec;\n'
+        '      if (prop === "when") return (cond, fn) => { if (cond) fn(p); return p; };\n'
+        '      if (prop === "key_context") return (ctx) => { rec.keyContext = ctx; return p; };\n'
+        '      if (prop === "on_action") return (name, fn) => { rec.actions[name] = fn; return p; };\n'
+        "      return () => p;\n"
+        "    },\n"
+        "  });\n"
+        "  return p;\n"
+        "};\n"
+    )
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class OverlayKeyContext(unittest.TestCase):
+    """ObSwitcher and ObMenu bind overlay keys via key_context + cx.bind_keys + on_action and rebind on keys() reload."""
+
+    def test_ob_switcher_binds_overlay_keys_and_cycles_mode_and_rebinds_on_keys_reload(self):
+        with tempfile.TemporaryDirectory(prefix="ob-switcher-keys-") as folder:
+            for f in ("main.js", "commands.js", "titles.js", "modes.js", "names.js"):
+                shutil.copy(os.path.join(ROOT, "mods", "ob-switcher", f), os.path.join(folder, f))
+            src = Path(folder, "main.js").read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            Path(folder, "main.js").write_text(src, encoding="utf-8")
+            Path(folder, "gpui-kit.js").write_text(
+                el_stub_js() + "export class View {}\nexport const div = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "gpui-base.js").write_text(
+                el_stub_js()
+                + "export const v_flex = () => proxyEl();\n"
+                + "export const h_flex = () => proxyEl();\n"
+                + "export const ScrollHandle = { new: () => ({ scroll_to_item() {} }) };\n"
+                + "export const Scrollbar = { vertical: () => proxyEl() };\n"
+                + "export const Input = { new: () => proxyEl() };\n"
+                + "export const InputState = { new: () => { const handlers = {}; let val = ''; return { handlers, on(ev, fn) { handlers[ev] = fn; }, value() { return val; }, set_value(v) { val = v; }, focus() {} }; } };\n",
+                encoding="utf-8",
+            )
+            Path(folder, "herdr.js").write_text(
+                "export const state = { keys: [{ section: 'global', keys: 'ctrl-p', action: 'x' }], closed: [], ran: [] };\n"
+                "export const props = () => ({ mode: 'go', overlay: 'sw-ov' });\n"
+                "export const run = (a, b) => state.ran.push([a, b]);\n"
+                "export const closeOverlay = (ov) => state.closed.push(ov);\n"
+                "export const nextCommand = () => new Promise(() => {});\n"
+                "export const shared = () => null;\n"
+                "export const spaces = () => [];\n"
+                "export const panes = () => [];\n"
+                "export const agents = () => [];\n"
+                "export const terminals = () => [];\n"
+                "export const layout = () => null;\n"
+                "export const layouts = () => ['vaultr'];\n"
+                "export const settings = () => ({ zoom: 1 });\n"
+                "export const commands = () => [];\n"
+                "export const keys = () => state.keys;\n"
+                "export const window = () => ({ platform: 'linux' });\n",
+                encoding="utf-8",
+            )
+            kit_fns = [
+                "tc", "alpha", "icon", "programIcon", "avatar", "statusMark", "fuzzy", "highlight",
+                "machineLabel", "tabLabel", "feed", "bookmarks", "findNode", "current", "chordParts",
+                "kbd", "sessionTitleOf", "normHidden", "isSpaceHidden", "isTabHidden", "patchHidden",
+                "updateHidden", "getHidden", "parentAddrOf",
+            ]
+            Path(folder, "kit.js").write_text(
+                el_stub_js()
+                + "export const S = { icon: 16, iconSm: 14, iconXs: 12, radius: 4, radiusLg: 6, text: 13, textSm: 12, textXs: 11, textLg: 15 };\n"
+                + "export const VIEWS = {};\n"
+                + "export const tc = () => ({});\n"
+                + "export const bookmarks = () => [];\n"
+                + "export const current = () => ({});\n"
+                + "export const chordParts = () => ['Ctrl'];\n"
+                + "".join(f"export const {n} = () => null;\n" for n in kit_fns if n not in ("tc", "bookmarks", "current", "chordParts")),
+                encoding="utf-8",
+            )
+            code = (
+                f'import Switcher from "{Path(folder, "main.js").as_uri()}";\n'
+                f'import {{ state }} from "{Path(folder, "herdr.js").as_uri()}";\n'
+                "const binds = [];\n"
+                "const timers = [];\n"
+                "const cx = {\n"
+                "  focus_handle: () => ({ focus() {} }),\n"
+                "  bind_keys: (list) => binds.push(list),\n"
+                "  timer: { after: (_ms, fn) => timers.push(fn) },\n"
+                "  spawn: () => {},\n"
+                "  notify: () => {},\n"
+                "};\n"
+                "const sw = new Switcher();\n"
+                "sw.init({}, cx);\n"
+                "const submitHandlers = Object.values(sw.inputs).map((i) => Boolean(i.handlers.submit));\n"
+                "const root1 = sw.render(cx).__rec;\n"
+                "root1.actions['ob_switcher.tab'](null, cx);\n"
+                "const modeAfterTab = sw.mode;\n"
+                "root1.actions['ob_switcher.shift_tab'](null, cx);\n"
+                "const modeAfterShiftTab = sw.mode;\n"
+                "root1.actions['ob_switcher.escape'](null, cx);\n"
+                "state.keys = [{ section: 'global', keys: 'ctrl-k', action: 'y' }];\n"
+                "sw.render(cx);\n"
+                "for (const fn of timers.splice(0)) fn(cx);\n"
+                "console.log(JSON.stringify({\n"
+                "  bindCount: binds.length,\n"
+                "  contexts: [...new Set(binds[0].map((b) => b.context))],\n"
+                "  boundKeys: binds[0].map((b) => [b.keystroke, b.action]),\n"
+                "  submitHandlers,\n"
+                "  keyContext: root1.keyContext,\n"
+                "  actions: Object.keys(root1.actions),\n"
+                "  modeAfterTab,\n"
+                "  modeAfterShiftTab,\n"
+                "  closed: state.closed,\n"
+                "}));\n"
+            )
+            res = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            got = json.loads(res.stdout)
+            self.assertEqual(got["bindCount"], 2)  # initial bind in init() + rebind after keys() changed
+            self.assertEqual(got["contexts"], ["ObSwitcher"])
+            self.assertIn(["escape", "ob_switcher.escape"], got["boundKeys"])
+            self.assertIn(["tab", "ob_switcher.tab"], got["boundKeys"])
+            self.assertIn(["shift-tab", "ob_switcher.shift_tab"], got["boundKeys"])
+            self.assertIn(["enter", "ob_switcher.open"], got["boundKeys"])
+            self.assertEqual(got["submitHandlers"], [False, False, False, False])
+            self.assertEqual(got["keyContext"], "ObSwitcher")
+            for act in ("ob_switcher.escape", "ob_switcher.down", "ob_switcher.up", "ob_switcher.pagedown",
+                        "ob_switcher.pageup", "ob_switcher.tab", "ob_switcher.shift_tab", "ob_switcher.open",
+                        "ob_switcher.create", "ob_switcher.right"):
+                self.assertIn(act, got["actions"])
+            self.assertEqual(got["modeAfterTab"], "views")
+            self.assertEqual(got["modeAfterShiftTab"], "go")
+            self.assertEqual(got["closed"], ["sw-ov"])
+
+    def test_ob_menu_binds_overlay_keys_and_rebinds_on_keys_reload(self):
+        with tempfile.TemporaryDirectory(prefix="ob-menu-keys-") as folder:
+            shutil.copy(os.path.join(ROOT, "mods", "ob-menu", "main.js"), os.path.join(folder, "main.js"))
+            src = Path(folder, "main.js").read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            Path(folder, "main.js").write_text(src, encoding="utf-8")
+            Path(folder, "gpui-kit.js").write_text(
+                el_stub_js() + "export class View {}\nexport const div = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "gpui-base.js").write_text(
+                el_stub_js() + "export const v_flex = () => proxyEl();\nexport const h_flex = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "herdr.js").write_text(
+                "export const state = { keys: [{ section: 'global', keys: 'a', action: 'b' }], closed: [], ran: [] };\n"
+                "export const props = () => ({ overlay: 'menu-ov', items: [{ label: 'One', command: 'cmd.one' }, { label: 'Two', command: 'cmd.two' }] });\n"
+                "export const run = (a, b) => state.ran.push([a, b]);\n"
+                "export const closeOverlay = (ov) => state.closed.push(ov);\n"
+                "export const openOverlay = () => {};\n"
+                "export const nextCommand = () => new Promise(() => {});\n"
+                "export const keys = () => state.keys;\n",
+                encoding="utf-8",
+            )
+            Path(folder, "kit.js").write_text(
+                el_stub_js()
+                + "export const S = { text: 13, textXs: 11, iconSm: 14, radius: 4 };\n"
+                + "export const icon = () => proxyEl();\n"
+                + "export const kbd = () => proxyEl();\n"
+                + "export const tc = () => ({});\n"
+                + "export const alpha = () => '#000';\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import Menu from "{Path(folder, "main.js").as_uri()}";\n'
+                f'import {{ state }} from "{Path(folder, "herdr.js").as_uri()}";\n'
+                "const binds = [];\n"
+                "const timers = [];\n"
+                "const cx = {\n"
+                "  focus_handle: () => ({ focus() {} }),\n"
+                "  bind_keys: (list) => binds.push(list),\n"
+                "  timer: { after: (_ms, fn) => timers.push(fn) },\n"
+                "  spawn: () => {},\n"
+                "  notify: () => {},\n"
+                "};\n"
+                "const m = new Menu();\n"
+                "m.init({}, cx);\n"
+                "const root1 = m.render(cx).__rec;\n"
+                "root1.actions['ob_menu.end'](null, cx);\n"
+                "const atAfterEnd = m.at;\n"
+                "root1.actions['ob_menu.enter'](null, cx);\n"
+                "root1.actions['ob_menu.escape'](null, cx);\n"
+                "state.keys = [{ section: 'global', keys: 'c', action: 'd' }];\n"
+                "m.render(cx);\n"
+                "for (const fn of timers.splice(0)) fn(cx);\n"
+                "console.log(JSON.stringify({\n"
+                "  bindCount: binds.length,\n"
+                "  contexts: [...new Set(binds[0].map((b) => b.context))],\n"
+                "  boundKeys: binds[0].map((b) => [b.keystroke, b.action]),\n"
+                "  keyContext: root1.keyContext,\n"
+                "  actions: Object.keys(root1.actions),\n"
+                "  atAfterEnd,\n"
+                "  ran: state.ran,\n"
+                "  closed: state.closed,\n"
+                "}));\n"
+            )
+            res = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            got = json.loads(res.stdout)
+            self.assertEqual(got["bindCount"], 2)
+            self.assertEqual(got["contexts"], ["ObMenu"])
+            self.assertIn(["escape", "ob_menu.escape"], got["boundKeys"])
+            self.assertIn(["tab", "ob_menu.down"], got["boundKeys"])
+            self.assertIn(["shift-tab", "ob_menu.up"], got["boundKeys"])
+            self.assertEqual(got["keyContext"], "ObMenu")
+            for act in ("ob_menu.escape", "ob_menu.down", "ob_menu.up", "ob_menu.home", "ob_menu.end", "ob_menu.enter"):
+                self.assertIn(act, got["actions"])
+            self.assertEqual(got["atAfterEnd"], 1)
+            self.assertEqual(got["ran"], [["cmd.two", {}]])
+            self.assertEqual(got["closed"], ["menu-ov", "menu-ov"])
 
 
 if __name__ == "__main__":
