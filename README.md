@@ -1,14 +1,14 @@
 # Vaultr
 
-Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [Herdr](https://github.com/herdr/herdr) desktop app. It transforms Herdr into a modular, keyboard-driven workbench featuring collapsible left and right sidebars, tab management, deep agent/subagent inspection, workspace graph visualization, quick switcher, and custom hotkey management.
+Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [Herdr](https://github.com/herdrdev/herdr-app) desktop app (requires Herdr `0.1.16` or newer). It transforms Herdr into a modular, keyboard-driven workbench featuring collapsible left and right sidebars, tab management, deep agent/subagent inspection, workspace graph visualization, quick switcher, and custom hotkey management.
 
 ## Repository Layout
 
-- **`kit/`**: Shared mod foundation. Contains `kit.js` (reusable GPUI components, theme tokens, shell helpers, and SVG icons), `provider.js` (provider index loader and Python script assembly), and `sync.sh` (tool to propagate `kit.js`, helper modules, and icons into each `mods/ob-*` folder).
+- **`kit/`**: Shared mod foundation. Contains `kit.js` (reusable GPUI components, theme tokens, shell helpers, and SVG icons), `provider.js` (provider index loader, Python script assembly, and unified `provider.*` facade), `sync.sh` (tool to propagate `kit.js`, helper modules, and icons into each `mods/ob-*` folder), and pure rule modules (`agents.js`, `names.js`, `hidden.js`, `attention.js`, `follow_target.js`, `feed_age.js`, `ticker.js`, `fuzzy.js`, `touches.js`, `lights.js`, `obc.js`).
 - **`layouts/`**: Herdr workspace layout specifications:
   - `vaultr.json`: A center column between two sidebars, each split into two stacks of tabs. Left top: Sessions, Search, Bookmarks. Left bottom: Agents, Recent. Right top: Quotas, Properties, Files, Changes, Insights, Notes. Right bottom: Graph, Outline.
   - `vaultr.svg`: Layout preview icon.
-- **`mods/`**: The 20 mods: 18 Obsidian-style `ob-*` mods, plus `insights` and `obsidian` (origin in `mods/ORIGIN.md`).
+- **`mods/`**: The 20 mods: 18 Obsidian-style `ob-*` mods (including `mods/ob-feed/providers/` with `index.json`, `scan_core.py`, `reader_main.py`, and per-provider `<id>/` folders), plus `insights` and `obsidian` (origin in `mods/ORIGIN.md`).
 - **`keys/`**: Keybinding configurations:
   - `vaultr-keys.json`: Custom keybinding definitions for `layout:vaultr` and `mod:ob-sessions`.
 - **`install.sh`**: One-step installer, activator, and uninstaller.
@@ -36,10 +36,10 @@ The layout also uses Herdr's shipped `files` and `changes` mods.
 
 ### Right Sidebar (Inspection & Data)
 - **`ob-quotas`**: Plan quota monitor for Claude Code (5-hour, weekly, and per-model windows) on this computer or the followed/selected remote machine via `provider.quota()`, highlighting the active session's pool and keeping the last good read if a refresh fails.
-- **`ob-feed`**: Background scanner for Pi runs and Claude Code agent transcripts. It also lists the files each agent touched (paths and tool names from the transcript tail, never contents) and the artifacts it published (from the herdr-artifact store), for the graph's notes and artifacts.
-- **`ob-outline`**: The active tab's panes, each with the agents that run in its terminal nested under it (pi runs, Claude Code agents, child terminals), with task trees, execution steps, tool call logs, and token metrics. "All" groups every machine by session, with unattached background terminals last.
-  - A transcript or log opens in a popup over the window. **Move to main window** in its header puts it in the main window as a pane.
-  - **Attach** (the row button, or the context menu) opens a live `hc` child terminal in a popup you can watch and type into. **Detach** in its header (or a click outside the popup) closes the popup and leaves the terminal running in the background. **Move to main window** gives it a tab of its own.
+- **`ob-feed`**: Background scanner assembled in memory from `mods/ob-feed/providers/` via `kit/provider.js` (Claude Code, pi, and Antigravity sessions, pi runs, Claude Code background agents, recent human prompts, and file/artifact touches from transcript tails and the `herdr-artifact` store, never file contents). Publishes `ob.subagents` (`v: 2`) and feeds the stateless working sub-agent record rollup.
+- **`ob-outline`**: The active tab's panes, each with the agents that run in its terminal nested under it (`pi` runs, Claude Code agents, `hc` child terminals nested by Herdr's `parent`), with task trees, execution steps, tool call logs, and token metrics. "All" groups every machine by session, with unattached background terminals last.
+  - A transcript or log opens scrolled to its end in a popup over the window. **Move to main window** in its header puts it in the main window as a pane.
+  - **Attach** (the row button, or the context menu) opens a live `hc` child terminal in a popup you can watch and type into (focused on its header so `Esc` detaches until you click the terminal). **Detach** in its header (or a click outside the popup) closes the popup and leaves the terminal running in the background. **Move to main window** gives it a tab of its own.
   - A terminal that has a pane goes back to the background with **Detach to background** (the pane's `⋮` menu, a right-click on its Outline row, or on its tab when it is the tab's only pane); the header of a child terminal's pane shows a **Detach** button. Close pane ends the program; Detach does not.
   - Subagents never get a tab or pane by themselves: only **Move to main window** puts one on screen.
 - **`ob-props`**: Detailed properties inspector for active terminals, including environment, git repo details, machine stats, and a Usage section for the followed Claude Code or pi session (tokens by kind, context in use, model, turns, subagents' output tokens).
@@ -104,17 +104,17 @@ The settings dialog opens from the gear in the footer. `ob-tabs.settings:<tab>` 
 ## Installation & Usage
 
 ### Requirements
-- The [Herdr](https://github.com/herdr/herdr) desktop app. `install.sh` switches layouts with its `herdr-app` command, so that command must be on your `PATH`.
-- `python3`: used by `install.sh` to merge `keys.json`, and by `ob-feed` to scan for agents.
+- The [Herdr](https://github.com/herdrdev/herdr-app) desktop app (`0.1.16` or newer). `install.sh` switches layouts with its `herdr-app` command, so that command must be on your `PATH`.
+- `python3`: used by `install.sh` to merge `keys.json`, and by `ob-feed`, `ob-outline`, `ob-props`, `ob-search`, and `ob-quotas` through `kit/provider.js`.
 - `bash` (macOS's 3.2 is enough) and `cmp` for `install.sh`; it uses `readlink -f` where it exists and `python3` otherwise.
-- `git` for `ob-sessions`; `node` for `insights` (defaults to `node` on `PATH`, or the path in `mods/insights/runtime.json`). Its Antigravity indexing needs `node:sqlite` and is skipped without it.
-- Optional: `hc`, for the remote machine list in `ob-sessions` and `ob-footer`; Obsidian, for the `obsidian` mod and daily notes. `obsidian` reads the vault from a `vault` key in `obsidian.json` in the Herdr app folder and nothing else; it does not read Obsidian's own vault list (the Vault tab of `ob-settings` sets that key; `obsidian.json` may still hold `dailyFolder`, `dailyFormat`, `dailyTemplate` and `editor` by hand, and the mod honours them).
+- `git` for `ob-sessions`; `node` for `insights` (defaults to `node` on `PATH`, or the path in `mods/insights/runtime.json`). Its Antigravity CLI indexing needs `node:sqlite` and is skipped without it.
+- Optional: [`hc`](https://github.com/herdrdev/herdr-core) (from `herdr-core`), for the remote machine list and machine reconnection (`hc machine ls --json`, `hc machine rm`, `hc machine add`) in `ob-sessions` and `ob-footer`, `hc get` terminal inspection in `ob-props`, live child `hc run` / Attach and `hc read` scrollback search in `ob-outline` and `ob-search`; Obsidian, for the `obsidian` mod and daily notes. `obsidian` reads the vault from a `vault` key in `obsidian.json` in the Herdr app folder and nothing else; it does not read Obsidian's own vault list (the Vault tab of `ob-settings` sets that key; `obsidian.json` may still hold `dailyFolder`, `dailyFormat`, `dailyTemplate` and `editor` by hand, and the mod honours them).
 - `ob-feed` finds running agents through `/proc` on Linux, and through `ps`, `ps -E` and `lsof` on macOS, assembling its `python3` scanner from `mods/ob-feed/providers/` (`index.json`, `scan_core.py`, and each provider's `manifest.json`, `reader.py`, and `scan.py`).
 - The Antigravity provider in `ob-feed` and `ob-outline` (`mods/ob-feed/providers/antigravity/`) reads only `~/.gemini/antigravity-cli`: open `presence/<id>.lock` descriptors (`/proc/<pid>/fd` on Linux, `lsof -p <pid> -Fn` on macOS) to confirm `agy` or `antigravity` processes and their conversation ids, `conversation_summaries.db` (SQLite read-only) for titles and update times, and `brain/<id>/.system_generated/logs/transcript.jsonl` for transcripts.
 - `obsidian` runs `rg` to list and search the vault (`find` and `grep` when `rg` is missing), `mkdir -p` for a daily note's folder, `xdg-open` (`open` on macOS, `cmd /c start` on Windows) for `obsidian://` links, and your editor in a new pane (`sh -c` with `$VISUAL`, `$EDITOR` or vi; `notepad` on Windows). It reads the vault's notes and its `.obsidian/daily-notes.json` and `.obsidian/app.json`. For an agent's last reply it reads `~/.claude/sessions/<pid>.json`, finds the session's transcript under `~/.claude/projects` (`sh` with `ls` and `head`) and reads its last 1.5 MB with `tail`; for an agent with no transcript (another agent, another machine) it runs `hc read` for its screen.
-- `ob-outline` reads `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`) from the Herdr app folder to run `python3` in `entries` mode when opening a transcript or finding a Claude Code background agent's transcript (`~/.claude/projects`).
-- `ob-search` runs `python3` on this computer with the transcript search reader assembled from `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`, read from the Herdr app folder). It reads the transcript files that the sub-agent feed (`ob.subagents`, written by `ob-feed`) names for live agent sessions and their sub-agents: those live under `~/.claude/projects` and `~/.pi/agent/sessions`, or the pi-subagents temp folder. It reads each file's last 3 MiB and changes nothing.
-- `ob-props` runs `python3` on this computer, or on the terminal's machine, with the usage reader assembled from `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`, read from the Herdr app folder), for the followed agent's session file (the transcript path the sub-agent feed names: `~/.claude/projects` or `~/.pi/agent/sessions`). Every 10 seconds while the panel shows it checks the file's size and modification time, and reads its last 32 MiB only when they changed; it changes nothing. It reads no plan or account limits.
+- `ob-outline` reads `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`) from the Herdr app folder to run `python3` in `entries` mode when opening a transcript or finding a Claude Code background agent's transcript (`~/.claude/projects`). It also runs `tail -n 400` to follow run logs, checks `<provider> --help` for `--session` support, and runs `hc run` to open a local run step's child session.
+- `ob-search` runs `python3` on this computer with the transcript search reader assembled from `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`, read from the Herdr app folder), plus `hc read <addr> --lines 1500` on live terminal panes (up to 6 at once, cached 15 s). It reads the transcript files that the sub-agent feed (`ob.subagents`, written by `ob-feed`) names for live agent sessions and sub-agents whose provider has the `"search"` capability: those live under `~/.claude/projects` and `~/.pi/agent/sessions`, or the pi-subagents temp folder. It reads each file's last 3 MiB and changes nothing.
+- `ob-props` runs `python3` on this computer, or on the terminal's machine, with the usage reader assembled from `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`, read from the Herdr app folder) alongside `hc get <addr> --json`, for the followed agent's session file (the transcript path the sub-agent feed names: `~/.claude/projects` or `~/.pi/agent/sessions`). Every 10 seconds while the panel shows it checks the file's size and modification time, and reads its last 32 MiB only when they changed; it changes nothing. It reads no plan or account limits.
 - `ob-quotas` reads plan limits through `provider.quota()`, which runs `python3 -c <quota.py>` on this computer or the selected machine for each provider with the `"quota"` capability (`mods/ob-feed/providers/claude/quota.py`). Before running any CLI command, `providers/claude/quota.py` verifies that `$CLAUDE_CONFIG_DIR` (default `~/.claude`) exists and inspects the resolved `claude` executable (and any wrapper target path) for Claude Code package paths or binary markers; unrelated executables named `claude` are never run. It reads `$CLAUDE_CONFIG_DIR/.credentials.json`, `$CLAUDE_CONFIG_DIR/.claude.json`, and `~/.claude.json` (`subscriptionType`, OAuth expiration, `oauthAccount.emailAddress`). When verified and not due for token renewal, it runs `mise which claude` (only for a `mise` shim/wrapper), probes `/usr/bin/bwrap` with `true` on Linux to run `nice -n 19 claude -p /usage --output-format json --no-session-persistence --setting-sources "" --strict-mcp-config` read-only inside `bwrap` (or a throwaway `TMPDIR` if `bwrap` is unavailable), and on macOS reads Keychain entry `"Claude Code-credentials"` via `/usr/bin/security find-generic-password` and runs `claude` inside `/usr/bin/sandbox-exec` (verified with `/bin/sh`, `/usr/bin/touch`, and `/usr/bin/security list-keychains`) against a temp copy of `.credentials.json` stripped of `refreshToken`.
 - `ob-sessions` offers its worktree actions only when the `worktree` mod is installed; to know that, it looks for `mods/worktree/mod.json` (or `main.js`) in the Herdr app folder.
 
@@ -146,12 +146,47 @@ To remove the Vaultr layout and mod links, revert its keybindings in `keys.json`
 ```
 
 ### 4. Tests
-The checks run in seconds and need no Herdr window: `python3 -m unittest discover -s test`. Rules for contributors are in [AGENTS.md](AGENTS.md).
+The suite needs no Herdr window and runs in about 95 seconds (`860+` tests): `python3 -m unittest discover -s test`. Rules for contributors are in [AGENTS.md](AGENTS.md).
+
+---
+
+## Agent program support
+
+| Program | Session title | Recent prompts | Sub-agent feed | Transcript viewer | Properties usage | Search | Quotas | Insights |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code | yes | yes | yes | yes | yes | yes | yes | yes |
+| pi | — | yes | yes | yes | yes | yes | — | yes |
+| Antigravity | yes | — | — | yes | — | — | — | yes |
+| OpenCode | — | — | — | — | — | — | — | yes |
+| Codex | — | — | — | — | — | — | — | yes |
+| Any program reporting OSC 7501 / `hc` | — | — | yes | — | — | yes | — | — |
+
+- **Provider capabilities**: `Claude Code` enables `["title", "prompts", "transcript", "usage", "search", "touches", "subagents", "quota"]`. `pi` enables `["prompts", "transcript", "usage", "search", "touches", "subagents"]` (pane and tab labels fall back to terminal/process titles when `"title"` is omitted). `Antigravity` enables `["title", "transcript"]`. `OpenCode` and `Codex` are indexed by `insights` only.
+- **OSC 7501 and `hc`**: Any program emitting OSC 7501 or running under [`hc`](https://github.com/herdrdev/herdr-core) gets live status marks in panes, tabs, sessions, and the status bar, live sub-agent record cards (`lastTool`) in the sub-agent feed, `hc` child terminal trees and live `Attach`, and `hc read` terminal screen/scrollback search in `ob-search` on live `hc` panes and child terminals.
+- **`insights`**: Keeps its own multi-source local usage adapters outside `mods/ob-feed/providers/`.
+- **Test coverage**: Fixture tests in `test/` cover provider folders, boundaries, assembly, pinned outputs, scanner identity, quotas, and Antigravity (`test_provider_folders.py`, `test_provider_boundaries.py`, `test_provider_facade.py`, `test_providers_pinned.py`, `test_provider_scan.py`, `test_provider_quota.py`, `test_provider_antigravity.py`), pane labels and prompts (`test_kit_names.py`, `test_ob_pane.py`), Outline viewer plans, child trees, and Attach/Detach rules (`test_ob_outline.py`), token usage (`test_ob_props.py`), transcript search (`test_ob_search.py`), and Quotas (`test_ob_quotas.py`). `mods/insights/` has no behavioral unit tests in this repository yet (syntax and packaging checks only); live OSC 7501 updates, `hc` Attach, and `hc read` scrollback search need a running Herdr window and are not covered by the automated tests.
+
+## Adding a provider
+
+Vaultr discovers agent providers from `mods/ob-feed/providers/index.json` using `kit/provider.js` (zero program names live in `kit/` or `mods/ob-*` UI mods):
+
+- **Folder layout**: Create `mods/ob-feed/providers/<id>/{manifest.json,scan.py,reader.py}` (plus `quota.py` only when `"quota"` is in `caps`), add `"<id>"` to `mods/ob-feed/providers/index.json` (which must equal the exact set of provider folders), and add synthetic JSONL fixtures under `test/fixtures/providers/<id>/*.jsonl`. `test/test_provider_folders.py` discovers every provider listed in `index.json` and its fixtures automatically.
+- **`manifest.json`**: Must contain **exact** keys `"id"`, `"name"`, `"noun"`, and `"caps"`:
+  - `id` (string matching `<id>`), `name` (display name), and `noun` (singular run/sub-agent noun).
+  - `caps` (non-empty string array from the closed capability set `["title", "prompts", "transcript", "usage", "search", "touches", "subagents", "quota"]`): gates controls across `ob-feed`, `ob-pane`, `ob-outline`, `ob-props`, `ob-search`, and `ob-quotas`.
+- **`scan.py` (`register(...)`)**: Calls `register({ "id": ..., "match": ..., "confirm": ..., "sessions": ..., "subagents": ..., "runs": ... })` (and optional `"runs_root"`).
+  - `match(comm, argv)` is only a fast pre-filter hint; `confirm(proc)` must verify program-owned on-disk state, lock descriptors, or session/package markers without ever executing an unknown binary (enforced by identity tests).
+  - Providers with `"prompts"` must derive recent human turns from normalized reader events via `user_turns_from_events(evs)` rather than parsing transcript JSONL directly in `scan.py`.
+  - Snippets are embedded inside wrapper functions by `kit/provider.js`, so multi-line string literals (`"""` / `'''`) are forbidden, Python 3.9 syntax is required, and assembled scanner and reader scripts must stay under `100 KiB`.
+- **`reader.py`**: Defines module-level `sniff(first_records)` and `events(records)` (plus optional `find_subagent(agent_id)`), registered by `kit/provider.js` via `register_reader(...)` for `scan_core.py` and `reader_main.py` (`entries`, `usage`, and `search` modes). `events(records)` yields normalized dicts with `"k"` in `{"user", "assistant", "tool", "meta"}` (and `"turn_group"` on `"user"` events when `"prompts"` is enabled).
+- **`quota.py`**: Present if and only if `"quota"` is in `caps`. Runs standalone via `python3 -c <quota.py> <json_opts>` from `provider.quota()` and prints a single JSON status object.
+- **Boundary rules**: `test/test_provider_boundaries.py` enforces that `kit/*.js` and `mods/ob-*` (outside kit copies and `mods/ob-feed/providers/`) never name any provider id or display name, never run `python3` or provider scripts directly, and never read raw `ob.subagents` feed buckets instead of `provider.*`.
 
 ---
 
 ## Known limits
 
+- Antigravity support was written from public format references, is tested with synthetic fixtures only and has not been checked against a live Antigravity install; it shows sessions, titles and transcripts only.
 - Open session (starting a new `pi --session` terminal from a step) is local only; Attach works on live `hc` terminals on this computer and remote machines.
 - The right-hand panels (Properties, Outline's pinned session) follow the last focused main-window pane, or the pin; there is no setting for it. Outline's tab view always shows the active tab's panes.
 - macOS support is untested on a real Mac so far. The keys, the installer and the agent scan (`ps`/`lsof` in place of `/proc`) are covered by tests that fake the Mac side. `ps -E` shows only your own processes' environment, so an agent that runs as another user is not found.
