@@ -3,7 +3,7 @@
 // Each terminal's screen and history (`hc read <addr> --lines 1500`, at most 6 at once, cached 15 s) is
 // searched for the query within a scope: all machines, this machine, or this space. Terms are fuzzy
 // (kit/fuzzy.js: every term must match) unless regex is on. Terminal results are grouped by session; a hit
-// opens its pane and scrolls the terminal to the line. Transcript hits (transcript_search.py, run through
+// opens its pane and scrolls the terminal to the line. Transcript hits (assembled search reader, run through
 // exec like ob-feed's scan, never on the UI path) are listed under TRANSCRIPTS; a click opens that
 // transcript in ob-outline' popup (at its end: the popup cannot open at a message yet).
 //
@@ -13,6 +13,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, ScrollHandle, Scrollbar } from "gpui-base";
 import { spaces, panes, terminals, focused, run, hc, theme, props, nextCommand, settings, exec, readTextFile, appHome, openOverlay } from "herdr";
+import { loadProviders, assembleReader } from "./provider.js";
 import {
   S, alpha, icon, programIcon, iconButton, badge, treeRow, emptyState, inputFrame, openMenu, statusMark,
   takeFocus, tabLabel, paneLabelOf, machineOf, machineLabel, current, feed, matchQuery,
@@ -204,7 +205,7 @@ export default class Search extends View {
   }
 
   // Transcripts of the agent sessions the feed knows about, on this computer, scanned off the UI path by
-  // transcript_search.py (exec, like ob-feed's scan). Runs beside the terminal read: its results land when
+  // the assembled search reader (exec, like ob-feed's scan). Runs beside the terminal read: its results land when
   // they land, and a newer query drops this one (gen). Scope "this space" keeps the sessions of its terminals.
 // Transcripts are matched fuzzily only: with regex on they are not searched, and the section says so.
   searchTranscripts(cx, q, gen) {
@@ -224,7 +225,7 @@ export default class Search extends View {
     let results = [], partial = false, error = null;
     try {
       const script = await this.helperScript();
-      if (!script) throw new Error("transcript_search.py is missing");
+      if (!script) throw new Error("search reader is missing");
       const opts = { terms: words, caseSensitive, files: sources.map((s) => ({ id: s.id, path: s.path })) };
       const r = await exec("python3", ["-c", script, JSON.stringify(opts)], { timeout: 15000 });
       const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
@@ -242,9 +243,16 @@ export default class Search extends View {
     cx.notify();
   }
 
-  // transcript_search.py, read on the first transcript search and kept (a failed read is tried again next time).
+  // Assembled transcript search reader, built on the first transcript search and kept (a failed read is tried again next time).
   async helperScript() {
-    if (!this.script) this.script = await readTextFile(`${appHome()}/mods/ob-search/transcript_search.py`);
+    if (!this.script) {
+      const providersDir = `${appHome()}/mods/ob-feed/providers`;
+      const [readerMain, readers] = await Promise.all([
+        readTextFile(`${providersDir}/reader_main.py`).catch(() => null),
+        loadProviders({ readTextFile, providersDir }),
+      ]);
+      if (readerMain && readers.length) this.script = assembleReader(readerMain, readers, "search");
+    }
     return this.script;
   }
 

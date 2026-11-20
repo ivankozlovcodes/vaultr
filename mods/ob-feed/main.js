@@ -1,5 +1,5 @@
-// ob-feed: the ONE poller of sub-agent data. Runs scan_pi.py on every reachable machine (one exec per
-// machine at a time: exec("python3", ["-c", script, opts], { on })), merges the results and publishes
+// ob-feed: the ONE poller of sub-agent data. Runs the assembled provider scanner on every reachable machine
+// (one exec per machine at a time: exec("python3", ["-c", script, opts], { on })), merges the results and publishes
 // shared "ob.subagents" only when its content changed. Lives in the always-shown status
 // row, so it is alive whenever the layout is. Draws the status-bar segment: live sub-agent count, a
 // warning per machine that couldn't be scanned (tooltip says why); click opens Outline.
@@ -21,6 +21,7 @@ import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { exec, machines, readTextFile, appHome, setShared, agents, nextCommand, settings, props, run, panes } from "herdr";
 import { S, tc, icon, statusMark, liveRecords, machineOf, addrOn, openView, subagentCounts, machineLabel, ago, feed, publishDue, tickerChips } from "./kit.js";
+import { loadProviders, assembleScanner } from "./provider.js";
 import { mainAgentAt } from "./ticker_at.js";
 
 const FAST = 2000;      // a machine with live runs or live claude records
@@ -34,7 +35,7 @@ const mkey = (m) => m ?? "local";
 const str = (v, n = 400) => (typeof v === "string" ? (v.length > n ? v.slice(0, n - 1) + "…" : v) : null);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const arr = (v) => (Array.isArray(v) ? v : []);
-// Files the agents touch (scan_pi.py `touches`): paths and ops only. TOUCH_TOTAL caps all of them, newest first.
+// Files the agents touch (provider scanner `touches`): paths and ops only. TOUCH_TOTAL caps all of them, newest first.
 const TOUCH_OPS = ["read", "edit", "write", "create", "publish"];
 const TOUCH_TOTAL = 400;
 
@@ -83,14 +84,13 @@ export default class Feed extends View {
     this.beatAt = 0;
     this.pending = false;
     this.fixture = null;
+    this.script = null;
+    this.providers = {};
     this.scriptError = null;
     this.w = 0;
     if (this.role === "draw") return;
     cx.spawn(async (cx) => {
-      try {
-        this.script = await readTextFile(`${appHome()}/mods/ob-feed/scan_pi.py`);
-        if (!this.script) this.scriptError = "scan_pi.py is missing";
-      } catch (e) { this.scriptError = `scan_pi.py: ${e?.message ?? e}`; }
+      await this.loadScript();
       this.tick(cx, true);
       cx.notify();
     });
@@ -104,9 +104,34 @@ export default class Feed extends View {
     });
   }
 
+  async loadScript() {
+    try {
+      const providersDir = `${appHome()}/mods/ob-feed/providers`;
+      const [scanCore, providers] = await Promise.all([
+        readTextFile(`${providersDir}/scan_core.py`).catch(() => null),
+        loadProviders({ readTextFile, providersDir, needScan: true, needManifest: true }),
+      ]);
+      if (!scanCore) { this.script = null; this.scriptError = "scan_core.py is missing"; return null; }
+      if (!providers.length) { this.script = null; this.scriptError = "no agent providers found"; return null; }
+      this.providers = Object.fromEntries(providers.map((p) => [p.id, p.manifest]));
+      this.script = assembleScanner(scanCore, providers);
+      this.scriptError = null;
+      return this.script;
+    } catch (e) {
+      this.script = null;
+      this.scriptError = `providers: ${e?.message ?? e}`;
+      return null;
+    }
+  }
+
   command(c, cx) {
-    if (c === "refresh") this.tick(cx, true);
-    else if (c.startsWith("refresh:")) { const m = c.slice(8); this.scan(m === "local" || m === "" ? null : m, cx); }
+    if (c === "refresh") {
+      cx.spawn(async (cx) => {
+        await this.loadScript();
+        this.tick(cx, true);
+        cx.notify();
+      });
+    } else if (c.startsWith("refresh:")) { const m = c.slice(8); this.scan(m === "local" || m === "" ? null : m, cx); }
     else if (c.startsWith("fixture:")) {
       const dir = c.slice(8).trim();
       this.fixture = dir || null;

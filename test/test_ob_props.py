@@ -1,6 +1,6 @@
 """mods/ob-props Usage section: token arithmetic and formatting (node, pure: usage.js) and the transcript reader
-(python: usage.py, run the way ob-props runs it: `python3 -c <text> <path> <cap>`). Fixtures in
-test/fixtures/ob-props are invented; they copy the shape of real entries and nothing else."""
+(python: assembled from mods/ob-feed/providers/, run the way ob-props runs it: `python3 -c <text> <path> <cap>`).
+Fixtures in test/fixtures/ob-props are invented; they copy the shape of real entries and nothing else."""
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
 import json
 import os
@@ -13,12 +13,42 @@ from pathlib import Path
 ROOT = home_guard.ROOT
 MOD = Path(ROOT, "mods", "ob-props")
 USAGE_JS = MOD / "usage.js"
-HELPER = MOD / "usage.py"
+PROVIDERS_DIR = Path(ROOT, "mods", "ob-feed", "providers")
+PROVIDER_JS = Path(ROOT, "kit", "provider.js")
 FIX = Path(ROOT, "test", "fixtures", "ob-props")
 CLAUDE = FIX / "claude-session.jsonl"
 PI = FIX / "pi-session.jsonl"
 FOLLOW = Path(ROOT, "kit", "follow_target.js")
 NODE = shutil.which("node")
+_USAGE_CACHE = None
+
+
+def _assembled_usage():
+    global _USAGE_CACHE
+    if _USAGE_CACHE is not None:
+        return _USAGE_CACHE
+    if not NODE:
+        raise unittest.SkipTest("node is not installed: cannot assemble usage reader")
+    with open(PROVIDERS_DIR / "index.json", encoding="utf-8") as f:
+        programs = json.load(f)
+    payload = {"providersDir": str(PROVIDERS_DIR), "programs": programs}
+    js = (
+        'import fs from "node:fs";\n'
+        'import path from "node:path";\n'
+        f'import * as P from {json.dumps(PROVIDER_JS.as_uri())};\n'
+        'const cfg = JSON.parse(fs.readFileSync(0, "utf8"));\n'
+        'const read = (p) => fs.readFileSync(p, "utf8");\n'
+        'const readers = cfg.programs\n'
+        '  .filter((id) => fs.existsSync(path.join(cfg.providersDir, id, "reader.py")))\n'
+        '  .map((id) => ({ id, reader: read(path.join(cfg.providersDir, id, "reader.py")) }));\n'
+        'process.stdout.write(P.assembleReader(read(path.join(cfg.providersDir, "reader_main.py")), readers, "usage"));\n'
+    )
+    out = subprocess.run([NODE, "--input-type=module", "-e", js], input=json.dumps(payload),
+                         capture_output=True, text=True, timeout=30)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.strip() or "provider.js failed")
+    _USAGE_CACHE = out.stdout
+    return _USAGE_CACHE
 
 
 def run_node(body):
@@ -32,8 +62,8 @@ def run_node(body):
 
 
 def run_helper(path, cap=None, seen=None):
-    """Run usage.py the way ob-props does: python3 -c <text> <path> [<cap bytes> [<seen sig>]]. -> the JSON line."""
-    text = HELPER.read_text(encoding="utf-8")
+    """Run assembled usage reader the way ob-props does: python3 -c <text> <path> [<cap bytes> [<seen sig>]]. -> the JSON line."""
+    text = _assembled_usage()
     args = ["python3", "-c", text, str(path)] + ([str(cap if cap is not None else "")] if cap is not None or seen else []) + ([seen] if seen else [])
     out = subprocess.run(args, capture_output=True, text=True, timeout=60)
     if out.returncode != 0:
@@ -258,7 +288,7 @@ class PropsObcFollowSlot(unittest.TestCase):
 
 
 class UsageUnchanged(unittest.TestCase):
-    """fetchUsage runs every 10 s: when the transcript's size and mtime are what the last run saw, usage.py answers
+    """fetchUsage runs every 10 s: when the transcript's size and mtime are what the last run saw, the reader answers
     {unchanged: true} without reading it, and main.js keeps the summary it has. The check runs where the file is, so it
     works for another machine's transcript too."""
     FILE = CLAUDE
@@ -293,11 +323,14 @@ class UsageUnchanged(unittest.TestCase):
 
 
 class UsageScript(unittest.TestCase):
-    """Weak (source only): fetchUsage runs every 10 s; usage.py is read from disk once and kept."""
+    """Weak (source only): fetchUsage runs every 10 s; the assembled usage reader is built once and kept."""
     def test_usage_py_is_read_once(self):
         src = (MOD / "main.js").read_text(encoding="utf-8")
-        self.assertIn("this.usageScript ||= await readTextFile(", src)
-        self.assertEqual(src.count("mods/ob-props/usage.py`"), 1)
+        self.assertIn("this.usageScript ||= await this.loadUsageScript()", src)
+        self.assertEqual(src.count("assembleReader("), 1)
+        body = src[src.index("  fetchUsage("):]
+        body = body[:body.index("\n  }\n")]
+        self.assertNotIn("readTextFile", body)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+{"recordType":"message","role":"user","ts":1712044800000,"text":"Check the LighthouseBeacon worker config."}
+{"recordType":"tool_start","toolCallId":"pt1","toolName":"read","argsPreview":"/srv/work/worker/cfg.toml","ts":1712044801000}
+{"recordType":"tool_end","toolCallId":"pt1","isError":false,"ts":1712044802000}
+{"recordType":"tool_start","toolCallId":"pt2","toolName":"bash","argsPayload":{"command":"cargo test --quiet"},"ts":1712044803000}
+{"recordType":"tool_end","toolCallId":"pt2","isError":true,"ts":1712044804000}
+{"recordType":"message","role":"assistant","ts":1712044805000,"message":{"content":[{"type":"text","text":"LighthouseBeacon cfg.toml looks valid; cargo test failed on unit fixture."}]}}

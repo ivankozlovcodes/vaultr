@@ -1,0 +1,6 @@
+{
+  "id": "pi",
+  "name": "pi",
+  "noun": "pi run",
+  "caps": ["transcript", "usage", "search", "touches", "subagents"]
+}

@@ -33,7 +33,7 @@ class Ticker(unittest.TestCase):
         self.assertEqual(r[0]["key"], "c1")
 
     def test_a_command_is_cut_to_forty_characters(self):
-        cmd = "python3 -m unittest discover -s test -p 'test_scan_pi.py' -v"
+        cmd = "python3 -m unittest discover -s test -p 'test_provider_scan.py' -v"
         r = run_node(f'return T.tickerChips([{{key:"r", title:"Fix hotkeys", live:true, at:9, tool:{{tool:"Bash", args:{json.dumps(cmd)}}}}}]);')
         self.assertEqual(r[0]["text"], "Fix hotkeys · Bash: " + cmd[:39] + "…")
 

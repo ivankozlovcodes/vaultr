@@ -17,12 +17,43 @@ ROOT = home_guard.ROOT
 MOD = Path(ROOT, "mods", "ob-search")
 FUZZY = Path(ROOT, "kit", "fuzzy.js")  # the kit matcher (kit/sync.sh copies it into each mod)
 TRANSCRIPTS = MOD / "transcripts.js"
-HELPER = MOD / "transcript_search.py"
+PROVIDERS_DIR = Path(ROOT, "mods", "ob-feed", "providers")
+PROVIDER_JS = Path(ROOT, "kit", "provider.js")
+HELPER = PROVIDERS_DIR / "reader_main.py"
 MAIN = MOD / "main.js"
 FIX = Path(ROOT, "test", "fixtures", "ob-search")
 CLAUDE_MAIN = FIX / "claude-main.jsonl"
 PI_SESSION = FIX / "pi-session.jsonl"
 NODE = shutil.which("node")
+_SEARCH_CACHE = None
+
+
+def _assembled_search():
+    global _SEARCH_CACHE
+    if _SEARCH_CACHE is not None:
+        return _SEARCH_CACHE
+    if not NODE:
+        raise unittest.SkipTest("node is not installed: cannot assemble search reader")
+    with open(PROVIDERS_DIR / "index.json", encoding="utf-8") as f:
+        programs = json.load(f)
+    payload = {"providersDir": str(PROVIDERS_DIR), "programs": programs}
+    js = (
+        'import fs from "node:fs";\n'
+        'import path from "node:path";\n'
+        f'import * as P from {json.dumps(PROVIDER_JS.as_uri())};\n'
+        'const cfg = JSON.parse(fs.readFileSync(0, "utf8"));\n'
+        'const read = (p) => fs.readFileSync(p, "utf8");\n'
+        'const readers = cfg.programs\n'
+        '  .filter((id) => fs.existsSync(path.join(cfg.providersDir, id, "reader.py")))\n'
+        '  .map((id) => ({ id, reader: read(path.join(cfg.providersDir, id, "reader.py")) }));\n'
+        'process.stdout.write(P.assembleReader(read(path.join(cfg.providersDir, "reader_main.py")), readers, "search"));\n'
+    )
+    out = subprocess.run([NODE, "--input-type=module", "-e", js], input=json.dumps(payload),
+                         capture_output=True, text=True, timeout=30)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.strip() or "provider.js failed")
+    _SEARCH_CACHE = out.stdout
+    return _SEARCH_CACHE
 
 
 def run_node(body, module=FUZZY):
@@ -36,8 +67,8 @@ def run_node(body, module=FUZZY):
 
 
 def run_helper(opts):
-    """Run transcript_search.py the way ob-search does: python3 -c <text> <options json>."""
-    text = HELPER.read_text(encoding="utf-8")
+    """Run assembled search reader the way ob-search does: python3 -c <text> <options json>."""
+    text = _assembled_search()
     out = subprocess.run(["python3", "-c", text, json.dumps(opts)], capture_output=True, text=True, timeout=60)
     if out.returncode != 0:
         raise AssertionError(out.stderr.strip() or "helper failed")
@@ -496,7 +527,7 @@ class RegexAndTranscripts(unittest.TestCase):
 
 
 class HelperReadOnce(unittest.TestCase):
-    """transcript_search.py is read from disk once (lazily, then kept), not on every debounced search."""
+    """The assembled search reader is built once (lazily, then kept), not on every debounced search."""
 
     def setUp(self):
         self.src = MAIN.read_text(encoding="utf-8")
@@ -508,8 +539,8 @@ class HelperReadOnce(unittest.TestCase):
         self.assertNotIn("readTextFile", body)
 
     def test_the_file_is_read_in_one_place_and_kept(self):
-        self.assertEqual(self.src.count("transcript_search.py`)"), 1)
-        self.assertRegex(self.src, r"if \(!this\.script\) this\.script = await readTextFile\(")
+        self.assertEqual(self.src.count("assembleReader("), 1)
+        self.assertRegex(self.src, r"if \(!this\.script\) \{[\s\S]*this\.script = assembleReader\(")
 
 
 class PaneNames(unittest.TestCase):

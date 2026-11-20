@@ -1,4 +1,4 @@
-"""kit/scan_pi.py: live Claude Code background agents are listed with the same fields as finished ones.
+"""mods/ob-feed/providers: live Claude Code background agents are listed with the same fields as finished ones.
 
 The scan runs on a fixture home (`claudeHome`) with a fake claude process (`procs`), so no real session is read.
 Transcripts are invented: nothing personal, only the shape Claude Code writes (message lines with usage,
@@ -16,10 +16,45 @@ import unittest
 from pathlib import Path
 
 ROOT = home_guard.ROOT
-SCAN = Path(ROOT, "kit", "scan_pi.py")
+PROVIDERS_DIR = Path(ROOT, "mods", "ob-feed", "providers")
+PROVIDER_JS = Path(ROOT, "kit", "provider.js")
+NODE = shutil.which("node")
+_SCANNER_CACHE = None
 PID = 4242
 TERM = "tfix1"
 SID = "11111111-2222-3333-4444-555555555555"
+
+
+def _assembled_scanner():
+    global _SCANNER_CACHE
+    if _SCANNER_CACHE is not None:
+        return _SCANNER_CACHE
+    if not NODE:
+        raise unittest.SkipTest("node is not installed: cannot assemble scanner")
+    with open(PROVIDERS_DIR / "index.json", encoding="utf-8") as f:
+        programs = json.load(f)
+    payload = {"providersDir": str(PROVIDERS_DIR), "programs": programs}
+    js = (
+        'import fs from "node:fs";\n'
+        'import path from "node:path";\n'
+        f'import * as P from {json.dumps(PROVIDER_JS.as_uri())};\n'
+        'const cfg = JSON.parse(fs.readFileSync(0, "utf8"));\n'
+        'const read = (p) => fs.readFileSync(p, "utf8");\n'
+        'const progs = cfg.programs\n'
+        '  .filter((id) => fs.existsSync(path.join(cfg.providersDir, id, "scan.py")))\n'
+        '  .map((id) => ({\n'
+        '    id,\n'
+        '    reader: read(path.join(cfg.providersDir, id, "reader.py")),\n'
+        '    scan: read(path.join(cfg.providersDir, id, "scan.py")),\n'
+        '  }));\n'
+        'process.stdout.write(P.assembleScanner(read(path.join(cfg.providersDir, "scan_core.py")), progs));\n'
+    )
+    out = subprocess.run([NODE, "--input-type=module", "-e", js], input=json.dumps(payload),
+                         capture_output=True, text=True, timeout=30)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.strip() or "provider.js failed")
+    _SCANNER_CACHE = out.stdout
+    return _SCANNER_CACHE
 
 
 def line(obj):
@@ -41,7 +76,7 @@ def tool_result(tid):
 
 def scan(home, procs):
     opts = json.dumps({"claude": True, "claudeHome": home, "procs": procs, "limit": 40})
-    out = subprocess.run([sys.executable, "-I", str(SCAN), opts], capture_output=True, text=True, timeout=60)
+    out = subprocess.run([sys.executable, "-I", "-c", _assembled_scanner(), opts], capture_output=True, text=True, timeout=60)
     if out.returncode != 0:
         raise AssertionError(out.stderr.strip()[-400:])
     return json.loads(out.stdout)
@@ -134,6 +169,18 @@ class LiveAgents(ScanFixture):
         self.assertEqual(a["outTokens"], 50)
         self.assertEqual(a["toolCount"], 1)
 
+    def test_a_split_message_without_first_line_usage_counts_zero_for_that_message(self):
+        # Only the first line of a message id counts for output tokens, even when that first line omits usage.
+        self.agent("split2", [
+            line({"type": "user", "message": {"role": "user", "content": "check"}}),
+            line({"type": "assistant", "message": {"id": "m1", "role": "assistant", "model": "claude-haiku-5-5",
+                  "content": [{"type": "text", "text": "a"}], "stop_reason": None}}),
+            line(asst("m1", [tool_use("t1", "Bash", "pwd")], stop="tool_use", out=50)),
+        ])
+        a = self.agent_entry(self.result(), "split2")
+        self.assertIsNone(a["outTokens"])
+        self.assertEqual(a["turns"], 1)
+
 
 class MainAgents(ScanFixture):
     """A live main Claude Code terminal (not a subagent) maps to its session transcript, the shape ob-props reads."""
@@ -211,7 +258,7 @@ class ShortToolArgument(ScanFixture):
         self.assertEqual(self.agent_entry(self.result(), "e1")["lastTool"], {"tool": "Edit", "args": "main.js"})
 
     def test_a_long_command_is_cut_to_forty_characters(self):
-        cmd = "python3 -m unittest discover -s test -p 'test_scan_pi.py' -v && echo done"
+        cmd = "python3 -m unittest discover -s test -p 'test_provider_scan.py' -v && echo done"
         self.agent("b1", [line(asst("m1", [tool_use("t1", "Bash", cmd)]))])
         args = self.agent_entry(self.result(), "b1")["lastTool"]["args"]
         self.assertLessEqual(len(args), 40)
@@ -229,7 +276,7 @@ class ShortToolArgument(ScanFixture):
         self.assertEqual(self.result()["terms"][TERM]["lastTool"], {"tool": "Read", "args": "notes.md"})
 
 def scan_opts(opts):
-    out = subprocess.run([sys.executable, "-I", str(SCAN), json.dumps(opts)], capture_output=True, text=True, timeout=60)
+    out = subprocess.run([sys.executable, "-I", "-c", _assembled_scanner(), json.dumps(opts)], capture_output=True, text=True, timeout=60)
     if out.returncode != 0:
         raise AssertionError(out.stderr.strip()[-400:])
     return out.stdout
@@ -367,8 +414,8 @@ class Touches(ScanFixture):
 
 class MasterAndCopies(unittest.TestCase):
     def test_the_feed_copy_is_the_kit_master(self):
-        master = Path(ROOT, "kit", "scan_pi.py").read_bytes()
-        self.assertEqual(master, Path(ROOT, "mods", "ob-feed", "scan_pi.py").read_bytes())
+        master = Path(ROOT, "kit", "provider.js").read_bytes()
+        self.assertEqual(master, Path(ROOT, "mods", "ob-feed", "provider.js").read_bytes())
 
     def test_the_feed_publishes_touches_under_the_graph_node_keys(self):
         src = Path(ROOT, "mods", "ob-feed", "main.js").read_text(encoding="utf-8")
@@ -381,6 +428,125 @@ class MasterAndCopies(unittest.TestCase):
         src = Path(ROOT, "mods", "ob-feed", "main.js").read_text(encoding="utf-8")
         self.assertIn("live: Boolean(a.live)", src)
         self.assertIn("toolCount", src)
+
+
+def _write_fake_proc(proc_root, pid, comm, argv, term, cwd, exe=None):
+    pdir = Path(proc_root, str(pid))
+    pdir.mkdir(parents=True)
+    with open(pdir / "comm", "w", encoding="utf-8") as f:
+        f.write(comm + "\n")
+    with open(pdir / "cmdline", "wb") as f:
+        f.write(b"\0".join(a.encode("utf-8") for a in argv) + b"\0")
+    with open(pdir / "environ", "wb") as f:
+        f.write(f"PATH=/usr/bin\0HC_TERMINAL_ID={term}\0".encode("utf-8"))
+    os.symlink(cwd, pdir / "cwd")
+    if exe:
+        os.symlink(exe, pdir / "exe")
+
+
+class ProgramIdentity(unittest.TestCase):
+    """Unrelated binaries named claude or pi are ignored across ps, procs, and /proc when evidence is absent."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="scan-ident-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+
+    def test_claude_without_evidence_yields_zero_rows_and_confirmed_claude_succeeds(self):
+        ps_bare = {
+            "list": "  1002 Sat Nov 14 10:41:08 2026 claude           /usr/local/bin/claude --render\n",
+            "env": "1002 /usr/local/bin/claude --render HC_TERMINAL_ID=tcl_fake\n",
+            "cwd": "p1002\nfcwd\nn/tmp\n",
+        }
+        self.assertEqual(
+            json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home, "psOutput": ps_bare}))["terms"],
+            {},
+        )
+        self.assertEqual(
+            json.loads(scan_opts({
+                "claude": True,
+                "claudeHome": self.home,
+                "piHome": self.home,
+                "procs": [{"pid": 1002, "term": "tcl_fake", "comm": "claude", "cwd": "/tmp",
+                           "args": ["/usr/local/bin/claude", "--render"]}],
+            }))["terms"],
+            {},
+        )
+        proc_dir = Path(self.home, "proc")
+        _write_fake_proc(proc_dir, 1002, "claude", ["/usr/local/bin/claude", "--render"], "tcl_fake", "/tmp",
+                         exe="/usr/local/bin/claude")
+        self.assertEqual(
+            json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home,
+                                  "procRoot": str(proc_dir)}))["terms"],
+            {},
+        )
+
+        # Real evidence (CLI package path in argv/cmdline) confirms claude in ps, procs, and /proc.
+        ps_real = {
+            "list": "  1004 Sat Nov 14 10:41:08 2026 claude           /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js\n",
+            "env": "1004 claude HC_TERMINAL_ID=tcl_real\n",
+            "cwd": "p1004\nfcwd\nn/srv/claude\n",
+        }
+        self.assertEqual(
+            sorted(json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home,
+                                         "psOutput": ps_real}))["terms"]),
+            ["tcl_real"],
+        )
+        _write_fake_proc(proc_dir, 1004, "claude",
+                         ["claude", "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+                         "tcl_real", "/srv/claude")
+        self.assertEqual(
+            sorted(json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home,
+                                         "procRoot": str(proc_dir)}))["terms"]),
+            ["tcl_real"],
+        )
+
+    def test_pi_without_evidence_yields_zero_rows_and_confirmed_pi_succeeds(self):
+        ps_bare = {
+            "list": "  1001 Sat Nov 14 10:41:08 2026 pi               /usr/bin/pi 100\n",
+            "env": "1001 /usr/bin/pi 100 HC_TERMINAL_ID=tpi_fake\n",
+            "cwd": "p1001\nfcwd\nn/tmp\n",
+        }
+        self.assertEqual(
+            json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home, "psOutput": ps_bare}))["terms"],
+            {},
+        )
+        self.assertEqual(
+            json.loads(scan_opts({
+                "claude": True,
+                "claudeHome": self.home,
+                "piHome": self.home,
+                "procs": [{"pid": 1001, "term": "tpi_fake", "comm": "pi", "cwd": "/tmp",
+                           "args": ["/usr/bin/pi", "100"]}],
+            }))["terms"],
+            {},
+        )
+        proc_dir = Path(self.home, "proc")
+        _write_fake_proc(proc_dir, 1001, "pi", ["/usr/bin/pi", "100"], "tpi_fake", "/tmp", exe="/usr/bin/pi")
+        self.assertEqual(
+            json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home,
+                                  "procRoot": str(proc_dir)}))["terms"],
+            {},
+        )
+
+        # Real evidence (CLI package path in argv/cmdline) confirms pi in ps, procs, and /proc.
+        ps_real = {
+            "list": "  1003 Sat Nov 14 10:41:08 2026 node             node /usr/local/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js\n",
+            "env": "1003 node HC_TERMINAL_ID=tpi_real\n",
+            "cwd": "p1003\nfcwd\nn/srv/pi\n",
+        }
+        self.assertEqual(
+            sorted(json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home,
+                                         "psOutput": ps_real}))["terms"]),
+            ["tpi_real"],
+        )
+        _write_fake_proc(proc_dir, 1003, "node",
+                         ["node", "/usr/local/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"],
+                         "tpi_real", "/srv/pi")
+        self.assertEqual(
+            sorted(json.loads(scan_opts({"claude": True, "claudeHome": self.home, "piHome": self.home,
+                                         "procRoot": str(proc_dir)}))["terms"]),
+            ["tpi_real"],
+        )
 
 
 if __name__ == "__main__":

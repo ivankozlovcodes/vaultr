@@ -1,0 +1,1077 @@
+{
+  "scanner": {
+    "v": 1,
+    "host": "<HOST>",
+    "uid": "<UID>",
+    "now": "<NOW>",
+    "root": "<FIXTURE>/pi-tmp/async-subagent-runs",
+    "runs": [
+      {
+        "id": "run-live-01",
+        "mode": "chain",
+        "state": "running",
+        "live": true,
+        "startedAt": 1775116800000,
+        "endedAt": null,
+        "lastUpdate": 1775116850000,
+        "cwd": "/srv/work/studio",
+        "parentSession": "<FIXTURE>/home/.pi/agent/sessions/--srv-work-studio--/2026-04-02T08-00-00-000Z_s1.jsonl",
+        "ownerPid": 7701,
+        "term": "tpi1",
+        "currentStep": 0,
+        "tokens": 1250,
+        "cost": 0.0125,
+        "turns": 2,
+        "toolCount": 3,
+        "error": null,
+        "log": "<FIXTURE>/pi-tmp/async-subagent-runs/run-live-01/output-0.log",
+        "dir": "<FIXTURE>/pi-tmp/async-subagent-runs/run-live-01",
+        "steps": [
+          {
+            "agent": "scout",
+            "label": "audit",
+            "task": "Audit studio config",
+            "status": "running",
+            "model": "claude-sonnet-4-5",
+            "startedAt": 1775116800000,
+            "endedAt": null,
+            "tokens": 1250,
+            "cost": 0.0125,
+            "turns": 2,
+            "toolCount": 3,
+            "tools": [
+              {
+                "tool": "read",
+                "args": "/srv/work/studio/studio.json",
+                "at": 1775116820000
+              }
+            ],
+            "out": [
+              "Checking studio.json"
+            ],
+            "error": null,
+            "session": "<FIXTURE>/pi-tmp/async-subagent-runs/run-live-01/step-0-session.jsonl",
+            "transcript": "<FIXTURE>/pi-tmp/async-subagent-runs/run-live-01/step-0-transcript.jsonl",
+            "runId": "run-live-01-child"
+          }
+        ]
+      },
+      {
+        "id": "run-done-01",
+        "mode": "single",
+        "state": "complete",
+        "live": false,
+        "startedAt": 1775116000000,
+        "endedAt": 1775116100000,
+        "lastUpdate": 1775116100000,
+        "cwd": "/srv/work/studio",
+        "parentSession": "<FIXTURE>/home/.pi/agent/sessions/--srv-work-studio--/2026-04-02T08-00-00-000Z_s1.jsonl",
+        "ownerPid": 10000099,
+        "term": "tpi1",
+        "currentStep": 0,
+        "tokens": 820,
+        "cost": 0.008,
+        "turns": 1,
+        "toolCount": 2,
+        "error": "minor lint warning",
+        "log": null,
+        "dir": "<FIXTURE>/pi-tmp/async-subagent-runs/run-done-01",
+        "steps": [
+          {
+            "agent": "builder",
+            "label": "verify",
+            "task": "Verify build artifact",
+            "status": "complete",
+            "model": "claude-haiku-4-5",
+            "startedAt": 1775116000000,
+            "endedAt": 1775116100000,
+            "tokens": 820,
+            "cost": 0.008,
+            "turns": 1,
+            "toolCount": 2,
+            "tools": [
+              {
+                "tool": "edit",
+                "args": "/srv/work/studio/studio.json",
+                "at": 1775116050000
+              }
+            ],
+            "out": [
+              "Studio port updated to 8443"
+            ],
+            "error": null,
+            "session": "<FIXTURE>/pi-tmp/async-subagent-runs/run-done-01/done-session.jsonl",
+            "transcript": "<FIXTURE>/pi-tmp/async-subagent-runs/run-done-01/done-transcript.jsonl",
+            "runId": null
+          }
+        ],
+        "termGuess": true
+      }
+    ],
+    "terms": {
+      "tpi1": {
+        "pid": 7701,
+        "kind": "pi",
+        "cwd": "/srv/work/studio",
+        "session": "<FIXTURE>/home/.pi/agent/sessions/--srv-work-studio--/2026-04-02T08-00-00-000Z_s1.jsonl",
+        "guess": false
+      },
+      "tpi2": {
+        "pid": 10000002,
+        "kind": "pi",
+        "cwd": "/srv/work/studio-guess",
+        "session": "<FIXTURE>/home/.pi/agent/sessions/--srv-work-studio-guess--/2026-04-02T08-00-00-000Z_s2.jsonl",
+        "guess": true
+      },
+      "tcl1": {
+        "pid": 10000001,
+        "kind": "claude",
+        "cwd": "/srv/work",
+        "session": "claude-sess-01",
+        "name": "Build check",
+        "agents": [
+          {
+            "id": "live01",
+            "type": "Explore",
+            "desc": "Scan test suite",
+            "model": "claude-haiku-4-5",
+            "updatedAt": "<LIVE_MTIME>",
+            "bytes": 527,
+            "lastTool": {
+              "tool": "Read",
+              "args": "test_app.py"
+            },
+            "outTokens": 42,
+            "toolCount": 1,
+            "turns": 1,
+            "ended": false,
+            "live": true,
+            "transcript": "<FIXTURE>/home/.claude/projects/proj-work/claude-sess-01/subagents/agent-live01.jsonl"
+          },
+          {
+            "id": "done01",
+            "type": "code-review",
+            "desc": "Inspect helper module",
+            "model": "claude-haiku-4-5",
+            "updatedAt": 1700000100000,
+            "bytes": 2135,
+            "lastTool": {
+              "tool": "Edit",
+              "args": "helper.py"
+            },
+            "outTokens": 57,
+            "toolCount": 2,
+            "turns": 3,
+            "ended": true,
+            "live": false,
+            "transcript": "<FIXTURE>/home/.claude/projects/proj-work/claude-sess-01/subagents/agent-done01.jsonl"
+          }
+        ],
+        "transcript": "<FIXTURE>/home/.claude/projects/proj-work/claude-sess-01.jsonl",
+        "updatedAt": 1700000200000,
+        "lastTool": {
+          "tool": "Bash",
+          "args": "pytest -q tests/test_app.py"
+        }
+      }
+    },
+    "touches": {
+      "a:live01": [
+        {
+          "path": "/srv/work/tests/test_app.py",
+          "op": "read",
+          "at": 1775037661000
+        }
+      ],
+      "a:done01": [
+        {
+          "path": "/srv/work/src/helper.py",
+          "op": "edit",
+          "at": 1775037624000
+        }
+      ],
+      "term:tcl1": [
+        {
+          "path": "<FIXTURE>/artifact-store/files/cov-report-01/v2",
+          "op": "publish",
+          "at": 1775037620000,
+          "artifact": {
+            "id": "cov-report-01",
+            "title": "Coverage summary",
+            "v": 2
+          }
+        },
+        {
+          "path": "/srv/work/notes/plan.md",
+          "op": "write",
+          "at": 1775037610000
+        },
+        {
+          "path": "/srv/work/src/app.py",
+          "op": "edit",
+          "at": 1775037610000
+        },
+        {
+          "path": "/srv/work/out/report.md",
+          "op": "create",
+          "at": 1775037610000
+        }
+      ],
+      "term:tpi1": [
+        {
+          "path": "/srv/work/studio/studio.json",
+          "op": "edit",
+          "at": 1775116810000
+        },
+        {
+          "path": "/srv/work/studio/out.txt",
+          "op": "create",
+          "at": 1775116804000
+        }
+      ],
+      "term:tpi2": [
+        {
+          "path": "/srv/work/studio/studio.json",
+          "op": "edit",
+          "at": 1775116810000
+        },
+        {
+          "path": "/srv/work/studio/out.txt",
+          "op": "create",
+          "at": 1775116804000
+        }
+      ],
+      "r:run-live-01": [
+        {
+          "path": "/srv/work/studio/studio.json",
+          "op": "edit",
+          "at": 1775116810000
+        },
+        {
+          "path": "/srv/work/studio/out.txt",
+          "op": "create",
+          "at": 1775116804000
+        }
+      ],
+      "r:run-done-01": [
+        {
+          "path": "/srv/work/studio/studio.json",
+          "op": "edit",
+          "at": 1775116810000
+        },
+        {
+          "path": "/srv/work/studio/out.txt",
+          "op": "create",
+          "at": 1775116804000
+        }
+      ]
+    },
+    "errors": [],
+    "ms": "<MS>"
+  },
+  "viewer": {
+    "props_claude": {
+      "path": "<REPO>/test/fixtures/ob-props/claude-session.jsonl",
+      "entries": [
+        {
+          "k": "user",
+          "text": "Fixture prompt one.",
+          "ts": "2026-03-01T09:00:00.000Z"
+        },
+        {
+          "k": "assistant",
+          "text": "Fixture reply one.",
+          "ts": "2026-03-01T09:00:02.000Z"
+        },
+        {
+          "k": "tool",
+          "tool": "Bash",
+          "args": "fixture-command",
+          "ts": "2026-03-01T09:00:02.100Z",
+          "result": "fixture output",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "Read",
+          "args": "fixture.txt",
+          "ts": "2026-03-01T09:00:05.000Z",
+          "result": "fixture file text",
+          "error": false
+        },
+        {
+          "k": "assistant",
+          "text": "No response requested.",
+          "ts": "2026-03-01T09:00:07.000Z"
+        },
+        {
+          "k": "assistant",
+          "text": "Fixture reply four.",
+          "ts": "2026-03-01T09:01:00.000Z"
+        }
+      ],
+      "format": "claude",
+      "truncated": false,
+      "size": 2685
+    },
+    "props_pi": {
+      "path": "<REPO>/test/fixtures/ob-props/pi-session.jsonl",
+      "entries": [
+        {
+          "k": "meta",
+          "text": "session in /srv/example",
+          "ts": "2026-03-02T08:00:00.000Z"
+        },
+        {
+          "k": "user",
+          "text": "Fixture prompt for pi.",
+          "ts": "2026-03-02T08:00:05.000Z"
+        },
+        {
+          "k": "tool",
+          "tool": "read",
+          "args": "fixture.md",
+          "ts": "2026-03-02T08:00:09.000Z",
+          "result": "fixture contents",
+          "error": false
+        },
+        {
+          "k": "assistant",
+          "text": "Fixture answer for pi.",
+          "ts": "2026-03-02T08:00:12.000Z"
+        }
+      ],
+      "format": "pi-session",
+      "truncated": false,
+      "size": 1326
+    },
+    "claude_session": {
+      "path": "<REPO>/test/fixtures/providers/claude/session.jsonl",
+      "entries": [
+        {
+          "k": "user",
+          "text": "# Inspect LighthouseBeacon build\nCheck plan.md and patch app.py.",
+          "ts": "2026-04-01T10:00:03.000Z"
+        },
+        {
+          "k": "assistant",
+          "text": "Reading the plan and source file first.",
+          "ts": "2026-04-01T10:00:05.000Z"
+        },
+        {
+          "k": "tool",
+          "tool": "Read",
+          "args": "/srv/work/notes/plan.md",
+          "ts": "2026-04-01T10:00:05.200Z",
+          "result": "step 1: verify config",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "Read",
+          "args": "/srv/work/src/app.py",
+          "ts": "2026-04-01T10:00:05.200Z",
+          "result": "ENOENT: missing permission flag",
+          "error": true
+        },
+        {
+          "k": "user",
+          "text": "  <hc from=\"t8\" event=\"ready\">helper finished</hc>",
+          "ts": "2026-04-01T10:00:07.000Z"
+        },
+        {
+          "k": "assistant",
+          "text": "No response requested.",
+          "ts": "2026-04-01T10:00:08.000Z"
+        },
+        {
+          "k": "user",
+          "text": "Edit app.py, update plan.md, write report.md, and run tests.",
+          "ts": "2026-04-01T10:00:09.000Z"
+        },
+        {
+          "k": "tool",
+          "tool": "Edit",
+          "args": "/srv/work/src/app.py",
+          "ts": "2026-04-01T10:00:10.000Z",
+          "result": "edited app.py",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "Write",
+          "args": "/srv/work/out/report.md",
+          "ts": "2026-04-01T10:00:10.000Z",
+          "result": "wrote report.md",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "Write",
+          "args": "/srv/work/notes/plan.md",
+          "ts": "2026-04-01T10:00:10.000Z",
+          "result": "wrote plan.md",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "Bash",
+          "args": "pytest -q tests/test_app.py",
+          "ts": "2026-04-01T10:00:12.000Z",
+          "result": "3 passed in 0.12s",
+          "error": false
+        },
+        {
+          "k": "assistant",
+          "text": "All LighthouseBeacon checks passed and report.md is ready.",
+          "ts": "2026-04-01T10:00:15.000Z"
+        }
+      ],
+      "format": "claude",
+      "truncated": false,
+      "size": 4636
+    },
+    "claude_subagent": {
+      "path": "<REPO>/test/fixtures/providers/claude/subagent.jsonl",
+      "entries": [
+        {
+          "k": "user",
+          "text": "Inspect /srv/work/src/helper.py for LighthouseBeacon edge cases.",
+          "ts": "2026-04-01T10:00:20.000Z"
+        },
+        {
+          "k": "assistant",
+          "text": "Scanning helper.py for LighthouseBeacon edge cases.",
+          "ts": "2026-04-01T10:00:21.000Z"
+        },
+        {
+          "k": "tool",
+          "tool": "Read",
+          "args": "/srv/work/src/helper.py",
+          "ts": "2026-04-01T10:00:21.200Z",
+          "result": "def parse(): return None",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "Edit",
+          "args": "/srv/work/src/helper.py",
+          "ts": "2026-04-01T10:00:24.000Z",
+          "result": "old_string not found",
+          "error": true
+        },
+        {
+          "k": "assistant",
+          "text": "Helper check finished with one LighthouseBeacon warning.",
+          "ts": "2026-04-01T10:00:26.000Z"
+        }
+      ],
+      "format": "claude",
+      "truncated": false,
+      "size": 2135
+    },
+    "pi_session": {
+      "path": "<REPO>/test/fixtures/providers/pi/session.jsonl",
+      "entries": [
+        {
+          "k": "meta",
+          "text": "session in /srv/work/studio",
+          "ts": "2026-04-02T08:00:00.000Z"
+        },
+        {
+          "k": "user",
+          "text": "Audit studio config\nVerify LighthouseBeacon paths.",
+          "ts": "2026-04-02T08:00:02.000Z"
+        },
+        {
+          "k": "assistant",
+          "text": "Checking studio.json and writing output.",
+          "ts": "2026-04-02T08:00:04.000Z"
+        },
+        {
+          "k": "tool",
+          "tool": "read",
+          "args": "/srv/work/studio/studio.json",
+          "ts": "2026-04-02T08:00:04.000Z",
+          "result": "{\"port\":8080}",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "write",
+          "args": "/srv/work/studio/out.txt",
+          "ts": "2026-04-02T08:00:04.000Z",
+          "result": "EACCES: read-only directory",
+          "error": true
+        },
+        {
+          "k": "user",
+          "text": "  <hc from=\"t11\" event=\"ready\">step finished</hc>",
+          "ts": "2026-04-02T08:00:07.000Z"
+        },
+        {
+          "k": "user",
+          "text": "Try editing studio.json directly.",
+          "ts": "2026-04-02T08:00:08.000Z"
+        },
+        {
+          "k": "tool",
+          "tool": "edit",
+          "args": "/srv/work/studio/studio.json",
+          "ts": "2026-04-02T08:00:10.000Z",
+          "result": "updated studio.json",
+          "error": false
+        },
+        {
+          "k": "assistant",
+          "text": "Studio port updated to 8443; LighthouseBeacon out.txt needs writable target.",
+          "ts": "2026-04-02T08:00:12.000Z"
+        }
+      ],
+      "format": "pi-session",
+      "truncated": false,
+      "size": 2678
+    },
+    "pi_subagent_transcript": {
+      "path": "<REPO>/test/fixtures/providers/pi/subagent_transcript.jsonl",
+      "entries": [
+        {
+          "k": "user",
+          "text": "Check the LighthouseBeacon worker config.",
+          "ts": 1712044800000
+        },
+        {
+          "k": "tool",
+          "tool": "read",
+          "args": "/srv/work/worker/cfg.toml",
+          "ts": 1712044801000,
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "bash",
+          "args": "cargo test --quiet",
+          "ts": 1712044803000,
+          "error": true
+        },
+        {
+          "k": "assistant",
+          "text": "LighthouseBeacon cfg.toml looks valid; cargo test failed on unit fixture.",
+          "ts": 1712044805000
+        }
+      ],
+      "format": "pi-transcript",
+      "truncated": false,
+      "size": 711
+    },
+    "claude_session_max3": {
+      "path": "<REPO>/test/fixtures/providers/claude/session.jsonl",
+      "entries": [
+        {
+          "k": "tool",
+          "tool": "Write",
+          "args": "/srv/work/notes/plan.md",
+          "ts": "2026-04-01T10:00:10.000Z",
+          "result": "wrote plan.md",
+          "error": false
+        },
+        {
+          "k": "tool",
+          "tool": "Bash",
+          "args": "pytest -q tests/test_app.py",
+          "ts": "2026-04-01T10:00:12.000Z",
+          "result": "3 passed in 0.12s",
+          "error": false
+        },
+        {
+          "k": "assistant",
+          "text": "All LighthouseBeacon checks passed and report.md is ready.",
+          "ts": "2026-04-01T10:00:15.000Z"
+        }
+      ],
+      "format": "claude",
+      "truncated": true,
+      "size": 4636
+    },
+    "missing": {
+      "path": "<TMP>/missing.jsonl",
+      "entries": [],
+      "format": null,
+      "truncated": false,
+      "size": 0,
+      "error": "can't read: FileNotFoundError"
+    },
+    "find_hit": {
+      "path": "<TMP>/.claude/projects/proj-new/s1/subagents/agent-find01.jsonl"
+    }
+  },
+  "usage": {
+    "props_claude": {
+      "format": "claude",
+      "size": 2685,
+      "truncated": false,
+      "turns": [
+        {
+          "id": "msg_fx01",
+          "model": "claude-fable-5-2",
+          "input": 10,
+          "output": 20,
+          "cacheRead": 1000,
+          "cacheWrite": 300
+        },
+        {
+          "id": "msg_fx02",
+          "model": "claude-fable-5-2",
+          "input": 3,
+          "output": 50,
+          "cacheRead": 1500,
+          "cacheWrite": 200
+        },
+        {
+          "id": "msg_fx04",
+          "model": "claude-fable-5-2",
+          "input": 4,
+          "output": 39,
+          "cacheRead": 2000,
+          "cacheWrite": 350
+        }
+      ],
+      "sig": "<SIG>"
+    },
+    "props_pi": {
+      "format": "pi-session",
+      "size": 1326,
+      "truncated": false,
+      "turns": [
+        {
+          "id": "resp_fx1",
+          "model": "claude-opus-5-5",
+          "input": 12,
+          "output": 30,
+          "cacheRead": 800,
+          "cacheWrite": 0
+        },
+        {
+          "id": "resp_fx2",
+          "model": "claude-opus-5-5",
+          "input": 5,
+          "output": 9,
+          "cacheRead": 900,
+          "cacheWrite": 40
+        }
+      ],
+      "sig": "<SIG>"
+    },
+    "claude_session": {
+      "format": "claude",
+      "size": 4636,
+      "truncated": false,
+      "turns": [
+        {
+          "id": "msg_c1",
+          "model": "claude-sonnet-4-5",
+          "input": 120,
+          "output": 35,
+          "cacheRead": 800,
+          "cacheWrite": 400
+        },
+        {
+          "id": "msg_c2",
+          "model": "claude-sonnet-4-5",
+          "input": 45,
+          "output": 70,
+          "cacheRead": 1200,
+          "cacheWrite": 100
+        },
+        {
+          "id": "msg_c3",
+          "model": "claude-sonnet-4-5",
+          "input": 15,
+          "output": 28,
+          "cacheRead": 1350,
+          "cacheWrite": 0
+        },
+        {
+          "id": "msg_c4",
+          "model": "claude-sonnet-4-5",
+          "input": 20,
+          "output": 22,
+          "cacheRead": 1400,
+          "cacheWrite": 0
+        }
+      ],
+      "sig": "<SIG>"
+    },
+    "pi_session": {
+      "format": "pi-session",
+      "size": 2678,
+      "truncated": false,
+      "turns": [
+        {
+          "id": "resp_p1",
+          "model": "claude-sonnet-4-5",
+          "input": 40,
+          "output": 25,
+          "cacheRead": 600,
+          "cacheWrite": 100
+        },
+        {
+          "id": "resp_p2",
+          "model": "claude-sonnet-4-5",
+          "input": 18,
+          "output": 14,
+          "cacheRead": 700,
+          "cacheWrite": 0
+        },
+        {
+          "id": "resp_p3",
+          "model": "claude-sonnet-4-5",
+          "input": 12,
+          "output": 19,
+          "cacheRead": 750,
+          "cacheWrite": 0
+        }
+      ],
+      "sig": "<SIG>"
+    },
+    "missing": {
+      "format": null,
+      "size": 0,
+      "truncated": false,
+      "turns": [],
+      "error": "can't read: FileNotFoundError"
+    }
+  },
+  "search": {
+    "batch_insensitive": {
+      "v": 1,
+      "files": [
+        {
+          "id": "claude-main",
+          "path": "<REPO>/test/fixtures/providers/claude/session.jsonl",
+          "size": 4636,
+          "format": "claude",
+          "truncated": false,
+          "matched": 2,
+          "msgs": [
+            {
+              "i": 5,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:15.000Z",
+              "text": "All LighthouseBeacon checks passed and report.md is ready."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-01T10:00:03.000Z",
+              "text": "# Inspect LighthouseBeacon build\nCheck plan.md and patch app.py."
+            }
+          ]
+        },
+        {
+          "id": "claude-sub",
+          "path": "<REPO>/test/fixtures/providers/claude/subagent.jsonl",
+          "size": 2135,
+          "format": "claude",
+          "truncated": false,
+          "matched": 3,
+          "msgs": [
+            {
+              "i": 2,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:26.000Z",
+              "text": "Helper check finished with one LighthouseBeacon warning."
+            },
+            {
+              "i": 1,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:21.000Z",
+              "text": "Scanning helper.py for LighthouseBeacon edge cases."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-01T10:00:20.000Z",
+              "text": "Inspect /srv/work/src/helper.py for LighthouseBeacon edge cases."
+            }
+          ]
+        },
+        {
+          "id": "pi-sess",
+          "path": "<REPO>/test/fixtures/providers/pi/session.jsonl",
+          "size": 2678,
+          "format": "pi-session",
+          "truncated": false,
+          "matched": 2,
+          "msgs": [
+            {
+              "i": 4,
+              "role": "assistant",
+              "ts": "2026-04-02T08:00:12.000Z",
+              "text": "Studio port updated to 8443; LighthouseBeacon out.txt needs writable target."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-02T08:00:02.000Z",
+              "text": "Audit studio config\nVerify LighthouseBeacon paths."
+            }
+          ]
+        },
+        {
+          "id": "pi-sub",
+          "path": "<REPO>/test/fixtures/providers/pi/subagent_transcript.jsonl",
+          "size": 711,
+          "format": "pi-transcript",
+          "truncated": false,
+          "matched": 2,
+          "msgs": [
+            {
+              "i": 1,
+              "role": "assistant",
+              "ts": 1712044805000,
+              "text": "LighthouseBeacon cfg.toml looks valid; cargo test failed on unit fixture."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": 1712044800000,
+              "text": "Check the LighthouseBeacon worker config."
+            }
+          ]
+        }
+      ],
+      "skipped": 0,
+      "partial": false,
+      "ms": "<MS>"
+    },
+    "batch_case_miss": {
+      "v": 1,
+      "files": [
+        {
+          "id": "claude-main",
+          "path": "<REPO>/test/fixtures/providers/claude/session.jsonl",
+          "size": 4636,
+          "format": "claude",
+          "truncated": false,
+          "matched": 0,
+          "msgs": []
+        },
+        {
+          "id": "claude-sub",
+          "path": "<REPO>/test/fixtures/providers/claude/subagent.jsonl",
+          "size": 2135,
+          "format": "claude",
+          "truncated": false,
+          "matched": 0,
+          "msgs": []
+        },
+        {
+          "id": "pi-sess",
+          "path": "<REPO>/test/fixtures/providers/pi/session.jsonl",
+          "size": 2678,
+          "format": "pi-session",
+          "truncated": false,
+          "matched": 0,
+          "msgs": []
+        },
+        {
+          "id": "pi-sub",
+          "path": "<REPO>/test/fixtures/providers/pi/subagent_transcript.jsonl",
+          "size": 711,
+          "format": "pi-transcript",
+          "truncated": false,
+          "matched": 0,
+          "msgs": []
+        }
+      ],
+      "skipped": 0,
+      "partial": false,
+      "ms": "<MS>"
+    },
+    "batch_case_hit": {
+      "v": 1,
+      "files": [
+        {
+          "id": "claude-main",
+          "path": "<REPO>/test/fixtures/providers/claude/session.jsonl",
+          "size": 4636,
+          "format": "claude",
+          "truncated": false,
+          "matched": 2,
+          "msgs": [
+            {
+              "i": 5,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:15.000Z",
+              "text": "All LighthouseBeacon checks passed and report.md is ready."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-01T10:00:03.000Z",
+              "text": "# Inspect LighthouseBeacon build\nCheck plan.md and patch app.py."
+            }
+          ]
+        },
+        {
+          "id": "claude-sub",
+          "path": "<REPO>/test/fixtures/providers/claude/subagent.jsonl",
+          "size": 2135,
+          "format": "claude",
+          "truncated": false,
+          "matched": 3,
+          "msgs": [
+            {
+              "i": 2,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:26.000Z",
+              "text": "Helper check finished with one LighthouseBeacon warning."
+            },
+            {
+              "i": 1,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:21.000Z",
+              "text": "Scanning helper.py for LighthouseBeacon edge cases."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-01T10:00:20.000Z",
+              "text": "Inspect /srv/work/src/helper.py for LighthouseBeacon edge cases."
+            }
+          ]
+        },
+        {
+          "id": "pi-sess",
+          "path": "<REPO>/test/fixtures/providers/pi/session.jsonl",
+          "size": 2678,
+          "format": "pi-session",
+          "truncated": false,
+          "matched": 2,
+          "msgs": [
+            {
+              "i": 4,
+              "role": "assistant",
+              "ts": "2026-04-02T08:00:12.000Z",
+              "text": "Studio port updated to 8443; LighthouseBeacon out.txt needs writable target."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-02T08:00:02.000Z",
+              "text": "Audit studio config\nVerify LighthouseBeacon paths."
+            }
+          ]
+        },
+        {
+          "id": "pi-sub",
+          "path": "<REPO>/test/fixtures/providers/pi/subagent_transcript.jsonl",
+          "size": 711,
+          "format": "pi-transcript",
+          "truncated": false,
+          "matched": 2,
+          "msgs": [
+            {
+              "i": 1,
+              "role": "assistant",
+              "ts": 1712044805000,
+              "text": "LighthouseBeacon cfg.toml looks valid; cargo test failed on unit fixture."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": 1712044800000,
+              "text": "Check the LighthouseBeacon worker config."
+            }
+          ]
+        }
+      ],
+      "skipped": 0,
+      "partial": false,
+      "ms": "<MS>"
+    },
+    "batch_max_files_2": {
+      "v": 1,
+      "files": [
+        {
+          "id": "claude-main",
+          "path": "<REPO>/test/fixtures/providers/claude/session.jsonl",
+          "size": 4636,
+          "format": "claude",
+          "truncated": false,
+          "matched": 2,
+          "msgs": [
+            {
+              "i": 5,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:15.000Z",
+              "text": "All LighthouseBeacon checks passed and report.md is ready."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-01T10:00:03.000Z",
+              "text": "# Inspect LighthouseBeacon build\nCheck plan.md and patch app.py."
+            }
+          ]
+        },
+        {
+          "id": "claude-sub",
+          "path": "<REPO>/test/fixtures/providers/claude/subagent.jsonl",
+          "size": 2135,
+          "format": "claude",
+          "truncated": false,
+          "matched": 3,
+          "msgs": [
+            {
+              "i": 2,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:26.000Z",
+              "text": "Helper check finished with one LighthouseBeacon warning."
+            },
+            {
+              "i": 1,
+              "role": "assistant",
+              "ts": "2026-04-01T10:00:21.000Z",
+              "text": "Scanning helper.py for LighthouseBeacon edge cases."
+            },
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-01T10:00:20.000Z",
+              "text": "Inspect /srv/work/src/helper.py for LighthouseBeacon edge cases."
+            }
+          ]
+        }
+      ],
+      "skipped": 2,
+      "partial": false,
+      "ms": "<MS>"
+    },
+    "long_window": {
+      "v": 1,
+      "files": [
+        {
+          "id": "long",
+          "path": "<TMP>/long.jsonl",
+          "size": 4332,
+          "format": "claude",
+          "truncated": false,
+          "matched": 1,
+          "msgs": [
+            {
+              "i": 0,
+              "role": "user",
+              "ts": "2026-04-01T12:00:00.000Z",
+              "text": "…x prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix prefix LighthouseBeacon signal locked suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffix suffi…"
+            }
+          ]
+        }
+      ],
+      "skipped": 0,
+      "partial": false,
+      "ms": "<MS>"
+    }
+  }
+}

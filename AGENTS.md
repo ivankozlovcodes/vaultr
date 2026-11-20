@@ -38,8 +38,8 @@ under them (it replaced the Subagents panel).
 
 ## Kit
 
-- Edit `kit/kit.js` (and the helpers `kit/*.js`, `kit/icons/`, `kit/scan_pi.py`) only, then run `kit/sync.sh`.
-- Never edit a mod's copy of `kit.js`, its icons or `scan_pi.py`: the next sync overwrites them.
+- Edit `kit/kit.js` (and the helpers `kit/*.js`, `kit/icons/`) only, then run `kit/sync.sh`.
+- Never edit a mod's copy of `kit.js`, helper modules, or its icons: the next sync overwrites them.
 
 ## Names
 

@@ -2,7 +2,7 @@
 // kit/sync.sh copies it into each mod; kit.js re-exports fuzzy() and matchQuery(). The rules are the ones below.
 //
 // A query is space-separated terms. Every term must match the text, case-insensitively unless asked. How a term
-// matches (transcript_search.py's prefilter follows the same rule; test/fixtures/ob-search/match-cases.json is the
+// matches (the search mode of providers/reader_main.py follows the same rule; test/fixtures/ob-search/match-cases.json is the
 // shared table both are tested against):
 // - A strict term has a non-letter (such as - / . _ or a digit) or five letters or more. It matches as a contiguous
 //   substring, or, when it has several word chunks ("hd-tr"), as chunks: each chunk's letters occur in order inside

@@ -1,5 +1,5 @@
 // ob-props usage: the token arithmetic and the words for the Usage section. Pure (no herdr imports), so the tests
-// can run it in node. Input: turns from usage.py, in file order: { id, model, input, output, cacheRead, cacheWrite }.
+// can run it in node. Input: turns from the usage mode of providers/reader_main.py, in file order: { id, model, input, output, cacheRead, cacheWrite }.
 
 // A model's context window, when it is one this file knows: the Claude 3 family (claude-3-opus-…, claude-3-5-sonnet-…)
 // and the 4 family (claude-opus-4-…): 200k; 1M with a "[1m]" suffix on opus and sonnet 4. Any other model (a newer

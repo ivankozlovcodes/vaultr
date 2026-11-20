@@ -1,7 +1,7 @@
 // ob-props: Obsidian's Properties for a session. Target: ob.inspect's terminal while pinned, else the
 // last focused main pane that holds a terminal (kit/follow_target.js); before any, the focused mod pane (pane facts only).
 // Sections: Session, Location, Process, Labels, Relations, Usage, Session file. Usage reads the followed agent's
-// transcript with usage.py (exec, off the UI path) on target change and every 10 s; usage.js does the arithmetic. Key column 96 px; hover a
+// transcript with the assembled usage reader (exec, off the UI path) on target change and every 10 s; usage.js does the arithmetic. Key column 96 px; hover a
 // row for its copy button. `hc get <addr> --json` adds what terminals() lacks (status time, exit,
 // notify), on target change and every 10 s while the view shows.
 // Commands (ob-props.<cmd>): inspect:<address>, unpin, pin (pin the focused session), copy:<field>
@@ -12,6 +12,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
 import { props, run, nextCommand, settings, hc, layout, focused, panes, spaces, shared, exec, readTextFile, appHome } from "herdr";
+import { loadProviders, assembleReader } from "./provider.js";
 import {
   S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, emptyState, programIcon, feed,
   machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts, feedLine, parentAddrOf,
@@ -64,7 +65,17 @@ export default class Props extends View {
     });
   }
 
-  // The followed agent's token usage: usage.py over its transcript (exec, time-boxed), summed by usage.js.
+  // The followed agent's token usage: the assembled usage reader over its transcript (exec, time-boxed), summed by usage.js.
+  async loadUsageScript() {
+    const providersDir = `${appHome()}/mods/ob-feed/providers`;
+    const [readerMain, readers] = await Promise.all([
+      readTextFile(`${providersDir}/reader_main.py`).catch(() => null),
+      loadProviders({ readTextFile, providersDir }),
+    ]);
+    if (!readerMain || !readers.length) return null;
+    return assembleReader(readerMain, readers, "usage");
+  }
+
   // Only a Claude Code or pi session has a transcript; a plain shell has none and gets no section.
   fetchUsage(addr, cx) {
     const path = this.transcriptOf(addr);
@@ -73,11 +84,11 @@ export default class Props extends View {
     cx.spawn(async (cx) => {
       const machine = machineOf(addr);
       try {
-        // Read once: it is the same file every 10 s (a missing one is looked for again next time).
-        this.usageScript ||= await readTextFile(`${appHome()}/mods/ob-props/usage.py`);
+        // Read once: it is the same assembled script every 10 s (a missing one is looked for again next time).
+        this.usageScript ||= await this.loadUsageScript();
         const script = this.usageScript;
-        if (!script) throw new Error("usage.py is missing");
-        // The last run's signature for this path: an unchanged transcript is not read again (usage.py checks where it lives).
+        if (!script) throw new Error("usage reader is missing");
+        // The last run's signature for this path: an unchanged transcript is not read again (reader_main checks where it lives).
         const last = this.usage[addr];
         const seen = last?.path === path && last?.sig && last?.summary ? last.sig : "";
         const r = await exec("python3", ["-c", script, path, "", seen], { ...(machine ? { on: machine } : {}), timeout: 8000 });

@@ -7,8 +7,8 @@
 //      the terminal keeps running in the background; a click outside the popup does the same).
 // log: `tail -n 400 <path>` on that machine, every 1.5 s while the run is live; follows the end
 //      unless you scroll up (Follow button / viewer-follow:on brings it back).
-// transcript: transcript.py parses the jsonl there (pi session, pi-subagents transcript, Claude Code)
-//      into prompts, replies (markdown) and tool calls (click one to see its result); refreshed every
+// transcript: the assembled entries reader parses the jsonl there (pi session, pi-subagents transcript,
+//      Claude Code) into prompts, replies (markdown) and tool calls (click one to see its result); refreshed every
 //      4 s while live.
 // Commands (only viewers act on them): viewer-follow:<on|off>, viewer-move, viewer-copy, viewer-close,
 //      viewer-tool:<index> (expand/collapse a tool call), viewer-refresh.
@@ -16,6 +16,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, TextView, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import { props, exec, readTextFile, appHome, run, closeOverlay, settings, focused, terminals, keys } from "herdr";
+import { loadProviders, assembleReader } from "./provider.js";
 import { S, tc, icon, iconButton, alpha, ago, machineLabel, tilde, base, feed, statusMark, normStatus, stop } from "./kit.js";
 import { MONO, splitCmd, copied, revealTerminal, placedSessionOf } from "./obc.js";
 import { escapeOwner, moveTarget, DETACH_ICON, DETACH_POPUP_TIP } from "./actions.js";
@@ -58,7 +59,16 @@ export class Viewer {
     cx.timer.after(0, () => { try { this.handle.focus(); } catch { /* not focusable yet: Herdr's Escape still closes it */ } });
     cx.spawn(async (cx) => {
       if (this.p.view === "transcript") {
-        try { this.script = await readTextFile(`${appHome()}/mods/ob-outline/transcript.py`); } catch (e) { this.err = `transcript.py: ${e?.message ?? e}`; }
+        try {
+          const providersDir = `${appHome()}/mods/ob-feed/providers`;
+          const [readerMain, readers] = await Promise.all([
+            readTextFile(`${providersDir}/reader_main.py`).catch(() => null),
+            loadProviders({ readTextFile, providersDir }),
+          ]);
+          if (!readerMain) this.err = "reader_main.py is missing";
+          else if (!readers.length) this.err = "no agent readers found";
+          else this.script = assembleReader(readerMain, readers, "entries");
+        } catch (e) { this.err = `providers: ${e?.message ?? e}`; }
       }
       await this.load(cx);
     });
@@ -106,7 +116,7 @@ export class Viewer {
         this.lines = next.map((l) => (l.length > 600 ? l.slice(0, 599) + "…" : l));
         if (grew && this.follow) this.askEnd();
       } else {
-        if (!this.script) throw new Error(this.err ?? "transcript.py is missing");
+        if (!this.script) throw new Error(this.err ?? "reader_main.py is missing");
         const r = await exec("python3", ["-c", this.script, this.p.path, "250"], { ...this.on(), timeout: 20000 });
         const line = r.stdout.trim().split("\n").pop() ?? "";
         if (r.code !== 0 || !line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());

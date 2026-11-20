@@ -1,0 +1,6 @@
+{
+  "id": "claude",
+  "name": "Claude Code",
+  "noun": "Claude agent",
+  "caps": ["title", "transcript", "usage", "search", "touches", "subagents"]
+}

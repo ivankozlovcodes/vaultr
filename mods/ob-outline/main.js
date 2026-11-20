@@ -21,6 +21,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
 import { props, run, nextCommand, settings, exec, hc, machines, spaces, panes, layout, focused, terminals, notify, readTextFile, appHome } from "herdr";
+import { loadProviders, assembleReader } from "./provider.js";
 import {
   S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, treeRow, emptyState, openMenu,
   programIcon, feed, machineLabel, machineOf, ago, dur, fmtTokens, fmtCost, takeFocus, isBookmarked, toggleBookmark,
@@ -112,7 +113,7 @@ class Panel {
   }
 
   // Transcript of a run step, Claude agent, or child terminal. A Claude agent seen only through a live record has no
-  // path in the feed: its transcript is found by agent id (transcript.py --find). Failures say why in a notice.
+  // path in the feed: its transcript is found by agent id (the entries mode of providers/reader_main.py, with --find). Failures say why in a notice.
   async transcript(key) {
     if (String(key ?? "").startsWith("h:")) {
       const addr = String(key).slice(2);
@@ -142,10 +143,22 @@ class Panel {
     this.showViewer("transcript", { view: "transcript", machine: c.machine, path: plan.path, title: plan.title, live: c.live, key: `tx-${c.key}`, runKey: c.live ? null : c.key });
   }
 
+  async loadViewerScript() {
+    const providersDir = `${appHome()}/mods/ob-feed/providers`;
+    const [readerMain, readers] = await Promise.all([
+      readTextFile(`${providersDir}/reader_main.py`).catch(() => null),
+      loadProviders({ readTextFile, providersDir }),
+    ]);
+    if (!readerMain || !readers.length) return null;
+    return assembleReader(readerMain, readers, "entries");
+  }
+
   // The transcript file of a Claude Code background agent, found by its id on that machine. null when none.
   async findTranscript(c) {
     try {
-      const script = await readTextFile(`${appHome()}/mods/ob-outline/transcript.py`);
+      this.viewerScript ||= await this.loadViewerScript();
+      const script = this.viewerScript;
+      if (!script) return null;
       const r = await exec("python3", ["-c", script, "--find", c.id], { ...(c.machine ? { on: c.machine } : {}), timeout: 15000 });
       const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
       return line.startsWith("{") ? JSON.parse(line).path ?? null : null;

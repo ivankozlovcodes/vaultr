@@ -34,7 +34,7 @@ def render_src():
 
 
 class ScriptError(unittest.TestCase):
-    """Weak: with scan_pi.py missing, tick() returns before publish(), so the payload never carries the error. The
+    """Weak: with the provider scanner missing, tick() returns before publish(), so the payload never carries the error. The
     segment must also show the copy's own error, or a missing scanner shows nothing at all."""
     def test_render_falls_back_to_its_own_script_error(self):
         self.assertIn("f?.scriptError ?? this.scriptError", render_src())

@@ -85,7 +85,7 @@ class Repo(unittest.TestCase):
                     self.assertTrue(os.path.isfile(os.path.join(ROOT, icon)), f"missing icon {icon}")
 
     def test_kit_copies_match_kit(self):
-        # kit/sync.sh writes kit.js with its MOD name filled in, agents.js, follow_target.js, fuzzy.js, the icons and (for ob-feed) scan_pi.py: all byte-exact
+        # kit/sync.sh writes kit.js with its MOD name filled in, provider.js, agents.js, follow_target.js, fuzzy.js, and the icons: all byte-exact
         kit = read("kit/kit.js")
         icons = os.listdir(os.path.join(ROOT, "kit", "icons"))
         self.assertTrue(icons)
@@ -125,6 +125,9 @@ class Repo(unittest.TestCase):
                 with open(os.path.join(ROOT, "kit", "lights.js"), "rb") as a, \
                         open(os.path.join(MODS, m, "lights.js"), "rb") as b:
                     self.assertEqual(a.read(), b.read(), "lights.js: run kit/sync.sh; never edit a mod's copy")
+                with open(os.path.join(ROOT, "kit", "provider.js"), "rb") as a, \
+                        open(os.path.join(MODS, m, "provider.js"), "rb") as b:
+                    self.assertEqual(a.read(), b.read(), "provider.js: run kit/sync.sh; never edit a mod's copy")
                 for name in icons:
                     with open(os.path.join(ROOT, "kit", "icons", name), "rb") as a, \
                             open(os.path.join(MODS, m, "icons", name), "rb") as b:
@@ -133,9 +136,6 @@ class Repo(unittest.TestCase):
             with open(os.path.join(ROOT, "kit", "obc.js"), "rb") as a, \
                     open(os.path.join(MODS, m, "obc.js"), "rb") as b:
                 self.assertEqual(a.read(), b.read(), f"{m}/obc.js: run kit/sync.sh; never edit a mod's copy")
-        with open(os.path.join(ROOT, "kit", "scan_pi.py"), "rb") as a, \
-                open(os.path.join(MODS, "ob-feed", "scan_pi.py"), "rb") as b:
-            self.assertEqual(a.read(), b.read(), "ob-feed/scan_pi.py")
 
     def test_kit_imports_what_it_reexports_and_uses(self):
         # `export { x } from "./y.js"` does not bind x in kit.js: a kit function that calls x throws "x is not defined".
@@ -247,14 +247,19 @@ class Repo(unittest.TestCase):
 
     def test_no_dangling_spec_or_architect_references(self):
         pat = rb"SPEC\.md|SPEC[ ]section|\bSPEC\s+(?:[0-9]|U4)|Ask[ ]the[ ]architect|\$[S]/"
+        removed_scripts = rb"\b(?:scan_pi|transcript_search|transcript|usage)\.py\b|test_scan_pi\.py"
         bad = []
         for path in tracked():
             if path.endswith((".png", ".jpg", ".gif", ".ico", ".woff", ".woff2", ".ttf")):
                 continue
+            rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
             with open(path, "rb") as f:
                 data = f.read()
             for m in re.finditer(pat, data):
-                bad.append(f"{os.path.relpath(path, ROOT)}: {m.group(0).decode(errors='replace')}")
+                bad.append(f"{rel}: {m.group(0).decode(errors='replace')}")
+            if rel != "test/test_providers_pinned.py":
+                for m in re.finditer(removed_scripts, data):
+                    bad.append(f"{rel}: {m.group(0).decode(errors='replace')}")
         self.assertEqual(bad, [])
 
     def test_every_on_mouse_down_names_its_button(self):

@@ -1,5 +1,5 @@
 // kit/touches.js: what the files the agents touch mean for the graph. Pure: no Herdr imports, so
-// test/test_touches.py runs it under node. The scanner (scan_pi.py) gives touches per agent key: {path, op, at}, op read |
+// test/test_touches.py runs it under node. The scanner (providers/scan_core.py) gives touches per agent key: {path, op, at}, op read |
 // edit | write | create | publish, and for a herdr-artifact publication `artifact` {id, title, v}. classifyTouch says what
 // each one is:
 //   note      a .md file inside the vault: title = its file name without .md, rel = its vault-relative path

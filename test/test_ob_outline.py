@@ -907,7 +907,7 @@ def run_outline_panel(body, state):
         src = src.replace('from "gpui-base"', 'from "./gpui-base.js"')
         src = src.replace('from "herdr"', 'from "./herdr.js"')
         Path(folder, "main.js").write_text(src, encoding="utf-8")
-        for name in ("rows.js", "terminals.js", "tree.js", "actions.js"):
+        for name in ("rows.js", "terminals.js", "tree.js", "actions.js", "provider.js"):
             shutil.copy(Path(ROOT, "mods", "ob-outline", name), Path(folder, name))
         Path(folder, "viewer.js").write_text("export class Viewer { init() {} render() { return null; } command() {} }\n", encoding="utf-8")
         Path(folder, "gpui-kit.js").write_text(
