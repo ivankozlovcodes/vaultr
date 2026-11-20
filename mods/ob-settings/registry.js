@@ -43,6 +43,7 @@ const OB = [
   ["ob-tabs.forward", "Navigate forward", ["ctrl-alt-right"], "Navigate forward (Ctrl+Alt+→)"],
   ["ob-tabs.last", "Go to last tab", ["ctrl-9"], "Go to last tab (Ctrl+9)"],
   ["ob-tabs.settings:hotkeys", "Open hotkeys", ["ctrl-alt-k"], "Settings: Hotkeys"],
+  ["mod.open:ob-settings", "Open settings", ["ctrl-,"], "Settings: Open settings"],
   ["ob-tabs.tab-list", "Show tab list", ["ctrl-alt-t"], null],
   ["ob-tabs.zen", "Toggle Zen mode", ["ctrl-shift-z", "ctrl-alt-z"], "Zen mode: Toggle"],
   ["ob-tabs.open:ob-bookmarks", "Show bookmarks", [], "Bookmarks: Show bookmarks"],

@@ -43,6 +43,67 @@ class VaultrSettingsKey(unittest.TestCase):
         self.assertEqual(KEYS["layout:vaultr"].get("ctrl-,"), "mod.open:ob-settings")
 
 
+def load_registry(keys_dict, platform="linux"):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node is not installed")
+    bound = [
+        {"section": sec, "keys": chord, "action": action}
+        for sec, binds in keys_dict.items()
+        for chord, action in binds.items()
+    ]
+    with tempfile.TemporaryDirectory(prefix="registry-probe-") as folder:
+        src_dir = os.path.join(ROOT, "mods", "ob-settings")
+        for name in os.listdir(src_dir):
+            if not name.endswith(".js"):
+                continue
+            txt = Path(src_dir, name).read_text(encoding="utf-8").replace('from "herdr"', 'from "./herdr.js"')
+            Path(folder, name).write_text(txt, encoding="utf-8")
+        Path(folder, "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+        Path(folder, "herdr.js").write_text(
+            f"export const keys = () => {json.dumps(bound)};\n"
+            "export const commands = () => [];\n"
+            f"export const window = () => ({json.dumps({'platform': platform})});\n",
+            encoding="utf-8",
+        )
+        code = (
+            f'import {{ registry }} from "{Path(folder, "registry.js").as_uri()}";\n'
+            "process.stdout.write(JSON.stringify(registry()));\n"
+        )
+        out = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+        if out.returncode != 0:
+            raise AssertionError(out.stderr)
+        return json.loads(out.stdout)
+
+
+class HotkeysRegistryAgreement(unittest.TestCase):
+    def test_installed_keys_and_hotkeys_defaults_agree_both_ways(self):
+        rows = load_registry(KEYS, platform="linux")
+        missing_defaults = []
+        for section, binds in KEYS.items():
+            for chord, action in binds.items():
+                mine = [r for r in rows if r["action"] == action and r["home"] == section]
+                if not any(isinstance(r.get("defaults"), list) and chord in r["defaults"] for r in mine):
+                    missing_defaults.append(f"{section} {chord} -> {action}")
+        self.assertEqual(missing_defaults, [], f"installed keys without matching Hotkeys default: {missing_defaults}")
+
+        extra_defaults = []
+        for row in rows:
+            for chord in row.get("defaults") or []:
+                if KEYS.get(row["home"], {}).get(chord) != row["action"]:
+                    extra_defaults.append(f"{row['home']} {chord} -> {row['action']}")
+        self.assertEqual(extra_defaults, [], f"Hotkeys defaults missing from keys/vaultr-keys.json: {extra_defaults}")
+
+    def test_open_settings_row_matches_palette_entry(self):
+        rows = load_registry(KEYS, platform="linux")
+        row = next((r for r in rows if r["action"] == "mod.open:ob-settings"), None)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["title"], "Open settings")
+        self.assertEqual(row["group"], "Vaultr layout")
+        self.assertEqual(row["home"], "layout:vaultr")
+        self.assertEqual(row["defaults"], ["ctrl-,"])
+
+
 class CommandPaletteKey(unittest.TestCase):
     def test_ctrl_shift_p_in_the_layout_opens_the_switcher_in_command_mode(self):
         # Herdr's own palette stays one entry in this list ("Herdr command palette…" -> app.palette).
