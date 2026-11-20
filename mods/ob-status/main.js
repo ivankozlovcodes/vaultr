@@ -1,29 +1,29 @@
 // ob-status: the status bar of the obsidian layout (26 px, chrome, top hairline).
-// Right-aligned like Obsidian's, 11 px muted text, items 14 px apart; when the bar is narrow
-// items drop from the left: key hint · machine · folder · branch · agents by status · zoom.
-// The sub-agent count is the next block's (ob-feed).
+// Right-aligned agent attention overview, scanner error alert, and zoom indicator.
 //
-// Clicks: folder copies it; an agent count opens Agents; zoom resets the zoom.
+// Clicks: the agent overview opens Agents; zoom resets zoom.
 // Commands (ob-status.<cmd>): refresh, copy-cwd, agents, zoom-reset
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, machines, panes, terminals, run, nextCommand, settings, notify } from "herdr";
+import { agents, panes, spaces, terminals, run, nextCommand, settings, notify, shared } from "herdr";
 import {
-  S, tc, icon, statusMark, current, machineLabel, tilde, chordLabel, bindingFor, place, copyText,
-  agentAttention, attentionCounts, getDismissed, terminalsByAddress,
+  S, tc, icon, statusMark, normStatus, current, place, copyText,
+  mainAgents, placedTerminals, machineOf, machineLabel, ago, feed,
+  terminalsByAddress, agentAttention, attentionCounts, getDismissed,
+  normHidden, isMachineHidden, isSpaceHidden, isTabHidden, getHidden,
 } from "./kit.js";
 
-const ORDER = ["blocked", "done", "working", "idle"];
-const WORD = { blocked: "need you", done: "finished", working: "working", idle: "idle" };
-// Rough width of 11 px UI text (design px).
-const textW = (s) => Math.ceil(String(s ?? "").length * 6.1);
-// "~" for home folders: this computer's exactly, another machine's by the usual /home/<user> (or /root).
-const short = (path, machine) => (machine ? String(path).replace(/^(\/home\/[^/]+|\/root)(?=\/|$)/, "~") : tilde(path));
+const ORDER = ["blocked", "working", "done", "idle"];
+const LABEL = {
+  blocked: (n) => `${n} ${n === 1 ? "needs you" : "need you"}`,
+  working: (n) => `${n} working`,
+  done: (n) => `${n} done`,
+  idle: (n) => `${n} idle`,
+};
 
 export default class Status extends View {
   init(_p, cx) {
-    this.w = 0;
     cx.spawn(async (cx) => {
       for (;;) {
         const c = String(await nextCommand());
@@ -52,63 +52,70 @@ export default class Status extends View {
     notify({ title: "Copied path", body: path, level: "info", timeout: 1500 });
   }
 
-  render() {
+  render(_cx) {
     const t = tc();
-    const c = current();
+    const zoom = settings().zoom ?? 1;
+    const zoomPct = Math.round(zoom * 100);
+
+    // Filter counted agents using the same visible-agent rule as ob-agents so counts match 1:1.
+    const ps = panes();
     const tmap = terminalsByAddress(terminals());
     const dis = getDismissed();
-    const zoom = settings().zoom || 1;
-    // By attention (kit/attention.js): failed counts as "need you", a dismissed report as idle.
-    const counts = attentionCounts(agents().map((a) => agentAttention(a, tmap, dis)));
-    const m = c.machine ?? null;
-    const mstate = m ? machines().find((x) => x.name === m)?.layout : "ready";
-    const branch = c.pane?.branch ?? c.space?.branch ?? null;
-    const cwd = this.cwd();
-    const switchKey = bindingFor("mod.open:ob-switcher");
-    // The commands key: what the layout binds for the commands switcher, else Herdr's own palette.
-    const paletteKey = bindingFor("ob-tabs.switcher:commands") ?? bindingFor("app.palette");
-    const hint = [switchKey && `${chordLabel(switchKey)} switch`, paletteKey && `${chordLabel(paletteKey)} commands`].filter(Boolean).join("  ·  ");
+    const h = normHidden(shared("ob.hidden") ?? getHidden());
+    const spList = spaces();
+    const spMap = new Map(spList.map((s) => [s.id, s]));
+    const tbMap = new Map(spList.flatMap((s) => (s.tabs ?? []).map((tb) => [tb.id, { tab: tb, space: s }])));
+    const visibleStatuses = mainAgents(agents(), placedTerminals(ps))
+      .map((a) => ({ a, att: agentAttention(a, tmap, dis) }))
+      .filter(({ a, att }) => {
+        if (normStatus(att) === "blocked") return true;
+        const tabId = a.tab ?? ps.find((p) => p.pane === a.pane || (p.terminal && p.terminal === a.address))?.tab;
+        const match = tabId ? tbMap.get(tabId) : null;
+        const sp = match?.space ?? (a.space ? spMap.get(a.space) : null);
+        const tb = match?.tab;
+        const m = sp ? sp.machine : (a.machine ?? machineOf(a.address));
+        if (isMachineHidden(h, m)) return false;
+        if (isSpaceHidden(h, sp)) return false;
+        if (isTabHidden(h, tb, sp)) return false;
+        return true;
+      })
+      .map(({ att }) => att);
+    const counts = attentionCounts(visibleStatuses);
 
-    // Items right to left, each with its width; keep what fits.
-    const items = [];
-    const zoomPct = Math.round(zoom * 100);
-    if (zoomPct !== 100) items.push([textW(`${zoomPct}%`) + 4, h_flex().id("zoom").px(4).h(20).items_center().rounded(S.radius).cursor_pointer()
-      .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Zoom: click to reset to 100%")
-      .on_click(() => run("app.zoom_reset")).child(`${zoomPct}%`)]);
     const present = ORDER.filter((s) => counts[s] > 0);
-    if (present.length) {
-      const el = h_flex().id("agents").h(20).px(4).gap(10).items_center().rounded(S.radius).cursor_pointer()
+    const agentsEl = present.length > 0
+      ? h_flex().id("agents").h(20).px(6).gap(12).items_center().rounded(S.radius).cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .tooltip(present.map((s) => `${counts[s]} ${WORD[s]}`).join(", ") + " · open Agents")
+        .tooltip("Open Agents")
         .on_click(() => run("ob-tabs.open:ob-agents"))
-        .children(present.map((s) => h_flex().gap(4).items_center().when(s === "blocked", (e) => e.text_color(t.blocked))
-          .child(statusMark(s, 10)).child(String(counts[s]))));
-      items.push([present.reduce((n, s) => n + 14 + textW(counts[s]) + 10, 8), el]);
-    }
-    if (branch) items.push([Math.min(180, textW(branch)) + 18, h_flex().gap(5).items_center().max_w(180).tooltip(`Branch ${branch}`)
-      .child(icon("git-branch", S.iconXs)).child(div().min_w(0).truncate().child(branch))]);
-    if (cwd) items.push([Math.min(260, textW(short(cwd, m))) + 8, h_flex().id("cwd").h(20).px(4).max_w(260).items_center().rounded(S.radius).cursor_pointer()
-      .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(`${cwd} · click to copy`)
-      .on_click((_e, cx) => this.copyCwd(cx)).child(div().min_w(0).truncate().child(short(cwd, m)))]);
-    items.push([textW(machineLabel(m)) + 18 + (mstate !== "ready" ? 12 : 0), h_flex().gap(5).items_center()
-      .tooltip(m ? `On ${m}${mstate === "unavailable" ? " (unavailable)" : mstate === "loading" ? " (connecting)" : ""}` : "On this computer")
-      .child(icon(m ? "server" : "monitor", S.iconXs))
-      .child(machineLabel(m))
-      .when(mstate === "unavailable", (e) => e.child(div().size(6).rounded_full().bg(t.blocked)))
-      .when(mstate === "loading", (e) => e.child(statusMark("working", 10)))]);
-    if (hint) items.push([textW(hint), div().text_color(t.dim).child(hint)]);
+        .children(present.map((s) => h_flex().gap(5).items_center()
+          .when(s === "blocked", (e) => e.text_color(t.blocked).font_medium())
+          .when(s === "working", (e) => e.text_color(t.foreground))
+          .child(statusMark(s, 10))
+          .child(LABEL[s](counts[s]))))
+      : div().id("agents-empty").text_color(t.dim).cursor_pointer()
+        .on_click(() => run("ob-tabs.open:ob-agents"))
+        .child("0 active");
 
-    const avail = (this.w || 2000) - 24;
-    const keep = [];
-    let used = 0;
-    for (const [wd, el] of items) {
-      if (keep.length && used + wd + 14 > avail) break;
-      keep.push(el);
-      used += wd + 14;
+    const f = feed();
+    const bad = Object.entries(f?.machines ?? {}).filter(([, m]) => m && !m.ok);
+    const why = [
+      ...(f?.scriptError ? [f.scriptError] : []),
+      ...bad.map(([k, m]) => `${machineLabel(k === "local" ? null : k)}: ${m.error ?? "scan failed"}${m.stale && m.at ? ` (showing data from ${ago(m.at)} ago)` : ""}`),
+    ];
+
+    const items = [agentsEl];
+    if (why.length > 0) {
+      items.push(h_flex().id("feed-alert").flex_none().tooltip(why.join("\n")).child(icon("alert", S.iconXs, t.blocked)));
     }
+    if (zoomPct !== 100) {
+      items.push(h_flex().id("zoom").px(4).h(20).items_center().rounded(S.radius).cursor_pointer()
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Zoom: click to reset to 100%")
+        .on_click(() => run("app.zoom_reset")).child(`${zoomPct}%`));
+    }
+
     return h_flex().id("root").size_full().min_w(0).overflow_hidden().px(12).gap(14).items_center().justify_end().bg(t.chrome)
       .border_t(1).border_color(t.border).text_size(S.textXs).text_color(t.muted).whitespace_nowrap()
-      .on_size_change((s, cx) => { const w0 = s.width / (settings().zoom || 1); if (Math.abs(w0 - this.w) > 1) { this.w = w0; cx.notify(); } })
-      .children(keep.reverse());
+      .children(items);
   }
 }

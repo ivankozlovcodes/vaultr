@@ -24,7 +24,7 @@ The layout also uses Herdr's shipped `files` and `changes` mods.
 - **`ob-menu`**: Application popup menu with workspace actions, theme switcher, and layout controls.
 - **`ob-tabs`**: Obsidian-style tab bar supporting drag reordering, pinned tabs, daily notes, and split shortcuts.
 - **`ob-pane`**: Terminal and pane header with directory breadcrumbs, status indicators, and pane split/close buttons.
-- **`ob-status`**: Bottom status bar displaying active terminal details, agent statuses, word/char counts, and clock.
+- **`ob-status`**: Bottom status bar displaying the visible agent attention overview, feed scanner alerts, and zoom level.
 - **`ob-footer`**: Bottom toolbar in the left sidebar: the machine switcher, then help and a settings gear that opens `ob-settings`.
 
 ### Left Sidebar (Navigation & Sessions)

@@ -104,10 +104,7 @@
           "type": "row",
           "size": { "px": 26 },
           "resizable": false,
-          "children": [
-            { "id": "ob-status", "type": "block", "content": { "mod": "ob-status" } },
-            { "id": "ob-feed", "type": "block", "size": { "px": 210 }, "content": { "mod": "ob-feed", "props": { "role": "draw" } } }
-          ]
+          "children": [{ "id": "ob-status", "type": "block", "content": { "mod": "ob-status" } }]
         },
         { "id": "ob-feed-scan", "type": "block", "size": { "px": 0 }, "content": { "mod": "ob-feed", "props": { "role": "scan" } } }
       ]

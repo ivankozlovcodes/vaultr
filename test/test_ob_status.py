@@ -1,28 +1,40 @@
-"""mods/ob-status: the status row's key hints. main.js needs the app, so this reads its source (weak) next to
-keys/vaultr-keys.json."""
+"""mods/ob-status: the main-slot footer renders only the high-level agent overview."""
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
-import json
 import os
-import re
 import unittest
 
 ROOT = home_guard.ROOT
 MAIN = os.path.join(ROOT, "mods", "ob-status", "main.js")
-KEYS = os.path.join(ROOT, "keys", "vaultr-keys.json")
 
 
-class CommandsHint(unittest.TestCase):
-    """The "commands" hint names the key of the action the layout's commands key runs, not app.palette (which the
-    layout's ctrl-shift-p no longer runs), with app.palette only as the fallback."""
-    def test_the_hint_looks_up_what_the_commands_key_runs(self):
-        with open(KEYS, encoding="utf-8") as f:
-            action = json.load(f)["layout:vaultr"]["ctrl-shift-p"]
-        with open(MAIN, encoding="utf-8") as f:
-            src = f.read()
-        m = re.search(r"const paletteKey = (.+);", src)
-        self.assertIsNotNone(m)
-        self.assertTrue(m.group(1).startswith(f'bindingFor("{action}")'), m.group(1))
-        self.assertIn('bindingFor("app.palette")', m.group(1), "app.palette stays the fallback")
+def read_main():
+    with open(MAIN, encoding="utf-8") as f:
+        return f.read()
+
+
+class AgentOverview(unittest.TestCase):
+    def setUp(self):
+        self.src = read_main()
+
+    def test_renders_human_readable_overview_labels(self):
+        for label in ('"needs you"', '"need you"', " working", " done", " idle", '"0 active"'):
+            self.assertIn(label, self.src)
+
+    def test_filters_visible_agents_like_ob_agents_keeping_blocked(self):
+        for sym in (
+            "mainAgents(",
+            "placedTerminals(",
+            'normStatus(att) === "blocked"',
+            "isMachineHidden(",
+            "isSpaceHidden(",
+            "isTabHidden(",
+            "attentionCounts(",
+        ):
+            self.assertIn(sym, self.src)
+
+    def test_no_key_hint_or_repo_clutter(self):
+        for clutter in (" switch", " commands", "bindingFor", "chordLabel"):
+            self.assertNotIn(clutter, self.src)
 
 
 if __name__ == "__main__":

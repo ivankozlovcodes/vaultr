@@ -51,7 +51,7 @@ def ancestors(node, target, path=()):
 def hideable_ids():
     """Every node id kit/kit.js names (NODE), except the ones no toggle or Zen hides: the centre column, the tab
     bar and the tab area. ob-tabs' Zen and the side toggles hide only nodes named there (N = NODE)."""
-    with open(os.path.join(ROOT, "kit", "kit.js")) as f:
+    with open(os.path.join(ROOT, "kit", "kit.js"), encoding="utf-8") as f:
         src = f.read()
     block = re.search(r"export const NODE = \{(.*?)\};", src, re.S).group(1)
     return set(re.findall(r'"(ob-[a-z-]+)"', block)) - {"ob-center", "ob-tabbar", "ob-main"}
@@ -60,7 +60,7 @@ def hideable_ids():
 class Layout(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(LAYOUT) as f:
+        with open(LAYOUT, encoding="utf-8") as f:
             cls.layout = json.load(f)
 
     def test_parses_and_has_its_preview(self):
@@ -120,15 +120,12 @@ class Layout(unittest.TestCase):
         self.assertIsNotNone(chain)
         self.assertEqual(sorted(set(chain + [scanners[0]["id"]]) & hideable_ids()), [])
 
-    def test_feed_draw_copy_is_in_the_status_row_and_does_not_scan(self):
-        draws = [n for n in walk(self.layout) if (n.get("content") or {}).get("mod") == "ob-feed"
-                 and (n.get("content") or {}).get("props", {}).get("role") == "draw"]
-        self.assertEqual([d["id"] for d in draws], ["ob-feed"])
-        self.assertIn("ob-feed", [c["id"] for c in find(self.layout, "ob-statusrow")["children"]])
-        # Every ob-feed block says its role, so an unnamed copy never scans next to the scanner.
+    def test_status_row_only_mounts_status_and_feed_only_scans(self):
+        self.assertEqual([c["id"] for c in find(self.layout, "ob-statusrow")["children"]], ["ob-status"])
+        # Only the 0 px scanner copy of ob-feed remains mounted in vaultr.json.
         roles = [(n.get("content") or {}).get("props", {}).get("role") for n in walk(self.layout)
                  if (n.get("content") or {}).get("mod") == "ob-feed"]
-        self.assertEqual(sorted(roles), ["draw", "scan"])
+        self.assertEqual(roles, ["scan"])
 
     def test_side_columns_divide_their_two_halves_alike(self):
         # The node holding a side column's two halves (top and bottom stacks) draws a divider, left and right alike,
