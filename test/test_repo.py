@@ -10,6 +10,7 @@ import socket
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 ROOT = home_guard.ROOT
@@ -199,21 +200,94 @@ class Repo(unittest.TestCase):
         with mock.patch("pwd.getpwuid", return_value=entry), mock.patch("shutil.which", return_value=None):
             self.assertNotIn("runner", personal_words())
 
+    @staticmethod
+    def _layout_ids():
+        with open(os.path.join(ROOT, "layouts", "vaultr.json"), encoding="utf-8") as f:
+            root = json.load(f)
+        node_ids = set()
+        stack_children = set()
+
+        def walk(node):
+            if isinstance(node, dict):
+                if "id" in node:
+                    node_ids.add(node["id"])
+                if node.get("type") == "stack":
+                    for child in node.get("children") or []:
+                        if isinstance(child, dict) and "id" in child:
+                            stack_children.add(child["id"])
+                for child in node.get("children") or []:
+                    walk(child)
+
+        walk(root)
+        return node_ids, stack_children
+
+    @staticmethod
+    def _target_error(command, node_ids, stack_children, mods):
+        head, _, arg = command.partition(":")
+        verb = head.split(".")[0]
+        if verb.startswith("ob-") and verb not in mods:
+            return f"{command}: unknown mod {verb}"
+        if head == "mod.open" and arg not in mods:
+            return f"{command}: unknown mod {arg}"
+        if head in ("ob-tabs.open", "ob-tabs.toggle"):
+            target = arg.split("@", 1)[0]
+            if target not in stack_children:
+                return f"{command}: {target!r} is not a stack child id in layouts/vaultr.json"
+        if head == "layout.toggle" and arg not in node_ids:
+            return f"{command}: {arg!r} is not a node id in layouts/vaultr.json"
+        return None
+
     def test_keys_name_mods_that_exist(self):
+        node_ids, stack_children = self._layout_ids()
         for ctx, binds in KEYS.items():
             self.assertIsInstance(binds, dict, ctx)
             if ctx.startswith("mod:"):
                 self.assertIn(ctx[4:], ALL_MODS, ctx)
             for key, command in binds.items():
                 with self.subTest(key=key, command=command):
-                    head, _, arg = command.partition(":")
-                    verb = head.split(".")[0]
-                    if verb.startswith("ob-"):
-                        self.assertIn(verb, ALL_MODS)
-                    if head == "mod.open":
-                        self.assertIn(arg, ALL_MODS)
-                    if head.split(".")[0] == "ob-tabs" and head.split(".")[1:] and head.split(".")[1] in ("open", "toggle"):
-                        self.assertIn(arg.split("@")[0], ALL_MODS)
+                    self.assertIsNone(self._target_error(command, node_ids, stack_children, ALL_MODS))
+
+    def test_view_and_layout_target_rule_accepts_non_ob_views_and_rejects_unknown_ids(self):
+        node_ids, stack_children = self._layout_ids()
+        for view_id in ("ob-notes", "ob-files", "ob-changes", "ob-insights"):
+            self.assertIsNone(self._target_error(f"ob-tabs.open:{view_id}", node_ids, stack_children, ALL_MODS))
+            self.assertIsNone(self._target_error(f"ob-tabs.toggle:{view_id}@x", node_ids, stack_children, ALL_MODS))
+        self.assertIsNotNone(self._target_error("ob-tabs.open:ob-missing", node_ids, stack_children, ALL_MODS))
+        self.assertIsNotNone(self._target_error("ob-tabs.toggle:ob-missing", node_ids, stack_children, ALL_MODS))
+        self.assertIsNotNone(self._target_error("layout.toggle:ob-missing", node_ids, stack_children, ALL_MODS))
+        self.assertIsNotNone(self._target_error("mod.open:ob-missing", node_ids, stack_children, ALL_MODS))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_hotkeys_ob_and_palette_commands_name_valid_targets(self):
+        node_ids, stack_children = self._layout_ids()
+        with tempfile.TemporaryDirectory(prefix="ob-targets-") as folder:
+            src_dir = os.path.join(ROOT, "mods", "ob-settings")
+            for name in os.listdir(src_dir):
+                if name.endswith(".js"):
+                    txt = Path(src_dir, name).read_text(encoding="utf-8").replace('from "herdr"', 'from "./herdr.js"')
+                    Path(folder, name).write_text(txt, encoding="utf-8")
+            Path(folder, "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            Path(folder, "herdr.js").write_text(
+                'export const keys = () => [];\nexport const commands = () => [];\n'
+                'export const window = () => ({ platform: "linux" });\n',
+                encoding="utf-8",
+            )
+            code = (
+                f'import {{ registry }} from "{Path(folder, "registry.js").as_uri()}";\n'
+                f'import {{ VAULTR_COMMANDS }} from "{Path(ROOT, "mods", "ob-switcher", "commands.js").as_uri()}";\n'
+                'const ob = registry().filter((r) => r.group === "Vaultr layout").map((r) => r.action);\n'
+                'const pal = VAULTR_COMMANDS.map((c) => c.route);\n'
+                'process.stdout.write(JSON.stringify({ ob, pal }));\n'
+            )
+            res = subprocess.run(["node", "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            data = json.loads(res.stdout)
+        self.assertTrue(data["ob"])
+        self.assertTrue(data["pal"])
+        for source, cmds in (("OB", data["ob"]), ("VAULTR_COMMANDS", data["pal"])):
+            for command in cmds:
+                with self.subTest(source=source, command=command):
+                    self.assertIsNone(self._target_error(command, node_ids, stack_children, ALL_MODS))
 
     def test_install_merges_every_keys_section(self):
         with tempfile.TemporaryDirectory(dir=home_guard.TMP) as base:
