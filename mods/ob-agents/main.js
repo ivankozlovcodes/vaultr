@@ -6,21 +6,27 @@
 // setAgentOrder follows this list.
 //
 // Commands (herdr-app do ob-agents.<cmd>): focus, sort:<priority|grouped>, next, prev, open,
-// menu[:<address>], pin[:<address>], bookmark[:<address>], fold:<address|groupId>.
+// menu[:<address>], pin[:<address>], bookmark[:<address>], fold:<address|groupId>, dismiss[:<address>].
+//
+// Dismiss: a "Needs you" agent (blocked, or ended with an error) can be dismissed; it then counts as idle here and in
+// every attention count until its status moves on (kit/attention.js). The same command restores it.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
 import {
-  agents, panes, spaces, focused, run, theme, props, nextCommand, settings, setAgentOrder, shared,
+  agents, panes, spaces, terminals, focused, run, theme, props, nextCommand, settings, setAgentOrder, shared,
 } from "herdr";
 import {
   S, icon, programIcon, iconButton, treeRow, sectionHeader, emptyState, openMenu, statusMark,
   needsYou, normStatus, takeFocus, machineOf, isBookmarked, toggleBookmark, mainAgents, placedTerminals,
   cleanTitle, sessionTitleOf,
   normHidden, isMachineHidden, isSpaceHidden, isTabHidden, getHidden,
+  agentAttention, attentionRank, attentionCounts, isNeedsYou, isDismissed, dismissStamp, getDismissed, setDismissed,
+  pruneDismissedNow, terminalsByAddress,
 } from "./kit.js";
 
-const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
+// Sections by kit attentionRank: 4 Needs you, 3 Done, 2 Working, 1 Idle.
+const IDLE = 1;
 const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working", 1: null };
 const SORTS = [["priority", "Priority", "clock"], ["grouped", "Grouped by space", "layers"]];
@@ -69,7 +75,7 @@ export default class Agents extends View {
     this.kbd = false;
     this.hovered = null;
     this.order = [];
-    cx.timer.every(30000, (cx) => cx.notify()); // durations
+    cx.timer.every(30000, (cx) => { this.prune(); cx.notify(); }); // durations, stale dismissals
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -91,6 +97,7 @@ export default class Agents extends View {
       case "menu": if (addr) this.menu(addr); break;
       case "pin": { const a = agents().find((x) => x.address === addr); if (a) run("terminal.pin", { terminal: a.address, pinned: !a.pinned }); break; }
       case "fold": if (arg) this.toggleFold(arg); break;
+      case "dismiss": if (addr) this.toggleDismiss(addr); break;
       case "bookmark": {
         const a = agents().find((x) => x.address === addr);
         if (a) toggleBookmark({ kind: "terminal", id: a.address, label: `${a.space_name ?? ""} · ${a.program?.name ?? a.address}`, machine: machineOf(a.address) });
@@ -112,12 +119,24 @@ export default class Agents extends View {
     const a = agents().find((x) => x.address === addr);
     if (a) run("pane.focus", { pane: a.pane });
   }
+  // Dismiss the agent's current "Needs you" report, or restore it while that report lasts.
+  toggleDismiss(addr) {
+    const a = agents().find((x) => x.address === addr);
+    if (!a) return;
+    const t = terminalsByAddress(terminals()).get(addr);
+    if (isNeedsYou(a.status)) setDismissed(addr, !isDismissed(getDismissed(), addr, a.status, t), a.status, t);
+  }
+  // Drop dismissals of agents that are gone or report something new.
+  prune() {
+    const tmap = terminalsByAddress(terminals());
+    pruneDismissedNow(new Map(agents().map((a) => [a.address, dismissStamp(a.status, tmap.get(a.address))])));
+  }
 
-  // Each agent's last state and when it changed (done and idle count as one).
+  // Each agent's last reported state and when it changed (done and idle count as one; a dismissal is no change).
   track(list, now) {
     let dirty = false;
     for (const a of list) {
-      const s = a.status === "done" ? "idle" : a.status;
+      const s = a.real === "done" ? "idle" : a.real;
       if (this.changed[a.address]?.s === s) continue;
       this.changed[a.address] = { s, at: now };
       dirty = true;
@@ -132,17 +151,19 @@ export default class Agents extends View {
     const a = agents().find((x) => x.address === addr);
     if (!a) return;
     const bm = isBookmarked("terminal", addr);
+    const dismissed = isDismissed(getDismissed(), addr, a.status, terminalsByAddress(terminals()).get(addr));
     openMenu([
       { label: "Focus", icon: "locate", command: "pane.focus", args: { pane: a.pane } },
       { label: a.pinned ? "Unpin" : "Pin to the top", icon: a.pinned ? "pin-off" : "pin", command: "terminal.pin", args: { terminal: addr, pinned: !a.pinned } },
       { label: "Peek", icon: "eye", command: "terminal.peek", args: { terminal: addr } },
+      isNeedsYou(a.status) ? { label: dismissed ? "Restore" : "Dismiss", icon: dismissed ? "rotate-ccw" : "check", command: `ob-agents.dismiss:${addr}` } : null,
       { separator: true },
       { label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${addr}` },
       { label: "Show subagents", icon: "subagents", command: `ob-tabs.open:ob-outline@term:${addr}` },
       { label: "Reveal in Sessions", icon: "sessions", command: "ob-tabs.open:ob-sessions@reveal", disabled: !a.focused },
       { label: bm ? "Remove bookmark" : "Bookmark session", icon: bm ? "bookmark" : "bookmark-plus", command: `ob-agents.bookmark:${addr}` },
       { label: "Copy address", icon: "copy", copy: addr },
-    ].filter((x) => !(x.disabled && x.label === "Reveal in Sessions")), { width: 230, title: a.space_name || a.address });
+    ].filter((x) => x && !(x.disabled && x.label === "Reveal in Sessions")), { width: 230, title: a.space_name || a.address });
   }
 
   status(t, st, compact, full = true) {
@@ -158,7 +179,10 @@ export default class Agents extends View {
     const compact = this.w < 220;
     const byPriority = this.sort === "priority";
     const ps = panes();
-    let list = mainAgents(agents(), placedTerminals(ps));
+    // status: for attention (a dismissed report is idle); real: what the agent reports.
+    const tmap = terminalsByAddress(terminals());
+    const dis = getDismissed();
+    let list = mainAgents(agents(), placedTerminals(ps)).map((a) => ({ ...a, status: agentAttention(a, tmap, dis), real: a.status }));
     const h = normHidden(shared("ob.hidden") ?? getHidden());
     const spList = spaces();
     const spMap = new Map(spList.map((s) => [s.id, s]));
@@ -176,7 +200,7 @@ export default class Agents extends View {
       return true;
     });
     this.track(list, now);
-    const urgency = new Map(list.map((a) => [a.address, RANK[a.status] ?? 0]));
+    const urgency = new Map(list.map((a) => [a.address, attentionRank(a.status)]));
     const since = (a) => this.changed[a.address]?.at ?? 0;
     if (byPriority) list = [...list].sort((x, y) => urgency.get(y.address) - urgency.get(x.address) || since(y) - since(x) || y.seq - x.seq);
     const pinned = list.filter((a) => a.pinned);
@@ -198,7 +222,7 @@ export default class Agents extends View {
     // Groups: pinned, then priority sections or spaces (neighbours in agents() share a space).
     const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
     for (const a of rest) {
-      const r = urgency.get(a.address) || RANK.idle;
+      const r = urgency.get(a.address) || IDLE;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
       if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
       else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "Space", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
@@ -210,7 +234,7 @@ export default class Agents extends View {
     const f = focused();
     for (const g of groups) {
       const open = !this.folded.has(g.id);
-      const top = g.members.reduce((m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m), null);
+      const top = g.members.reduce((m, a) => (attentionRank(a.status) > attentionRank(m) ? a.status : m), null);
       rows.push(sectionHeader({
         id: `grp-${g.id}`, title: g.label.toUpperCase(), count: g.members.length, open, color: g.status ? t[g.status] : undefined,
         onToggle: (_e, cx) => { this.toggleFold(g.id); cx.notify(); },
@@ -226,6 +250,10 @@ export default class Agents extends View {
         const when = since(a);
         const hov = this.hovered === a.address;
         const right = [];
+        const dismissed = a.status !== a.real && isNeedsYou(a.real);
+        if (hov && isNeedsYou(a.real)) right.push(iconButton({ id: `dis-${a.address}`, icon: dismissed ? "rotate-ccw" : "check", size: 20, iconSize: S.iconXs,
+          tip: dismissed ? "Restore: flag it as needing you again" : "Dismiss: seen, stop flagging it until its status changes",
+          onClick: (_e, cx) => { this.toggleDismiss(a.address); this.hovered = null; cx.notify(); } }));
         if (hov) right.push(iconButton({ id: `pin-${a.address}`, icon: a.pinned ? "pin-off" : "pin", size: 20, iconSize: S.iconXs, tip: a.pinned ? "Unpin" : "Pin to the top",
           onClick: (_e, cx) => { run("terminal.pin", { terminal: a.address, pinned: !a.pinned }); this.hovered = null; cx.notify(); } }));
         else if (when && !compact) right.push(div().flex_none().text_size(S.textXs).text_color(t.dim).child(duration(now - when)));
@@ -256,7 +284,8 @@ export default class Agents extends View {
         .child(v_flex().id("list").size_full().px(4).pb(10).overflow_y_scroll().track_scroll(this.scroll).children(rows))
         .child(Scrollbar.vertical("list").absolute().inset_0());
     const sortInfo = SORTS.find(([id]) => id === this.sort) ?? SORTS[0];
-    const n = (s) => list.filter((a) => a.status === s).length;
+    const counts = attentionCounts(list.map((a) => a.status));
+    const n = (s) => counts[s] ?? 0;
     return v_flex().id("root").track_focus(this.handle).size_full().min_h(0).bg(t.chrome).text_size(S.text)
       .on_size_change((s, cx) => { const w = s.width / (settings().zoom ?? 1); if (Math.abs(w - this.w) > 1) { this.w = w; cx.notify(); } })
       .on_key_down((e, cx) => {
