@@ -1,7 +1,7 @@
 # ob scan: pi-subagents runs + Claude Code subagents on THIS machine, as one JSON line.
 # Run by ob-feed through exec("python3", ["-c", <this file's text>, <options json>], { on: machine }).
 # Read-only: it only reads /proc (on macOS: ps and lsof), ~/.pi, ~/.claude and the pi-subagents temp folder.
-# Output: see SPEC.md section 7 ("scan JSON"). Never raises: errors go into "errors".
+# Output: one JSON object {v,host,uid,now,root,runs,terms,touches,errors,ms} (consumed by mods/ob-feed/main.js). Never raises: errors go into "errors".
 import json, os, re, sys, time, glob, tempfile, socket, datetime, subprocess
 
 T0 = time.time()

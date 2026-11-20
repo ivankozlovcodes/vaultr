@@ -1,5 +1,5 @@
 // ob-tabs: Obsidian's tab bar for the center column, and the ROUTER of the obsidian layout
-// (always shown, so global actions reach views that may be hidden). SPEC.md 5.3 and 8.A2.
+// (always shown, so global actions reach views that may be hidden).
 //
 // Bar (40 px, chrome, bottom hairline; empty space drags the window):
 //   [open left sidebar, only while it is hidden] [tabs] [+] [drag space] [tab list] [right sidebar]

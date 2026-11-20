@@ -1,9 +1,9 @@
 // obc.js: helpers shared by package C's mods (ob-outline, ob-graph, ob-props).
-// One copy in each of those folders (mods can't import across folders): change all three together.
+// MASTER COPY: kit/obc.js. kit/sync.sh copies it into mods/ob-{graph,outline,props}/obc.js; never edit a mod's copy.
 // Kit request: move these into kit.js (they only use kit and herdr).
 
 import { terminals, agents, panes, spaces, run, openOverlay, shared, setShared, focused, notify } from "herdr";
-import { machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, feed, liveRecords, base, followTarget } from "./kit.js";
+import { MOD, machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, feed, liveRecords, base, followTarget } from "./kit.js";
 
 export const MONO = "JetBrains Mono";
 
@@ -32,15 +32,16 @@ export function sessionOf(address, ps = panes(), sp = spaces()) {
 }
 
 // The session the right sidebar is about: the pinned one (ob.inspect) while it is live, else the last focused
-// main-window pane that holds an agent (kit/follow_target.js). The last one this panel followed is kept in shared "ob.follow".
+// main-window pane that holds an agent or terminal (kit/follow_target.js). Last followed per panel is in shared "ob.follow".
 export function inspected() {
   const f = focused();
   const focus = f ? { pane: f.pane, terminal: f.terminal, agent: Boolean(f.terminal && agents().some((a) => a.address === f.terminal)) } : null;
   const pin = shared("ob.inspect");
   const follow = shared("ob.follow") ?? {};
-  const last = follow["subagents"] ?? null;
-  const r = followTarget({ pinned: pin?.terminal ?? null, focused: focus, last, terminals: terminals(), wantAgent: true });
-  if (r.last !== last) setShared("ob.follow", { ...follow, subagents: r.last });
+  const slot = MOD === "ob-props" ? "props" : "subagents";
+  const last = follow[slot] ?? null;
+  const r = followTarget({ pinned: pin?.terminal ?? null, focused: focus, last, terminals: terminals(), wantAgent: MOD !== "ob-props" });
+  if (r.last !== last) setShared("ob.follow", { ...follow, [slot]: r.last });
   return { address: r.terminal, pinned: Boolean(pin?.terminal) && r.terminal === pin.terminal };
 }
 export function inspect(address) { setShared("ob.inspect", address ? { terminal: address, at: Date.now() } : null); }

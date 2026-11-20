@@ -1,4 +1,4 @@
-// ob-footer: the left sidebar's bottom row, Obsidian's vault switcher (40 px). SPEC.md 8.A5.
+// ob-footer: the left sidebar's bottom row, Obsidian's vault switcher (40 px).
 // Left: the focused space's machine ("This computer") with a chevron; click opens the machine
 // menu: each machine with its connection dot (click: go to its first space) and "New space there",
 // then Add machine and Machines settings. Right: help, and the settings gear (opens ob-settings).

@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,6 +19,8 @@ FILTER = Path(MOD, "filter.js")
 TOUCH = Path(MOD, "touch_shape.js")
 MAIN = Path(MOD, "main.js")
 SHAPE = Path(MOD, "shape.js")
+OBC = Path(MOD, "obc.js")
+FOLLOW = Path(ROOT, "kit", "follow_target.js")
 VENDOR = Path(MOD, "vendor")
 NODE = shutil.which("node")
 W, H = 480, 400
@@ -1593,6 +1596,86 @@ class EmptyCopy(unittest.TestCase):
             body = run("console.log(JSON.stringify(S.emptyCopy(P.mode).body));", {"mode": mode}, FILTER)
             self.assertNotIn("tab", body.lower(), mode)
             self.assertIn("agent", body, mode) if mode == "global" else None
+
+
+def run_obc(body):
+    """Import mods/ob-graph/obc.js in node with real followTarget and mutable herdr/kit stubs, run `body`, return JSON."""
+    if not NODE:
+        raise unittest.SkipTest("node is not installed")
+    with tempfile.TemporaryDirectory(prefix="ob-graph-obc-") as folder:
+        src = OBC.read_text(encoding="utf-8").replace('from "herdr"', 'from "./herdr.js"')
+        Path(folder, "obc.js").write_text(src, encoding="utf-8")
+        Path(folder, "herdr.js").write_text(
+            "const st = { terminals: [], agents: [], panes: [], spaces: [], focused: null, shared: {} };\n"
+            "export const __set = (patch) => Object.assign(st, patch);\n"
+            "export const terminals = () => st.terminals;\n"
+            "export const agents = () => st.agents;\n"
+            "export const panes = () => st.panes;\n"
+            "export const spaces = () => st.spaces;\n"
+            "export const focused = () => st.focused;\n"
+            "export const shared = (k) => st.shared[k];\n"
+            "export const setShared = (k, v) => { st.shared[k] = v; };\n"
+            "export const run = () => null;\n"
+            "export const openOverlay = () => null;\n"
+            "export const notify = () => null;\n",
+            encoding="utf-8",
+        )
+        kit = ["machineOf", "tabLabel", "paneName", "dur", "ago", "fmtTokens", "fmtCost", "normStatus", "copyText", "base"]
+        Path(folder, "kit.js").write_text(
+            f"export {{ followTarget }} from {json.dumps(FOLLOW.as_uri())};\n"
+            'export const MOD = "ob-graph";\n'
+            "const st = { feed: null, records: {} };\n"
+            "export const __setKit = (patch) => Object.assign(st, patch);\n"
+            + "".join(f"export const {n} = () => null;\n" for n in kit)
+            + "export const feed = () => st.feed;\n"
+            + "export const liveRecords = () => new Map(Object.entries(st.records));\n",
+            encoding="utf-8",
+        )
+        code = (
+            f"{NO_TIMERS}\n"
+            f'import * as H from "{Path(folder, "herdr.js").as_uri()}";\n'
+            f'import * as K from "{Path(folder, "kit.js").as_uri()}";\n'
+            f'import * as O from "{Path(folder, "obc.js").as_uri()}";\n'
+            f"console.log(JSON.stringify((() => {{ {body} }})()));"
+        )
+        out = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+        if out.returncode != 0:
+            raise AssertionError(out.stderr.strip() or "node failed")
+        return json.loads(out.stdout)
+
+
+class GraphObc(unittest.TestCase):
+    """mods/ob-graph/obc.js follow and sub-agent liveness rules match ob-outline."""
+
+    def test_inspected_keeps_last_agent_when_focus_moves_to_side_panel(self):
+        r = run_obc("""
+            H.__set({
+              agents: [{ address: "t2" }],
+              terminals: [{ address: "t2", state: "live" }, { address: "t4", state: "live" }],
+              focused: { pane: "p1", terminal: "t2" },
+            });
+            const first = O.inspected();
+            const follow = H.shared("ob.follow") ?? null;
+            H.__set({ focused: { pane: "side", terminal: null } });
+            const sidePanel = O.inspected();
+            H.__set({ focused: { pane: "p2", terminal: "t4" } });
+            const shellPane = O.inspected();
+            return { first, follow, sidePanel, shellPane };
+        """)
+        self.assertEqual(r["first"], {"address": "t2", "pinned": False})
+        self.assertEqual(r["follow"], {"subagents": "t2"})
+        self.assertEqual(r["sidePanel"], {"address": "t2", "pinned": False})
+        self.assertEqual(r["shellPane"], {"address": "t2", "pinned": False})
+
+    def test_claude_all_keeps_live_scan_entry_when_record_is_not_working(self):
+        r = run_obc("""
+            K.__setKit({
+              feed: { claude: [{ key: "local:a1", machine: null, parent: "t2", id: "a1", type: "Explore", desc: "look", live: true }] },
+              records: { t2: { a1: { state: "done" } } },
+            });
+            return O.claudeAll().map((c) => ({ id: c.id, live: c.live, state: c.state }));
+        """)
+        self.assertEqual(r, [{"id": "a1", "live": True, "state": "done"}])
 
 
 class OpenArtifact(unittest.TestCase):

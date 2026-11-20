@@ -1,4 +1,4 @@
-// registry.js: every command the hotkeys screen lists (SPEC 6.3). An entry:
+// registry.js: every command the hotkeys screen lists. An entry:
 //   { action (the exact keys.json string), title, group, home (the keys.json section it belongs to),
 //     defaults (its chords in `home`), obsidian? (the Obsidian command with the same key), when? }
 // Built from fixed tables plus the app's live commands() and keys() (rows for anything bound in
@@ -11,7 +11,7 @@ import { chordForPlatform } from "./platform_keys.js";
 export const LAYOUT_SCOPE = DEFAULT_SCOPE;
 export const SESSIONS_SCOPE = "mod:ob-sessions";
 
-// The Obsidian layout's own commands (SPEC 6.1 order), with the Obsidian command each key mirrors
+// The Obsidian layout's own commands, with the Obsidian command each key mirrors
 // (the person's .obsidian/hotkeys.json overrides marked "yours").
 const OB = [
   ["mod.open:ob-switcher", "Open quick switcher", ["ctrl-p"], "Quick switcher: Open quick switcher (yours: Ctrl+P)"],

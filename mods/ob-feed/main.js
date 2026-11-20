@@ -1,6 +1,6 @@
 // ob-feed: the ONE poller of sub-agent data. Runs scan_pi.py on every reachable machine (one exec per
 // machine at a time: exec("python3", ["-c", script, opts], { on })), merges the results and publishes
-// shared "ob.subagents" (SPEC.md 7.3) only when its content changed. Lives in the always-shown status
+// shared "ob.subagents" only when its content changed. Lives in the always-shown status
 // row, so it is alive whenever the layout is. Draws the status-bar segment: live sub-agent count, a
 // warning per machine that couldn't be scanned (tooltip says why); click opens Outline.
 //
@@ -11,7 +11,7 @@
 //                           laid out like <tmp>/pi-subagents-uid-N/async-subagent-runs). In memory only:
 //                           gone on reload. `fixture:` (empty) turns it off.
 //
-// Cadence (SPEC 7.5): ticks every second; a machine is scanned the first time, on refresh, when any
+// Cadence: ticks every second; a machine is scanned the first time, on refresh, when any
 // agent status or live sub-agent record changes, 2 s after its last scan while it has live runs or
 // records, 15 s otherwise, 60 s after a failure. Unavailable machines are not asked; their last
 // result is kept and marked stale. Publishing compares a signature without timestamps, so a quiet
@@ -177,7 +177,7 @@ export default class Feed extends View {
     });
   }
 
-  // Merge every machine's scan into the shared payload (SPEC 7.3).
+  // Merge every machine's scan into the shared "ob.subagents" payload.
   publish(cx) {
     const now = Date.now();
     if (now - this.pubAt < MIN_PUBLISH) {

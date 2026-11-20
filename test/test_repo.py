@@ -120,6 +120,10 @@ class Repo(unittest.TestCase):
                     with open(os.path.join(ROOT, "kit", "icons", name), "rb") as a, \
                             open(os.path.join(MODS, m, "icons", name), "rb") as b:
                         self.assertEqual(a.read(), b.read(), f"icons/{name}")
+        for m in ("ob-graph", "ob-outline", "ob-props"):
+            with open(os.path.join(ROOT, "kit", "obc.js"), "rb") as a, \
+                    open(os.path.join(MODS, m, "obc.js"), "rb") as b:
+                self.assertEqual(a.read(), b.read(), f"{m}/obc.js: run kit/sync.sh; never edit a mod's copy")
         with open(os.path.join(ROOT, "kit", "scan_pi.py"), "rb") as a, \
                 open(os.path.join(MODS, "ob-feed", "scan_pi.py"), "rb") as b:
             self.assertEqual(a.read(), b.read(), "ob-feed/scan_pi.py")
@@ -230,6 +234,33 @@ class Repo(unittest.TestCase):
         for rel in paths:
             with self.subTest(path=rel):
                 self.assertTrue(os.path.exists(os.path.join(ROOT, rel)), f"missing {rel} named in NOTICE")
+
+    def test_no_dangling_spec_or_architect_references(self):
+        pat = rb"SPEC\.md|SPEC[ ]section|\bSPEC\s+(?:[0-9]|U4)|Ask[ ]the[ ]architect|\$[S]/"
+        bad = []
+        for path in tracked():
+            if path.endswith((".png", ".jpg", ".gif", ".ico", ".woff", ".woff2", ".ttf")):
+                continue
+            with open(path, "rb") as f:
+                data = f.read()
+            for m in re.finditer(pat, data):
+                bad.append(f"{os.path.relpath(path, ROOT)}: {m.group(0).decode(errors='replace')}")
+        self.assertEqual(bad, [])
+
+    def test_every_on_mouse_down_names_its_button(self):
+        with self.subTest("no prototype patch"):
+            self.assertNotIn("__patched_mouse_down", read("kit/kit.js"))
+        pat = re.compile(r"""\.on_mouse_down\(\s*(?!(?:"left"|"right"|"middle"|'left'|'right'|'middle')\s*,)""")
+        bad = []
+        for path in suffix(tracked(), ".js", ".mjs"):
+            rel = os.path.relpath(path, ROOT)
+            with open(path, encoding="utf-8") as f:
+                src = f.read()
+            for m in pat.finditer(src):
+                lineno = src.count("\n", 0, m.start()) + 1
+                bad.append(f"{rel}:{lineno}")
+        with self.subTest("explicit button"):
+            self.assertEqual(bad, [])
 
 
 if __name__ == "__main__":
