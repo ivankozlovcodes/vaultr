@@ -32,6 +32,9 @@ export { tickerChips, tickerAction, TICKER_MAX } from "./ticker.js";
 // Pure follow rule (kit/follow_target.js): which terminal the right-hand panels show.
 export { followTarget } from "./follow_target.js";
 
+// Pure macOS traffic-light inset rule (kit/lights.js): left padding for top-left chrome bars.
+export { lightsLeftPad, paneLightsLeftPad } from "./lights.js";
+
 // Pure hidden rules and shared state (kit/hidden.js): hidden machines, spaces, tabs.
 export {
   mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden,

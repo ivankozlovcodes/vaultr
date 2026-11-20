@@ -31,7 +31,7 @@ import { detachItem } from "./detach.js";
 import {
   S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, stackOf, isShown, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
-  normHidden, isTabHidden, isSpaceHidden, patchHidden, updateHidden,
+  normHidden, isTabHidden, isSpaceHidden, patchHidden, updateHidden, lightsLeftPad,
 } from "./kit.js";
 
 const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
@@ -402,10 +402,14 @@ export default class Tabs extends View {
     const c0 = current();
     const space = c0.space;
     const ps = panes();
-    const leftHidden = Boolean(findNode(root, NODE.left)?.hidden);
+    const leftNode = findNode(root, NODE.left);
+    const leftHidden = Boolean(leftNode?.hidden);
     const rightHidden = Boolean(findNode(root, NODE.right)?.hidden);
     const winButtons = rightHidden && windowButtonsOn();
     const w = appWindow();
+    const zoom = settings().zoom || 1;
+    const leftWidth = leftHidden ? 0 : (leftNode?.size?.px ?? 300);
+    const leftPad = lightsLeftPad(8, w, root, zoom, leftWidth);
     const all = space?.tabs ?? [];
     const h = normHidden(shared("ob.hidden"));
     // Hidden tabs live in Sessions; the active one always shows (selecting a hidden tab brings it back).
@@ -413,7 +417,7 @@ export default class Tabs extends View {
     this.anyWorking = tabs.some((x) => x.status === "working");
 
     // Room for tabs: the bar minus its buttons and a strip of drag space.
-    const fixed = 8 + 6 + (leftHidden ? 30 : 0) + 30 /* + */ + 48 /* drag */ + 30 /* list */ + 30 /* right */ + (winButtons ? 90 : 0);
+    const fixed = leftPad + 6 + (leftHidden ? 30 : 0) + 30 /* + */ + 48 /* drag */ + 30 /* list */ + 30 /* right */ + (winButtons ? 90 : 0);
     const avail = Math.max(TAB_MIN, (this.w || 1200) - fixed);
     const fit = Math.max(1, Math.floor(avail / TAB_MIN));
     const over = tabs.length > fit;
@@ -488,7 +492,7 @@ export default class Tabs extends View {
           .when(pressedIdx < i, (l) => l.right(0)).when(pressedIdx > i, (l) => l.left(0))));
     };
 
-    return h_flex().id("root").relative().size_full().min_w(0).pl(8).pr(6).gap(2).items_end().bg(t.chrome)
+    return h_flex().id("root").relative().size_full().min_w(0).pl(leftPad).pr(6).gap(2).items_end().bg(t.chrome)
       .on_size_change((s, cx) => { const w0 = s.width / (settings().zoom || 1); if (Math.abs(w0 - this.w) > 1) { this.w = w0; cx.notify(); } })
       .on_mouse_up("left", (_e, cx) => { if (this.pressed) { this.pressed = null; this.over = null; cx.notify(); } })
       .on_hover((h, cx) => { if (!h && (this.hovered || this.pressed)) { this.hovered = null; this.pressed = null; this.over = null; cx.notify(); } })

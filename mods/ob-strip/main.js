@@ -12,7 +12,7 @@ import { h_flex } from "gpui-base";
 import { layout, props, run, nextCommand, settings, agents, terminals, shared, window as appWindow } from "herdr";
 import {
   S, NODE, icon, iconButton, stripTab, viewInfo, findNode, findParent, openMenu, subagentCounts, alpha, stop, tc,
-  agentAttention, attentionCounts, getDismissed, terminalsByAddress, chordLabel, bindingFor,
+  agentAttention, attentionCounts, getDismissed, terminalsByAddress, chordLabel, bindingFor, lightsLeftPad,
 } from "./kit.js";
 import { HALVES, halfAction, standInFor } from "./halves.js";
 import { stripView } from "./strip_view.js";
@@ -123,8 +123,10 @@ export default class Strip extends View {
     const lent = standInFor(root, p.stack);
     const winButtons = Boolean(p.windowButtons || lent?.windowButtons) && (wbMode === "always" || (wbMode === "auto" && Boolean(w?.buttons)));
     const sideToggle = (top || Boolean(lent)) && p.side === "left";
-    // Room: 8 padding + tabs (28 + 2 gap) + right-side buttons.
-    const fixed = 16 + (sideToggle ? 31 : 0) + (half ? 31 : 0) + (winButtons ? 3 * 31 : 0);
+    const topLeft = p.side === "left" && (top || Boolean(lent));
+    const leftPad = topLeft ? lightsLeftPad(S.pad, w, root, zoom, 0) : S.pad;
+    // Room: padding + tabs (28 + 2 gap) + right-side buttons.
+    const fixed = leftPad + S.pad + (sideToggle ? 31 : 0) + (half ? 31 : 0) + (winButtons ? 3 * 31 : 0);
     const fit = this.width ? Math.max(1, Math.floor((avail - fixed - 31) / 31)) : kids.length;
     const shown = kids.length > fit ? kids.slice(0, fit) : kids;
     // Keep the active tab visible when it would overflow: swap it into the last slot.
@@ -132,7 +134,7 @@ export default class Strip extends View {
     // The view decides the label, tooltips and the half control (strip_view.js); this draws them as a bar.
     const named = (list) => list.map((c) => ({ id: c.id, ...viewInfo(c) }));
     const view = stripView({ kids: named(kids), shown: named(shown), active, half });
-    return h_flex().id("strip").size_full().px(S.pad).gap(3).items_center().bg(t.raised)
+    return h_flex().id("strip").size_full().pl(leftPad).pr(S.pad).gap(3).items_center().bg(t.raised)
       .border_b(1).border_color(t.border)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1) { this.width = size.width; cx.notify(); } })
       .when(!stack, (e) => e.child(div().text_size(S.textXs).text_color(t.dim).child(`ob-strip: no stack "${p.stack}"`)))

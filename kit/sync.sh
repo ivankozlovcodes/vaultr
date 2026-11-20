@@ -1,5 +1,5 @@
 #!/bin/sh
-# sync.sh [HOME]: copy the kit master (kit.js, obc.js, agents.js, names.js, hidden.js, attention.js, fuzzy.js, follow_target.js, feed_age.js, ticker.js, touches.js, icons/, scan_pi.py) into every mods/ob-*/ folder.
+# sync.sh [HOME]: copy the kit master (kit.js, obc.js, agents.js, names.js, hidden.js, attention.js, fuzzy.js, follow_target.js, feed_age.js, ticker.js, touches.js, lights.js, icons/, scan_pi.py) into every mods/ob-*/ folder.
 #   HOME defaults to the repo root. Builders pass their own dev home.
 #   kit.js gets `export const MOD = "<folder>"`; icons go to mods/<folder>/icons/;
 #   obc.js goes to mods/ob-graph/, mods/ob-outline/, and mods/ob-props/ only;
@@ -30,6 +30,7 @@ for dir in "$HOME_DIR"/mods/ob-*/; do
   cmp -s "$KIT/feed_age.js" "$dir/feed_age.js" 2>/dev/null || cp "$KIT/feed_age.js" "$dir/feed_age.js"
   cmp -s "$KIT/ticker.js" "$dir/ticker.js" 2>/dev/null || cp "$KIT/ticker.js" "$dir/ticker.js"
   cmp -s "$KIT/touches.js" "$dir/touches.js" 2>/dev/null || cp "$KIT/touches.js" "$dir/touches.js"
+  cmp -s "$KIT/lights.js" "$dir/lights.js" 2>/dev/null || cp "$KIT/lights.js" "$dir/lights.js"
   mkdir -p "$dir/icons"
   for f in "$KIT"/icons/*.svg; do
     cmp -s "$f" "$dir/icons/$(basename "$f")" 2>/dev/null || cp "$f" "$dir/icons/"

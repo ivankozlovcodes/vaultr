@@ -122,6 +122,9 @@ class Repo(unittest.TestCase):
                 with open(os.path.join(ROOT, "kit", "touches.js"), "rb") as a, \
                         open(os.path.join(MODS, m, "touches.js"), "rb") as b:
                     self.assertEqual(a.read(), b.read(), "touches.js: run kit/sync.sh; never edit a mod's copy")
+                with open(os.path.join(ROOT, "kit", "lights.js"), "rb") as a, \
+                        open(os.path.join(MODS, m, "lights.js"), "rb") as b:
+                    self.assertEqual(a.read(), b.read(), "lights.js: run kit/sync.sh; never edit a mod's copy")
                 for name in icons:
                     with open(os.path.join(ROOT, "kit", "icons", name), "rb") as a, \
                             open(os.path.join(MODS, m, "icons", name), "rb") as b:

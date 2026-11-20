@@ -12,11 +12,11 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, spaces, agents, terminals, props, run, nextCommand, shared as _shared, settings, notify } from "herdr";
+import { panes, spaces, agents, terminals, props, run, nextCommand, shared as _shared, settings, notify, layout, window as appWindow } from "herdr";
 import {
   S, tc, alpha, icon, iconButton, statusMark, needsYou, paneLabelOf, tabLabel, machineLabel, programIcon, openMenu,
   subagentsOf, isBookmarked, toggleBookmark, bindingFor, chordLabel, tilde, stop,
-  normHidden, isTabHidden,
+  normHidden, isTabHidden, NODE, findNode, paneLightsLeftPad,
 } from "./kit.js";
 import { follow, DELAY } from "./follow.js"; // focus-to-hover
 import { isChildTerminal, detachItem, DETACH_ICON, DETACH_TIP } from "./detach.js";
@@ -237,7 +237,27 @@ export default class PaneHeader extends View {
       .child(div().min_w(0).truncate().child(label));
     const slash = () => div().flex_none().text_color(alpha(t.dim, 0.7)).child("/");
     // Room for the crumb: centered between equal side gutters when wide, else after the arrows.
-    const leftW = addr ? 52 : 0;
+    const mine = tab ? ps.filter((q) => q.tab === tab.id) : [p];
+    const zoomedPane = mine.find((q) => q.zoomed) ?? null;
+    const isTopLeftPane = zoomedPane ? zoomedPane.pane === p.pane : (mine[0]?.pane ?? p.pane) === p.pane;
+    const root = layout();
+    const leftNode = findNode(root, NODE.left);
+    const tabbarNode = findNode(root, NODE.tabbar);
+    const mainNode = findNode(root, NODE.main);
+    const leftPad = paneLightsLeftPad(6, {
+      win: appWindow(),
+      root,
+      zoom: settings().zoom || 1,
+      zen: zenActive,
+      leftHidden: Boolean(leftNode?.hidden),
+      leftWidth: leftNode?.size?.px ?? 300,
+      tabbarHidden: Boolean(tabbarNode?.hidden),
+      tabbarHeight: tabbarNode?.size?.px ?? 40,
+      mainPad: typeof mainNode?.padding === "number" ? mainNode.padding : 6,
+      isTopLeft: isTopLeftPane,
+    });
+    const extraLeft = leftPad - 6;
+    const leftW = (addr ? 52 : 0) + extraLeft;
     const side = Math.max(leftW, rightW) + 12;
     const room = wide ? w - 2 * side : w - leftW - rightW - 20;
     const textW = (str) => Math.ceil(String(str).length * 6.4);
@@ -263,7 +283,7 @@ export default class PaneHeader extends View {
       .when(Boolean(p.zoomed), (e) => e.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child("zoomed")));
     const crumbRow = h_flex().min_w(0).gap(1).items_center().text_size(S.textSm).children(crumbs).child(title);
 
-    return h_flex().id("root").relative().size_full().px(6).gap(2).items_center().bg(t.background).border_b(1).border_color(t.border)
+    return h_flex().id("root").relative().size_full().pl(leftPad).pr(6).gap(2).items_center().bg(t.background).border_b(1).border_color(t.border)
       .text_size(S.textSm)
       .on_size_change((s, cx) => { const w0 = s.width / (settings().zoom || 1); if (Math.abs(w0 - this.w) > 1) { this.w = w0; cx.notify(); } })
       .on_hover((hv, cx) => { if (hv !== this.hovered) { this.hovered = hv; cx.notify(); } })
