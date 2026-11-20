@@ -9,15 +9,17 @@
 // Layout: sim.js (Quartz's forces on the vendored d3-force; tested by test/test_ob_graph.py). Positions are kept per
 // node, so a refresh does not move anything; a new node enters a link distance from its parent; the simulation
 // cools and stops; the view fits the drawing until the person pans or zooms by hand.
-// Look: plain grey dots (in Local the focused node in the accent colour, live agents in the working colour), labels under them
-// that fade in with zoom. Hover fades the rest of the graph to 0.2 (dim 100 ms, restore 200 ms); the timer runs only
-// during a fade. Click (down and up under 500 ms, no drag) selects and goes there; right-click: menu. Drag the
-// background to pan, wheel to zoom (Quartz's scale extent 0.25..4), drag a node to pull it (it reheats, then cools).
+// Look: round theme-accent dots with 1 px canvas cutout borders (foreground on hover/selection) and degree-weighted
+// opacity, status halos on active agents (pulsing working, steady blocked), 1.5 px accent-lit incident links and chrome
+// pill-backed labels on hover/selection, and zoom-faded labels at rest. Hover fades the rest of the graph to 0.2 (dim
+// 100 ms, restore 200 ms); the timer runs only during a fade. Click (down and up under 500 ms, no drag) selects and goes
+// there; right-click: menu. Drag the background to pan, wheel to zoom (Quartz's scale extent 0.25..4), drag a node to
+// pull it (it reheats, then cools).
 // Notes and artifacts (touch_shape.js; the switches "Notes" and "Artifacts", off by default, per view like Active only): the
-// files the agents touched (the feed's `touches`, paths only), as small dots (notes, from the vault's .md files) and
-// squares (artifacts: herdr-artifact publications, or files written outside the vault). A link from each agent by its op
-// (a read is faint). Notes need the vault in obsidian.json (read here, never written); danger/ and hidden folders are never
-// shown. Click a note: the Notes viewer; an artifact: `herdr-artifact open`, or an editor for a plain file.
+// files the agents touched (the feed's `touches`, paths only), both drawn as small round dots (notes, from the vault's
+// .md files, and artifacts: herdr-artifact publications or files written outside the vault; no squares). A link from each
+// agent by its op (a read is faint). Notes need the vault in obsidian.json (read here, never written); danger/ and hidden
+// folders are never shown. Click a note: the Notes viewer; an artifact: `herdr-artifact open`, or an editor for a plain file.
 // Commands (ob-graph.<cmd>): fit, zoom-in, zoom-out, select:<key>, open:<key>, menu:<key>,
 //   mode:<local|global>, depth:<1|2|3>, labels:<on|off>, active:<on|off>, notes:<on|off>, artifacts:<on|off>,
 //   focus-on:<address>, bookmark:<key>, focus.
@@ -34,7 +36,7 @@ import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, to
 import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
-import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, shapePoints, agentHue } from "./shape.js";
+import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, dotTone, placeLabels, nextDepth } from "./shape.js";
 import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
 import {
   QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
@@ -203,6 +205,11 @@ export default class Graph extends View {
     });
     for (const n of touched.nodes) add(n);
     for (const e of touched.edges) edges.push(e);
+    // On a thin client where remote machines exist and local has no spaces or agents, omit the empty m:local dot.
+    if (nodes.has("m:local") && [...nodes.values()].some((n) => n.kind === "m" && n.machine != null)
+        && !edges.some(([a, b]) => a === "m:local" || b === "m:local")) {
+      nodes.delete("m:local");
+    }
     return { nodes, edges };
   }
 
@@ -385,12 +392,12 @@ export default class Graph extends View {
     else if (verb === "select") this.selected = arg || null;
     else if (verb === "open") this.open(arg);
     else if (verb === "menu") this.menu(arg);
-    else if (verb === "mode") { this.mode = arg === "local" ? "local" : "global"; this.refit = true; this.persist(); }
+    else if (verb === "mode") { const next = arg === "local" ? "local" : "global"; if (next !== this.mode) this.sim.pos.clear(); this.mode = next; this.refit = true; this.persist(); }
     else if (verb === "depth") { this.depth = clampDepth(arg); this.refit = true; this.persist(); }
     else if (verb === "labels") { this.labelsAll = arg !== "off"; this.persist(); }
     else if (verb === "active") { this.activeOn = setActive(this.activeOn, this.mode, arg !== "off"); this.refit = true; this.persist(); }
     else if (verb === "notes" || verb === "artifacts") { this.touchOn = setTouch(this.touchOn, this.mode, verb, arg !== "off"); this.refit = true; this.persist(); }
-    else if (verb === "focus-on") { inspect(arg || null); this.mode = "local"; this.refit = true; this.persist(); }
+    else if (verb === "focus-on") { this.sim.pos.clear(); inspect(arg || null); this.mode = "local"; this.refit = true; this.persist(); }
     else if (verb === "bookmark") {
       const n = this.g?.nodes.get(arg);
       if (n?.kind === "s") toggleBookmark({ kind: "space", id: n.space.id, label: n.label, machine: n.space.machine ?? null });
@@ -419,7 +426,7 @@ export default class Graph extends View {
     this.cfg = this.mode === "local" ? { ...QUARTZ.local, depth: this.depth } : QUARTZ.global;
     // A change of nodes or links (or of the forces) reheats gently; a refresh with the same ones changes nothing.
     // sync() moves nothing; it reheats on a change, and the frame loop does the moving.
-    const moved = sync(this.sim, { nodes: g.nodes.values(), edges: g.edges }, this.cfg, this.W, Math.max(this.H, 250));
+    const moved = sync(this.sim, { nodes: g.nodes.values(), edges: g.edges, focus: g.focus }, this.cfg, this.W, Math.max(this.H, 250));
     if (moved) {
       if (this.refit) this.fit(g); else this.autoFit(g);
       this.startLoop();
@@ -433,19 +440,15 @@ export default class Graph extends View {
   }
 
   // ---------------------------------------------------------------- render
-  // Colours: the focused node (its "current page", Local only) in the accent colour, agents by program, and everything else.
+  // Colours: clean theme-accent dots (full accent on focus or active, dim when an anchor machine is offline, fixed frame
+  // tones for machines and spaces, and degree-stepped opacity for everything else).
   nodeColor(t, n, focusKey) {
     if (n.key === focusKey) return t.accent;
-    if (n.kind === "n") return alpha(t.foreground, 0.55);   // a note: a light dot (Obsidian's note)
-    if (n.kind === "a") return t.done;                     // an artifact: a square in the theme's done colour
-    // An agent is its program's colour (shape.js agentHue), full strength while active and dimmer when not; its halo shows
-    // the state too. Other nodes: the working colour while active.
-    const hue = agentHue(n);
-    if (hue) return activityOf(n, Date.now()) ? hue : alpha(hue, 0.55);
-    if (activityOf(n, Date.now())) return t.working;
-    if (n.kind === "m" && n.down) return t.dim;     // an offline machine: a dimmer fill, still a diamond
-    const tone = framePaint(n.kind).tone;           // machines and spaces: a stronger colour than the rest
-    return tone == null ? t.muted : alpha(t.foreground, tone);
+    if (n.kind === "m" && n.down) return t.dim;
+    if (activityOf(n, Date.now())) return t.accent;
+    const fp = framePaint(n.kind);
+    if (fp.tone != null) return alpha(t.accent, fp.tone);
+    return alpha(t.accent, dotTone(this.sim.pos.get(n.key)?.r ?? 3));
   }
 
   toolbar(t) {
@@ -488,9 +491,17 @@ export default class Graph extends View {
       .child(txt("g-out", "−", "Zoom out", "zoom-out"))
       .child(txt("g-in", "+", "Zoom in", "zoom-in"))
       .child(iconButton({ id: "g-fit", icon: "maximize", size: 22, iconSize: 13, tip: "Fit to view", onClick: (_e, cx) => { this.command("fit", cx); cx.notify(); } }));
+    const nextD = nextDepth(this.depth, 1);
+    const depthBtn = h_flex().id("g-depth").h(20).px(6).items_center().rounded(S.radius).cursor_pointer()
+      .text_size(S.textXs).font_medium().border_1().border_color(t.border)
+      .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(`Local depth: ${this.depth} hop${this.depth === 1 ? "" : "s"} (click for ${nextD}, or [ / ])`)
+      .on_mouse_down("left", stop).on_mouse_down("right", stop)
+      .on_click((_e, cx) => { this.command(`depth:${nextD}`, cx); cx.notify(); }).child(`d${this.depth}`);
     const modeGroup = h_flex().p(2).gap(2).rounded(S.radiusLg).bg(alpha(t.chrome, 0.9)).border_1().border_color(t.border)
       .on_mouse_down("left", stop).on_mouse_down("right", stop)
       .child(seg("g-local", "Local", this.mode === "local", "mode:local"))
+      .when(this.mode === "local", (e) => e.child(depthBtn))
       .child(seg("g-global", "Global", this.mode === "global", "mode:global"))
       .child(activeSwitch(this.activeNow(), `active:${this.activeNow() ? "off" : "on"}`));
     // One row when it fits; in a narrow panel the zoom buttons go on a second row (shape.js toolbarRows).
@@ -540,6 +551,8 @@ export default class Graph extends View {
         if (e.key === "=" || e.key === "+") this.zoomAt(1.25, this.W / 2, this.H / 2);
         else if (e.key === "-") this.zoomAt(0.8, this.W / 2, this.H / 2);
         else if (e.key === "0" || e.key === "f") this.fit(this.g);
+        else if (e.key === "[" && this.mode === "local") this.command(`depth:${Math.max(1, this.depth - 1)}`, cx);
+        else if (e.key === "]" && this.mode === "local") this.command(`depth:${Math.min(3, this.depth + 1)}`, cx);
         else if (e.key === "enter" && this.selected) this.open(this.selected);
         else if (e.key === "escape") { this.selected = null; this.nodeDrag = null; release(this.sim); this.startLoop(); }
         else return;
@@ -565,46 +578,70 @@ export default class Graph extends View {
     // The state of every node (halo, pulse, link strength), set before anything is drawn.
     this.stateOf = new Map([...g.nodes.values()].map((n) => [n.key, this.agentState(n)]));
     this.pulsing = anyPulsing([...this.stateOf.values()].map((state) => ({ state })));
-    // Links: 1 px straight lines; rest alpha from restAlpha (0.35, 0.6 into an active agent); hover sets 1 or 0.2.
-    // The sibling links are springs only: nothing draws them (or hovers them).
-    const links = g.edges.filter(([, , k]) => k !== "sibling")
-      .map(([a, b]) => ({ seg: [pt(a), pt(b)], alpha: this.alphaNow(linkId(a, b), now) }));
-    const linkEls = linkBatches(links).map((b, i) => layer(`e-${i}`, b.segs, 1, alpha(t.muted, b.alpha)));
-    const nodes = [], labels = [], shapes = [];
+    // Links: 1 px muted lines at rest; incident links on the hovered node render at 1.5 px in the accent colour above
+    // the rest. The sibling links are springs only: nothing draws them (or hovers them).
+    const restLinks = [], litLinks = [];
+    for (const [a, b, kind] of g.edges) {
+      if (kind === "sibling") continue;
+      const item = { seg: [pt(a), pt(b)], alpha: this.alphaNow(linkId(a, b), now) };
+      if (this.hover != null && (a === this.hover || b === this.hover)) litLinks.push(item);
+      else restLinks.push(item);
+    }
+    const linkEls = [
+      ...linkBatches(restLinks).map((b, i) => layer(`e-${i}`, b.segs, 1, alpha(t.muted, b.alpha))),
+      ...linkBatches(litLinks).map((b, i) => layer(`eh-${i}`, b.segs, 1.5, alpha(t.accent, b.alpha))),
+    ];
+    const nodes = [], labelItems = [];
     const L = labelLayout(k, this.cfg.scale);
+    const lw = 120;
     for (const n of g.nodes.values()) {
       const p = this.sim.pos.get(n.key);
       if (!p || !Number.isFinite(p.x)) continue;
       const [x, y] = pt(n.key);
       if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
       const fp = framePaint(n.kind);
-      const rs = p.r * k * fp.scale;            // a diamond's or hexagon's corners reach this far from the centre
+      const rs = p.r * k * fp.scale;
       const na = this.alphaNow(nodeId(n.key), now);
       const color = this.nodeColor(t, n, g.focus);
-      // The halo: a filled ring under the dot, same hue, radius + 4 px; pulsing when working, steady when blocked.
-      const ha = haloDrawAlpha({ state: this.stateOf.get(n.key) }, now, na);
-      if (ha != null) nodes.push(div().id(`${nodeId(n.key)}-halo`).absolute().left(x - rs - 4).top(y - rs - 4).size((rs + 4) * 2).rounded_full().bg(alpha(color, ha)));
-      const tip = [n.label, n.kind === "p" ? n.program?.name : null, n.status ? `${n.status}` : null, n.address ?? null].filter(Boolean).join(" · ");
-      if (fp.shape) {
-        // Machines (diamonds) and spaces (hexagons) are painted polygons in the links' coordinates, under the dots; the
-        // dot here is an invisible target for the tooltip and the cursor.
-        shapes.push(div().id(`${nodeId(n.key)}-shape`).absolute().left(0).top(0).w(W).h(H)
-          .child(window.paint_path(PathBuilder.fill().add_polygon(shapePoints(fp.shape, x, y, rs), true).build(), alpha(color, na))));
-        nodes.push(div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).cursor_pointer().tooltip(tip));
-      } else {
-        const dot = div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).bg(color)
-          .opacity(na).cursor_pointer().tooltip(tip);
-        nodes.push(n.kind === "a" ? dot : dot.rounded_full());   // artifacts are squares, notes and agents dots
+      // The halo: a filled status-coloured ring under the dot, radius + 4 px; pulsing when working, steady when blocked.
+      const st = this.stateOf.get(n.key);
+      const ha = haloDrawAlpha({ state: st }, now, na);
+      if (ha != null) {
+        const haloColor = st === "blocked" ? t.blocked : t.working;
+        nodes.push(div().id(`${nodeId(n.key)}-halo`).absolute().left(x - rs - 4).top(y - rs - 4).size((rs + 4) * 2).rounded_full().bg(alpha(haloColor, ha)));
       }
-      // Labels: the hovered node and its neighbours always; the rest fade in with zoom (Quartz's opacityScale formula).
-      const shown = this.near.has(n.key) || this.labelsAll || fp.label ? 1 : labelOpacity(k, this.cfg.opacityScale);
+      const tip = [n.label, n.kind === "p" ? n.program?.name : null, n.status ? `${n.status}` : null, n.address ?? null].filter(Boolean).join(" · ");
+      nodes.push(div().id(nodeId(n.key)).absolute().left(x - rs).top(y - rs).size(rs * 2).rounded_full().bg(color)
+        .border_1().border_color(this.hover === n.key || this.selected === n.key || g.focus === n.key ? t.foreground : t.canvas)
+        .opacity(na).cursor_pointer().tooltip(tip));
+      // Labels: hovered neighbourhood and selected/focused nodes are pinned; the rest place without overlap until `#` forces all.
+      const pill = (this.hover != null && this.near.has(n.key)) || this.selected === n.key;
+      const pinned = pill || g.focus === n.key;
+      const shown = pinned || this.labelsAll || fp.label ? 1 : labelOpacity(k, this.cfg.opacityScale);
       const la = shown * na;
-      if (la > 0.01) {
-        const lw = 120;
-        labels.push(div().id(`${nodeId(n.key)}-l`).absolute().left(x - lw / 2).top(y + rs + LABEL_GAP).w(lw).h(L.height).text_center().truncate()
-          .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium()
-          .text_color(this.hover === n.key || this.selected === n.key || fp.label ? t.foreground : t.muted).opacity(la)
-          .child(n.label));
+      if (la > 0.05) {
+        labelItems.push({
+          key: n.key, kind: n.kind, label: n.label, x, top: y + rs + LABEL_GAP, maxW: lw,
+          size: L.size, height: L.height, r: p.r, active: st === "working" || st === "blocked",
+          pinned, pill, la, fpLabel: fp.label,
+        });
+      }
+    }
+    const chosenLabels = placeLabels(labelItems, this.labelsAll);
+    const labels = [];
+    for (const it of labelItems) {
+      if (!chosenLabels.has(it.key)) continue;
+      const labelColor = this.hover === it.key || this.selected === it.key || g.focus === it.key || it.fpLabel ? t.foreground : t.muted;
+      if (it.pill) {
+        labels.push(h_flex().id(`${nodeId(it.key)}-l`).absolute().left(it.x - lw / 2).top(it.top).w(lw).h(L.height).justify_center().items_center()
+          .opacity(it.la)
+          .child(div().max_w(lw).truncate().px(4).rounded(3).bg(alpha(t.chrome, 0.9))
+            .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium().text_color(labelColor)
+            .child(it.label)));
+      } else {
+        labels.push(div().id(`${nodeId(it.key)}-l`).absolute().left(it.x - lw / 2).top(it.top).w(lw).h(L.height).text_center().truncate()
+          .text_size(L.size).line_height(`${L.lineHeight}px`).font_medium().text_color(labelColor).opacity(it.la)
+          .child(it.label));
       }
     }
     const f = feed();
@@ -694,7 +731,6 @@ export default class Graph extends View {
         cx.notify();
       })
       .children(linkEls)
-      .children(shapes)
       .children(nodes)
       .children(labels)
       .child(this.toolbar(t))
@@ -702,7 +738,11 @@ export default class Graph extends View {
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_mouse_down("right", (_e, cx) => cx.stop_propagation())
         .child(div().child(`${g.nodes.size} nodes`))
         .when(live > 0, (e) => e.child(div().text_color(t.working).child(`${live} live`)))
-        .when(this.mode === "local", (e) => e.child(div().child(`depth ${this.depth}`)))
+        .when(this.mode === "local", (e) => e.child(div().id("g-foot-depth").px(4).rounded(3).cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(`Cycle Local depth (${this.depth} → ${nextDepth(this.depth, 1)})`)
+          .on_click((_e, cx) => { this.command(`depth:${nextDepth(this.depth, 1)}`, cx); cx.notify(); })
+          .child(`depth ${this.depth}`)))
         .when(bad.length > 0, (e) => e.child(h_flex().gap(3).items_center().tooltip(`Couldn't scan: ${bad.join(", ")}`).child(icon("alert", 11, t.blocked)).child(div().text_color(t.blocked).child(bad.join(", "))))));
   }
 }

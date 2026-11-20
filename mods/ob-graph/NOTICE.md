@@ -4,9 +4,9 @@ The Graph panel (`sim.js`, `main.js`) is a port of the graph view in Quartz v4 (
 at commit `d25a6eab` (package version 4.5.2): `quartz/components/Graph.tsx` (defaults) and
 `quartz/components/scripts/graph.inline.ts` (forces, hover, labels, zoom, drag). Its defaults and formulas are used
 as data; the drawing is Herdr's own (gpui), not Quartz's Pixi renderer. Vaultr's own changes to the simulation: machines and
-spaces push less and machines are drawn gently to the middle; and heavier damping (velocityDecay 0.8, alphaDecay 0.06, drag
+spaces push less, and nodes are pulled onto concentric depth rings around a common origin (ring strength 0.14, step 1.45 x linkDistance, sector pull 0.03, center anchor 0.65); heavier damping (velocityDecay 0.8, alphaDecay 0.06, drag
 heat 0.2 where d3 has 0.4 and 0.0228 and Quartz drags at 1) so the graph is not floaty; node radius grows with the links to a node (base 3, +1.8 x sqrt of its links beyond the first,
-capped at 11; Quartz: 2 + sqrt of its links); machines and spaces are drawn as a diamond and a hexagon; agents are coloured by program.
+capped at 11; Quartz: 2 + sqrt of its links), with fixed radii for machines (5) and spaces (4.5); every node is drawn as a round theme-accented dot with a cutout border; overlapping node labels are culled while hovered and focused labels stay shown.
 
 ## Quartz (MIT)
 

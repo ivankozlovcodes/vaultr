@@ -102,13 +102,13 @@ class QuartzModel(unittest.TestCase):
             }));
         ''', {"W": W, "H": H})
         # charge -100 * repelForce; centre strength; linkDistance 30; collide iterations 3 (graph.inline.ts 169-172)
-        # Machines and spaces push less (-40 x repelForce) and their push stops at 250; machines have a gentle pull to the middle.
-        self.assertEqual(r["local"], {"charge": -50, "broadCharge": -20, "maxChargeDistance": 250, "machineGravity": 0.2,
-                                      "center": 0.3, "linkDistance": 30, "collideIterations": 3, "radial": None})
-        # radial: min(W, max(H, 250)) / 2 * 0.8 at strength 0.2 (graph.inline.ts 174-175)
-        self.assertEqual(r["global"]["radial"], {"radius": 0.8 * min(W, max(H, 250)) / 2, "strength": 0.2})
-        self.assertEqual(r["global"]["charge"], -50)
-        self.assertEqual(r["global"]["center"], 0.2)
+        # Machines and spaces push less (-40 x repelForce) and their push stops at 250; concentric rings replace outer-rim radial.
+        self.assertEqual(r["local"], {"charge": -50, "broadCharge": -20, "maxChargeDistance": 250,
+                                      "center": 0.3, "linkDistance": 30, "collideIterations": 3,
+                                      "ringStrength": 0.14, "sectorStrength": 0.03})
+        self.assertEqual(r["global"], {"charge": -50, "broadCharge": -20, "maxChargeDistance": 250,
+                                       "center": 0.2, "linkDistance": 30, "collideIterations": 3,
+                                       "ringStrength": 0.14, "sectorStrength": 0.03})
         # Quartz keeps d3-force's alphaMin; the damping is Vaultr's: heavier than d3's (0.4, 0.0228) so the graph is not floaty
         self.assertEqual(r["alphaMin"], 0.001)
         self.assertEqual(r["alphaDecay"], 0.06)
@@ -1210,8 +1210,8 @@ class EditorArgv(unittest.TestCase):
 
 
 class FrameShapes(unittest.TestCase):
-    """Machines and spaces are the graph's frame: a different shape (a diamond, a hexagon), a stronger colour and an
-    always-shown label, so they stand out from the dots (panes, agents) and squares (artifacts) without being bigger."""
+    """Machines and spaces are the graph's fixed-size anchors: round accent dots like every other node (no polygon
+    shapes), with stronger accent tones (0.92 and 0.78) and always-shown labels."""
 
     def radius(self, degree, kind):
         return run("console.log(JSON.stringify(S.radiusOf(P.d, P.kind)));", {"d": degree, "kind": kind}, SIM)
@@ -1219,96 +1219,99 @@ class FrameShapes(unittest.TestCase):
     def test_machines_and_spaces_have_a_fixed_size_whatever_hangs_off_them(self):
         for kind in ("m", "s"):
             self.assertEqual(self.radius(1, kind), self.radius(40, kind), kind)
-        self.assertLess(self.radius(1, "s"), 6, "not a big dot: the shape is the highlight")
+        self.assertLess(self.radius(1, "s"), 6)
         self.assertLessEqual(self.radius(1, "m"), 6)
 
     def paint(self, kind):
         return run("console.log(JSON.stringify(S.framePaint(P.kind)));", {"kind": kind}, SHAPE)
 
-    def test_machines_are_diamonds_spaces_are_hexagons_and_others_are_not_framed(self):
-        self.assertEqual(self.paint("m")["shape"], "diamond")
-        self.assertEqual(self.paint("s")["shape"], "hexagon")
-        for kind in ("p", "r", "c", "h", "n", "a"):
-            self.assertIsNone(self.paint(kind)["shape"], kind)
+    def test_every_kind_is_a_unit_scale_round_dot_with_no_polygon_shape(self):
+        for kind in ("m", "s", "p", "r", "c", "h", "n", "a"):
+            fp = self.paint(kind)
+            self.assertIsNone(fp.get("shape"), kind)
+            self.assertEqual(fp["scale"], 1, kind)
+        has_points = run('console.log(JSON.stringify("shapePoints" in S));', {}, SHAPE)
+        self.assertFalse(has_points, "polygon helpers are gone from shape.js")
 
     def test_machines_and_spaces_are_drawn_stronger_and_always_labelled(self):
         m, s, p = self.paint("m"), self.paint("s"), self.paint("p")
         self.assertTrue(m["label"] and s["label"])
         self.assertFalse(p["label"])
-        self.assertGreater(m["tone"], s["tone"])
-        self.assertGreater(s["tone"], 0.55)
-        self.assertIsNone(p["tone"], "other nodes keep their own colour rules")
+        self.assertEqual(m["tone"], 0.92)
+        self.assertEqual(s["tone"], 0.78)
+        for kind in ("p", "r", "c", "h", "n", "a"):
+            self.assertIsNone(self.paint(kind)["tone"], kind)
 
-    def points(self, shape, r=10):
-        return run("console.log(JSON.stringify(S.shapePoints(P.shape, 100, 200, P.r)));", {"shape": shape, "r": r}, SHAPE)
-
-    def test_a_diamond_has_four_points_on_the_axes(self):
-        pts = self.points("diamond", 10)
-        self.assertEqual(sorted(map(tuple, pts)), sorted([(100, 190), (110, 200), (100, 210), (90, 200)]))
-
-    def test_a_hexagon_has_six_points_all_the_same_distance_from_the_centre(self):
-        pts = self.points("hexagon", 10)
-        self.assertEqual(len(pts), 6)
-        for x, y in pts:
-            self.assertAlmostEqual(((x - 100) ** 2 + (y - 200) ** 2) ** 0.5, 10, places=6)
-        self.assertEqual(len({(round(x, 6), round(y, 6)) for x, y in pts}), 6)
-
-    def test_an_unknown_shape_has_no_points(self):
-        self.assertEqual(self.points(None), [])
-
-    def test_main_draws_the_shapes_with_the_pure_helpers(self):
+    def test_every_node_renders_as_a_round_dot_with_no_polygons_or_squares(self):
         src = MAIN.read_text(encoding="utf-8")
-        self.assertIn("framePaint(n.kind)", src)
-        self.assertIn("shapePoints(", src)
-        self.assertIn("add_polygon(", src)
+        render = src[src.index("  render(cx) {"):]
+        self.assertIn("framePaint(n.kind)", render)
+        self.assertIn(".rounded_full()", render)
+        self.assertNotIn("add_polygon(", src)
+        self.assertNotIn("shapePoints", src)
+        self.assertNotIn('n.kind === "a" ? dot', render)
 
 
-class AgentHue(unittest.TestCase):
-    """Agents are coloured by the program that runs them, so claude, pi, codex and antigravity (agy) tell apart at a
-    glance. Only agents: a pane running a shell or an editor keeps the usual colour."""
+class AccentPaletteAndHoverStyle(unittest.TestCase):
+    """Obsidian-style graph presentation: clean theme-accent opacity palette (no per-program rainbow hues), 1 px canvas
+    cutout borders (foreground on hover/selection), status-coloured halos (working/blocked), 1.5 px accent-lit incident
+    links on hover, and chrome pill-backed hover/selection labels."""
 
-    def hue(self, node):
-        return run("console.log(JSON.stringify(S.agentHue(P.n)));", {"n": node}, SHAPE)
+    def tone(self, r):
+        return run("console.log(JSON.stringify(S.dotTone(P.r)));", {"r": r}, SHAPE)
 
-    def pane(self, key, **kw):
-        return {"kind": "p", "program": {"key": key, "agent": True, **kw}}
+    def test_dot_tone_steps_across_leaf_connected_and_hub_radii(self):
+        self.assertEqual(self.tone(3), 0.55, "base leaf radius")
+        self.assertEqual(self.tone(3.5), 0.55, "up to 3.5 stays at leaf opacity")
+        self.assertEqual(self.tone(4.8), 0.75, "connected node above 3.5")
+        self.assertEqual(self.tone(6.9), 0.75)
+        self.assertEqual(self.tone(7), 0.95, "hub radius >= 7")
+        self.assertEqual(self.tone(11), 0.95, "capped hub radius")
 
-    def test_the_four_named_agents_have_four_different_colours(self):
-        hues = [self.hue(self.pane(k)) for k in ("claude", "pi", "codex", "antigravity")]
-        self.assertTrue(all(isinstance(h, str) and h.startswith("#") for h in hues), hues)
-        self.assertEqual(len(set(hues)), 4)
+    def test_per_program_agent_hues_are_gone(self):
+        has_hue = run('console.log(JSON.stringify("agentHue" in S));', {}, SHAPE)
+        self.assertFalse(has_hue)
+        self.assertNotIn("AGENT_HUES", SHAPE.read_text(encoding="utf-8"))
+        self.assertNotIn("agentHue", MAIN.read_text(encoding="utf-8"))
 
-    def test_agy_and_claude_code_are_the_same_agents_as_antigravity_and_claude(self):
-        self.assertEqual(self.hue(self.pane("agy")), self.hue(self.pane("antigravity")))
-        self.assertEqual(self.hue(self.pane("claude-code")), self.hue(self.pane("claude")))
-        self.assertEqual(self.hue(self.pane("CLAUDE")), self.hue(self.pane("claude")))
-
-    def test_a_claude_sub_agent_is_claudes_colour_and_a_pi_run_is_pis(self):
-        self.assertEqual(self.hue({"kind": "c"}), self.hue(self.pane("claude")))
-        self.assertEqual(self.hue({"kind": "r"}), self.hue(self.pane("pi")))
-
-    def test_an_agent_the_table_does_not_know_uses_the_programs_own_colour_when_it_is_a_hex(self):
-        self.assertEqual(self.hue(self.pane("mystery", color="#12ab34")), "#12ab34")
-        self.assertIsNone(self.hue(self.pane("mystery", color="red")), "not a hex colour: the usual colour")
-        self.assertIsNone(self.hue(self.pane("mystery")))
-
-    def test_a_pane_that_is_not_an_agent_has_no_hue(self):
-        self.assertIsNone(self.hue({"kind": "p", "program": {"key": "claude", "agent": False}}), "a plain terminal")
-        self.assertIsNone(self.hue({"kind": "p", "program": {"key": "nvim", "agent": False}}))
-        self.assertIsNone(self.hue({"kind": "m"}))
-        self.assertIsNone(self.hue({"kind": "n"}))
-        self.assertIsNone(self.hue(None))
-
-    def test_a_foreground_pane_without_a_known_program_still_gets_the_default(self):
-        self.assertIsNone(self.hue({"kind": "p", "foreground": True, "program": {"key": "shell", "agent": False}}))
-
-    def test_main_colours_agents_by_hue_and_dims_the_idle_ones(self):
+    def test_node_color_uses_accent_opacity_ramp_and_dim_offline_machines(self):
         src = MAIN.read_text(encoding="utf-8")
-        body = src[src.index("  nodeColor(t, n, focusKey) {"):]
-        body = body[:body.index("\n  }\n")]
-        self.assertIn("agentHue(n)", body)
-        self.assertIn("alpha(hue, ", body)
-        self.assertLess(body.index("n.key === focusKey"), body.index("agentHue(n)"), "the Local focus accent still wins")
+        body = re.search(r"\n  nodeColor\(t, n, focusKey\) \{([\s\S]*?)\n  \}", src).group(1)
+        self.assertIn("n.key === focusKey", body)
+        self.assertIn('n.kind === "m" && n.down', body)
+        self.assertIn("t.dim", body)
+        self.assertIn("activityOf(n, Date.now())", body)
+        self.assertIn("framePaint(n.kind)", body)
+        self.assertIn("dotTone(", body)
+        self.assertIn("alpha(t.accent,", body)
+        self.assertNotIn("t.done", body)
+
+    def test_dots_carry_one_pixel_cutout_borders_that_highlight_on_hover_or_selection(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        self.assertIn(".border_1()", render)
+        self.assertRegex(render, r"border_color\([^)]*this\.hover === n\.key[^)]*this\.selected === n\.key[^)]*\?\s*t\.foreground\s*:\s*t\.canvas\)")
+
+    def test_status_halos_use_working_and_blocked_theme_colours(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        self.assertIn("haloDrawAlpha(", render)
+        self.assertRegex(render, r'st === "blocked"\s*\?\s*t\.blocked\s*:\s*t\.working')
+        self.assertIn("alpha(haloColor, ha)", render)
+
+    def test_hovered_incident_links_draw_at_1_5px_in_accent_above_1px_muted_links(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        muted_idx = render.index("alpha(t.muted, b.alpha)")
+        accent_idx = render.index("alpha(t.accent, b.alpha)")
+        nodes_idx = render.index(".children(nodes)")
+        self.assertLess(muted_idx, accent_idx, "1.5 px accent hover links are batched after 1 px muted links")
+        self.assertLess(accent_idx, nodes_idx, "links stay under the nodes")
+        self.assertRegex(render, r"layer\([^,]+,\s*b\.segs,\s*1,\s*alpha\(t\.muted,\s*b\.alpha\)\)")
+        self.assertRegex(render, r"layer\([^,]+,\s*b\.segs,\s*1\.5,\s*alpha\(t\.accent,\s*b\.alpha\)\)")
+
+    def test_hovered_and_selected_labels_render_in_a_centered_chrome_pill(self):
+        render = MAIN.read_text(encoding="utf-8")[MAIN.read_text(encoding="utf-8").index("  render(cx) {"):]
+        self.assertRegex(render, r"\(this\.hover != null && this\.near\.has\(n\.key\)\)\s*\|\|\s*this\.selected === n\.key")
+        self.assertIn(".justify_center()", render)
+        self.assertIn(".max_w(lw).truncate().px(4).rounded(3).bg(alpha(t.chrome, 0.9))", render)
 
 
 class ToolbarRows(unittest.TestCase):
@@ -1701,6 +1704,252 @@ class OpenArtifact(unittest.TestCase):
             self.assertIn(e, shape)
         self.assertIn("command -v", shape)
         self.assertIn("editorArgv(", self.body)
+
+
+def single_machine_radial_graph(extra_machines=()):
+    """One active machine with three spaces, panes (including a sibling pair), sub-agents, and a touched note."""
+    nodes = [
+        {"key": "m:laptop", "kind": "m"},
+        {"key": "s:a0", "kind": "s", "parent": "m:laptop"},
+        {"key": "s:a1", "kind": "s", "parent": "m:laptop"},
+        {"key": "s:a2", "kind": "s", "parent": "m:laptop"},
+        {"key": "p:a00", "kind": "p", "parent": "s:a0"},
+        {"key": "p:a01", "kind": "p", "parent": "s:a0"},
+        {"key": "p:a10", "kind": "p", "parent": "s:a1"},
+        {"key": "p:a11", "kind": "p", "parent": "s:a1"},
+        {"key": "p:a20", "kind": "p", "parent": "s:a2"},
+        {"key": "r:s0", "kind": "r", "parent": "p:a00"},
+        {"key": "c:s1", "kind": "c", "parent": "p:a10"},
+        {"key": "h:s2", "kind": "h", "parent": "p:a20"},
+        {"key": "note:/srv/people/vault/plan.md", "kind": "n"},
+    ] + [{"key": f"m:{m}", "kind": "m"} for m in extra_machines]
+    edges = [
+        ["m:laptop", "s:a0", "contain"],
+        ["m:laptop", "s:a1", "contain"],
+        ["m:laptop", "s:a2", "contain"],
+        ["s:a0", "p:a00", "contain"],
+        ["s:a0", "p:a01", "contain"],
+        ["p:a00", "p:a01", "sibling"],
+        ["s:a1", "p:a10", "contain"],
+        ["s:a1", "p:a11", "contain"],
+        ["s:a2", "p:a20", "contain"],
+        ["p:a00", "r:s0", "link"],
+        ["p:a10", "c:s1", "link"],
+        ["p:a20", "h:s2", "link"],
+        ["p:a10", "note:/srv/people/vault/plan.md", "touch", "edit"],
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+class CenteredRadialLayout(unittest.TestCase):
+    """Concentric radial-center layout (sim.js, main.js): single roots sit at (0, 0) and children radiate outward in
+    depth rings; multi-machine roots share an inner hub ring; Local anchors the focused session at (0, 0) and spreads
+    BFS hops outward, clearing stale positions on mode or focus switches."""
+
+    def test_single_machine_global_graph_spreads_outward_in_concentric_rings_from_origin(self):
+        g = single_machine_radial_graph()
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, P.g, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const mean = (ks) => ks.reduce((s, k) => s + rOf(k), 0) / ks.length;
+            console.log(JSON.stringify({
+              machine: rOf("m:laptop"),
+              spaces: mean(["s:a0", "s:a1", "s:a2"]),
+              panes: mean(["p:a00", "p:a01", "p:a10", "p:a11", "p:a20"]),
+              subagents: mean(["r:s0", "c:s1", "h:s2"]),
+              note: rOf("note:/srv/people/vault/plan.md"),
+            }));
+        """, {"g": g, "W": W, "H": H})
+        self.assertLess(r["machine"], 15, r)
+        self.assertLess(r["machine"], r["spaces"], r)
+        self.assertLess(r["spaces"], r["panes"], r)
+        self.assertLess(r["panes"], r["subagents"], r)
+        self.assertLess(r["panes"], r["note"], r)
+
+    def test_single_active_machine_with_isolated_machines_keeps_center_and_tucks_isolated_inside(self):
+        g = single_machine_radial_graph(extra_machines=["spare", "sandbox-vm"])
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, P.g, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const mean = (ks) => ks.reduce((s, k) => s + rOf(k), 0) / ks.length;
+            const iso = ["m:spare", "m:sandbox-vm"];
+            const conn = P.g.nodes.filter((n) => !iso.includes(n.key)).map((n) => rOf(n.key));
+            console.log(JSON.stringify({
+              machine: rOf("m:laptop"),
+              spaces: mean(["s:a0", "s:a1", "s:a2"]),
+              panes: mean(["p:a00", "p:a01", "p:a10", "p:a11", "p:a20"]),
+              R: Math.max(...conn),
+              isoR: iso.map(rOf),
+            }));
+        """, {"g": g, "W": W, "H": H})
+        self.assertLess(r["machine"], 18, r)
+        self.assertLess(r["machine"], r["spaces"], r)
+        self.assertLess(r["spaces"], r["panes"], r)
+        for d in r["isoR"]:
+            self.assertLess(d, 0.75 * r["R"], r)
+
+    def test_multi_machine_global_graph_places_every_parent_closer_to_origin_than_its_children(self):
+        g = three_machines()
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, P.g, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const iso = ["m:spare", "m:sandbox-vm"];
+            const pairs = P.g.edges
+              .filter(([, , k]) => k === "contain")
+              .map(([a, b]) => ({ a, b, ra: rOf(a), rb: rOf(b) }));
+            const R = Math.max(...P.g.nodes.filter((n) => !iso.includes(n.key)).map((n) => rOf(n.key)));
+            console.log(JSON.stringify({ pairs, R, isoR: iso.map(rOf) }));
+        """, {"g": g, "W": W, "H": H})
+        for pair in r["pairs"]:
+            self.assertLess(pair["ra"], pair["rb"], pair)
+        for d in r["isoR"]:
+            self.assertLess(d, 0.75 * r["R"], r)
+
+    def test_local_graph_anchors_focus_at_origin_and_spreads_hops_outward(self):
+        g = {
+            "nodes": [
+                {"key": "m:laptop", "kind": "m"},
+                {"key": "s:A", "kind": "s", "parent": "m:laptop"},
+                {"key": "p:focus", "kind": "p", "parent": "s:A"},
+                {"key": "p:sib", "kind": "p", "parent": "s:A"},
+                {"key": "p:peer0", "kind": "p", "parent": "s:A"},
+                {"key": "p:peer1", "kind": "p", "parent": "s:A"},
+                {"key": "r:sub0", "kind": "r", "parent": "p:focus"},
+                {"key": "r:sub1", "kind": "r", "parent": "p:focus"},
+                {"key": "h:child0", "kind": "h", "parent": "r:sub0"},
+                {"key": "r:peerSub0", "kind": "r", "parent": "p:peer0"},
+                {"key": "note:/srv/people/vault/doc.md", "kind": "n"},
+            ],
+            "edges": [
+                ["m:laptop", "s:A", "contain"],
+                ["s:A", "p:focus", "contain"],
+                ["s:A", "p:sib", "contain"],
+                ["s:A", "p:peer0", "contain"],
+                ["s:A", "p:peer1", "contain"],
+                ["p:focus", "p:sib", "sibling"],
+                ["p:focus", "r:sub0", "link"],
+                ["p:focus", "r:sub1", "link"],
+                ["r:sub0", "h:child0", "link"],
+                ["p:peer0", "r:peerSub0", "link"],
+                ["p:peer1", "note:/srv/people/vault/doc.md", "touch", "edit"],
+            ],
+        }
+        r = run("""
+            const sim = S.createSim();
+            S.sync(sim, { ...P.g, focus: "p:focus" }, S.QUARTZ.local, P.W, P.H);
+            S.settle(sim, 5000);
+            const rOf = (k) => { const p = sim.pos.get(k); return Math.hypot(p.x, p.y); };
+            const mean = (ks) => ks.reduce((s, k) => s + rOf(k), 0) / ks.length;
+            const adj = new Map();
+            for (const [a, b, kind] of P.g.edges) {
+              if (kind === "sibling") continue;
+              (adj.get(a) ?? adj.set(a, []).get(a)).push(b);
+              (adj.get(b) ?? adj.set(b, []).get(b)).push(a);
+            }
+            const dist = new Map([["p:focus", 0]]);
+            const q = ["p:focus"];
+            while (q.length) {
+              const cur = q.shift();
+              for (const nxt of adj.get(cur) ?? []) {
+                if (!dist.has(nxt)) { dist.set(nxt, dist.get(cur) + 1); q.push(nxt); }
+              }
+            }
+            const hops = [1, 2, 3].map((d) => [...dist.entries()].filter(([, v]) => v === d).map(([k]) => k));
+            console.log(JSON.stringify({
+              focus: rOf("p:focus"),
+              hops,
+              means: hops.map(mean),
+            }));
+        """, {"g": g, "W": W, "H": H})
+        self.assertLess(r["focus"], 12, r)
+        self.assertLess(r["means"][0], r["means"][1], r)
+        self.assertLess(r["means"][1], r["means"][2], r)
+
+    def test_radial_targets_ignore_sibling_edges_and_mode_switch_clears_positions(self):
+        r = run("""
+            const nodes = [
+              { key: "m:laptop", kind: "m" },
+              { key: "s:A", kind: "s", parent: "m:laptop" },
+              { key: "p:1", kind: "p", parent: "s:A" },
+              { key: "p:2", kind: "p", parent: "s:A" },
+            ];
+            const edges = [
+              ["m:laptop", "s:A", "contain"],
+              ["s:A", "p:1", "contain"],
+              ["s:A", "p:2", "contain"],
+              ["p:1", "p:2", "sibling"],
+            ];
+            const t1 = S.radialTargets(nodes, edges, { linkDistance: 30 });
+            const t2 = S.radialTargets([...nodes].reverse(), [...edges].reverse(), { linkDistance: 30 });
+            const sameTargets = [...t1].every(([k, v]) => {
+              const w = t2.get(k);
+              return w && v.x === w.x && v.y === w.y && v.rRing === w.rRing && v.angle === w.angle;
+            });
+            const sim = S.createSim();
+            S.sync(sim, P.world, S.QUARTZ.global, P.W, P.H);
+            S.settle(sim, 5000);
+            sim.pos.clear();
+            S.sync(sim, { ...P.world, focus: "p:a000" }, S.QUARTZ.local, P.W, P.H);
+            const alphaOnClear = sim.d3.alpha();
+            S.settle(sim, 5000);
+            const fp = sim.pos.get("p:a000");
+            console.log(JSON.stringify({
+              sRing: t1.get("s:A").rRing,
+              p1Ring: t1.get("p:1").rRing,
+              p2Ring: t1.get("p:2").rRing,
+              sameTargets,
+              alphaOnClear,
+              focusR: Math.hypot(fp.x, fp.y),
+            }));
+        """, {"world": world(), "W": W, "H": H})
+        self.assertEqual(r["p1Ring"], r["p2Ring"], r)
+        self.assertGreater(r["p1Ring"], r["sRing"], r)
+        self.assertTrue(r["sameTargets"], "radialTargets must be deterministic across node/edge reordering")
+        self.assertEqual(r["alphaOnClear"], 1)
+        self.assertLess(r["focusR"], 12, r)
+
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertRegex(src, r"sync\(this\.sim,\s*\{[^}]*focus:\s*g\.focus[^}]*\}", "main.js passes focus: g.focus into sync")
+        mode_line = re.search(r'else if \(verb === "mode"\)\s*\{([^\n]+)\}', src)
+        focus_line = re.search(r'else if \(verb === "focus-on"\)\s*\{([^\n]+)\}', src)
+        self.assertIsNotNone(mode_line)
+        self.assertIsNotNone(focus_line)
+        self.assertIn("this.sim.pos.clear()", mode_line.group(1))
+        self.assertIn("this.sim.pos.clear()", focus_line.group(1))
+
+
+class LabelPlacementAndDepth(unittest.TestCase):
+    """Non-overlapping label culling (placeLabels) and interactive Local depth cycling (nextDepth)."""
+
+    def test_overlapping_unpinned_labels_cull_lower_priority_while_pinned_and_labelsAll_keep_all(self):
+        r = run("""
+            const items = [
+              { key: "m:hub", kind: "m", label: "server", x: 100, top: 80, maxW: 120, size: 9, height: 14, r: 5, pinned: false },
+              { key: "p:leaf", kind: "p", label: "worker-pane", x: 104, top: 82, maxW: 120, size: 9, height: 14, r: 3, pinned: false },
+              { key: "p:far", kind: "p", label: "distant", x: 260, top: 82, maxW: 120, size: 9, height: 14, r: 3, pinned: false },
+            ];
+            const culled = [...S.placeLabels(items, false)].sort();
+            const forced = [...S.placeLabels(items, true)].sort();
+            const pinned = [...S.placeLabels(items.map((x) => x.key === "p:leaf" ? { ...x, pinned: true } : x), false)].sort();
+            console.log(JSON.stringify({ culled, forced, pinned, d: [1, 2, 3].map((x) => S.nextDepth(x, 1)) }));
+        """, {}, SHAPE)
+        self.assertEqual(r["culled"], ["m:hub", "p:far"], "colliding lower-priority leaf label is culled")
+        self.assertEqual(r["forced"], ["m:hub", "p:far", "p:leaf"], "labelsAll keeps every label")
+        self.assertIn("p:leaf", r["pinned"], "pinned hover/selection label always shows")
+        self.assertEqual(r["d"], [2, 3, 1])
+
+    def test_main_wires_placeLabels_depth_button_and_empty_local_pruning(self):
+        src = MAIN.read_text(encoding="utf-8")
+        self.assertIn("placeLabels(", src)
+        self.assertIn('"g-depth"', src)
+        self.assertIn('"g-foot-depth"', src)
+        self.assertIn('nodes.delete("m:local")', src)
 
 
 if __name__ == "__main__":
