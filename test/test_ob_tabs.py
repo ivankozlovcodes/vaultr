@@ -119,5 +119,36 @@ class SettingsOpenFlag(unittest.TestCase):
         self.assertRegex(dialog, r"setShared\(OPEN, Date\.now\(\)\)")
 
 
+TAB_DETACH = Path(ROOT, "mods", "ob-tabs", "detach.js")
+TAB_PANES = ('const P = [{pane:"a", tab:"t1", terminal:"box/t9"}, {pane:"b", tab:"t2", terminal:"t4"}, {pane:"c", tab:"t2", terminal:"t5"},'
+             ' {pane:"d", tab:"t3", mod:"notes"}, {pane:"e", tab:"t4", terminal:"t6"}, {pane:"f", tab:"t4", mod:"notes"}];')
+
+
+@unittest.skipUnless(NODE, "node is not installed: the tab detach tests are skipped")
+class TabDetach(unittest.TestCase):
+    """A tab that is one terminal pane can go back to the background as a whole (Herdr's terminal.park): the tab
+    goes away, the program keeps running. Close tab ends it."""
+
+    def test_a_tab_of_one_terminal_pane_offers_detach(self):
+        r = run_node(TAB_PANES + 'return M.detachItem(P, "t1");', TAB_DETACH)
+        self.assertEqual(r, {"label": "Detach to background", "icon": "win-min", "command": "terminal.park", "args": {"terminal": "box/t9"}})
+
+    def test_a_tab_with_more_panes_a_mod_pane_or_no_pane_does_not(self):
+        r = run_node(TAB_PANES + 'return ["t2", "t3", "t4", "t9"].map((id) => M.detachItem(P, id));', TAB_DETACH)
+        self.assertEqual(r, [None, None, None, None])
+
+    def test_the_sole_terminal_is_read_from_the_tabs_panes_only(self):
+        r = run_node(TAB_PANES + 'return [M.soleTerminal(P, "t1"), M.soleTerminal(P, "t2"), M.soleTerminal(null, "t1")];', TAB_DETACH)
+        self.assertEqual(r, ["box/t9", None, None])
+
+    def test_the_tab_menu_offers_it_right_above_close_tab(self):
+        src = Path(ROOT, "mods", "ob-tabs", "main.js").read_text(encoding="utf-8")
+        menu = src[src.index("  tabMenu(space, tab) {"):]
+        lines = [ln.strip() for ln in menu[:menu.index("\n  }\n")].splitlines()]
+        at = lines.index("detachItem(ps, tab.id),")
+        self.assertTrue(lines[at + 1].startswith('{ label: "Close tab"'))
+        self.assertTrue(Path(ROOT, "kit", "icons", "win-min.svg").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

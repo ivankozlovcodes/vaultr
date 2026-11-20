@@ -14,7 +14,7 @@ import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
 import { props, run, nextCommand, settings, hc, layout, focused, panes, spaces, shared, exec, readTextFile, appHome } from "herdr";
 import {
   S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, emptyState, programIcon, feed,
-  machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts, feedLine,
+  machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts, feedLine, parentAddrOf,
 } from "./kit.js";
 import { summarize, usageLines, subagentsLine } from "./usage.js";
 import { MONO, splitCmd, sessionOf, inspected, inspect, revealTerminal, claudeAll, hcChildren, openViewer, copied } from "./obc.js";
@@ -111,7 +111,7 @@ export default class Props extends View {
       address: a, cwd: s?.pane?.cwd ?? s?.term?.cwd ?? x.cwd, pid: s?.term?.foreground?.pid ?? s?.term?.pid ?? x.pid,
       argv: (s?.term?.foreground?.argv ?? s?.term?.argv ?? [])?.join(" "), title: s?.term?.title ?? x.title, session: term?.session,
       transcript: term?.transcript ?? (term?.kind === "pi" ? term?.session : null), branch: s?.pane?.branch, pane: s?.pane?.pane, space: s?.space?.id,
-      tab: s?.tab?.id, machine: machineLabel(s?.machine ?? null), parent: s?.term?.parent ?? x.parent,
+      tab: s?.tab?.id, machine: machineLabel(s?.machine ?? null), parent: parentAddrOf(s?.term) ?? x.parent,
     }[name];
     return v == null || v === "" ? null : String(v);
   }
@@ -249,7 +249,7 @@ export default class Props extends View {
       ]);
     }
     // Relations: parent, hc children, pi runs, Claude agents.
-    const parent = term.parent ?? x.parent ?? null;
+    const parent = parentAddrOf(term) ?? x.parent ?? null;
     const kids = hcChildren(address);
     const runs = (feed()?.runs ?? []).filter((r) => r.parent === address);
     const claude = claudeAll().filter((c) => c.parent === address);

@@ -188,7 +188,8 @@ def run_obc(body, feed=None, records=None):
             "export const notify = () => null;\n",
             encoding="utf-8",
         )
-        kit = ["machineOf", "tabLabel", "paneName", "dur", "ago", "fmtTokens", "fmtCost", "normStatus", "copyText", "base"]
+        kit = ["machineOf", "tabLabel", "paneName", "dur", "ago", "fmtTokens", "fmtCost", "normStatus", "copyText", "base",
+               "parentAddrOf", "isChildTerminalOf", "getHidden", "updateHidden", "patchHidden", "normHidden", "isSpaceHidden", "isTabHidden"]
         Path(folder, "kit.js").write_text(
             'export const MOD = "ob-props";\n'
             f"export {{ followTarget }} from {json.dumps(FOLLOW.as_uri())};\n"

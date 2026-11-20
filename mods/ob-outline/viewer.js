@@ -3,7 +3,8 @@
 // props: { view: "log"|"transcript", machine, path, title, live, runKey, overlay? }
 //   view "attach": a header only, for a popup whose layout puts the live terminal block below it:
 //      { view: "attach", title, parent, machine, terminal, overlay }. Its header: name, parent, machine,
-//      "Move to main window" (terminal.keep: the terminal gets a pane or tab) and close.
+//      "Move to main window" (terminal.keep: the terminal gets a pane or tab) and "Detach" (the popup closes,
+//      the terminal keeps running in the background; a click outside the popup does the same).
 // log: `tail -n 400 <path>` on that machine, every 1.5 s while the run is live; follows the end
 //      unless you scroll up (Follow button / viewer-follow:on brings it back).
 // transcript: transcript.py parses the jsonl there (pi session, pi-subagents transcript, Claude Code)
@@ -13,14 +14,16 @@
 //      viewer-tool:<index> (expand/collapse a tool call), viewer-refresh.
 
 import { div } from "gpui-kit";
-import { v_flex, h_flex, TextView, v_virtual_list, VirtualListScrollHandle, ScrollHandle, Scrollbar } from "gpui-base";
-import { props, exec, readTextFile, appHome, run, closeOverlay, settings, focused } from "herdr";
-import { S, tc, icon, iconButton, alpha, ago, machineLabel, tilde, base, feed, statusMark, stop } from "./kit.js";
-import { MONO, splitCmd, copied } from "./obc.js";
-import { escapeOwner, moveTarget } from "./actions.js";
+import { v_flex, h_flex, TextView, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
+import { props, exec, readTextFile, appHome, run, closeOverlay, settings, focused, terminals, keys } from "herdr";
+import { S, tc, icon, iconButton, alpha, ago, machineLabel, tilde, base, feed, statusMark, normStatus, stop } from "./kit.js";
+import { MONO, splitCmd, copied, revealTerminal, placedSessionOf } from "./obc.js";
+import { escapeOwner, moveTarget, DETACH_ICON, DETACH_POPUP_TIP } from "./actions.js";
+import { endStep, rowHeights } from "./tail.js";
 
 const LOG_MS = 1500, TX_MS = 4000;
 const POPUP_H = 560;   // a popup sizes to its content: the viewer sets its own height there
+const MEASURE_MAX = 60; // rows measured per frame (each is drawn once, unseen, to learn its height)
 
 export class Viewer {
   init(cx) {
@@ -36,10 +39,21 @@ export class Viewer {
     this.busy = false;
     this.gen = 0;
     this.vscroll = VirtualListScrollHandle.new();
-    this.scroll = ScrollHandle.new();
+    // The transcript is a virtual list too: it is the only kind of scroll area a mod can move from code.
+    // Its rows are placed by heights measured after layout (hts: row signature -> height, for width htsW).
+    this.tscroll = VirtualListScrollHandle.new();
+    this.hts = new Map();
+    this.htsW = -1;
+    this.wantEnd = false;
     this.w = 0;
     this.handle = cx.focus_handle();
-    if (this.isAttach()) return;   // attach: a header; the terminal is its layout block
+    this.keysSig = "";
+    if (this.isAttach()) {
+      this.bindKeys(cx);
+      cx.timer.after(0, () => { try { this.handle.focus(); } catch { /* not focusable yet */ } });
+      cx.timer.after(60, () => { try { this.handle.focus(); } catch { /* not focusable yet */ } });
+      return;
+    }
     // Keyboard here so Escape reaches this viewer (a popup over the window, or a pane).
     cx.timer.after(0, () => { try { this.handle.focus(); } catch { /* not focusable yet: Herdr's Escape still closes it */ } });
     cx.spawn(async (cx) => {
@@ -55,6 +69,13 @@ export class Viewer {
       this.lastLive = this.isLive();
       this.load(cx);
     });
+  }
+
+  bindKeys(cx) {
+    if (typeof cx.bind_keys !== "function") return;
+    cx.bind_keys([
+      { keystroke: "escape", action: "ob_outline.attach_detach", context: "ObAttach" },
+    ]);
   }
 
   // Live while the run it belongs to is live in the feed (a viewer without a run uses props.live).
@@ -83,7 +104,7 @@ export class Viewer {
         if (next.length && next[next.length - 1] === "") next.pop();
         const grew = next.length !== this.lines.length || next[next.length - 1] !== this.lines[this.lines.length - 1];
         this.lines = next.map((l) => (l.length > 600 ? l.slice(0, 599) + "…" : l));
-        if (grew && this.follow) this.needEnd = 2;
+        if (grew && this.follow) this.askEnd();
       } else {
         if (!this.script) throw new Error(this.err ?? "transcript.py is missing");
         const r = await exec("python3", ["-c", this.script, this.p.path, "250"], { ...this.on(), timeout: 20000 });
@@ -94,7 +115,7 @@ export class Viewer {
         const grew = (d.entries?.length ?? 0) !== this.entries.length || this.meta?.size !== d.size;
         this.entries = Array.isArray(d.entries) ? d.entries : [];
         this.meta = { format: d.format, truncated: d.truncated, size: d.size };
-        if (grew) { this.gen++; if (this.follow) this.needEnd = 2; }
+        if (grew) { this.gen++; if (this.follow) this.askEnd(); }
       }
       this.err = null;
     } catch (e) {
@@ -108,7 +129,7 @@ export class Viewer {
 
   command(c, cx) {
     const [verb, arg] = splitCmd(c);
-    if (verb === "viewer-follow") { this.follow = arg !== "off"; if (this.follow) this.needEnd = 2; }
+    if (verb === "viewer-follow") { this.follow = arg !== "off"; if (this.follow) this.askEnd(); }
     else if (verb === "viewer-move") this.moveToMain();
     else if (verb === "viewer-copy") copied(cx, "path", this.p.path);
     else if (verb === "viewer-close") this.close();
@@ -116,9 +137,18 @@ export class Viewer {
     else if (verb === "viewer-tool") { const i = Number(arg); this.open.has(i) ? this.open.delete(i) : this.open.add(i); }
   }
 
+  // Ask for a jump to the end: log calls scroll_to_bottom() once; transcript repeats until rows are measured.
+  askEnd() { this.wantEnd = true; }
+
   toEnd() {
     if (this.p.view === "log") { if (this.lines.length) this.vscroll.scroll_to_bottom(); }
-    else if (this.entries.length) this.scroll.scroll_to_item(this.entries.length);
+    else if (this.entries.length) this.tscroll.scroll_to_bottom();
+  }
+
+  // A row's height depends on its content, whether it is expanded and the width; this names the first two.
+  hkey(i) {
+    const e = this.entries[i] ?? {};
+    return `${e.k}|${e.ts ?? ""}|${String(e.text ?? "").length}|${e.tool ?? ""}|${String(e.args ?? "").length}|${String(e.result ?? "").length}|${this.open.has(i) ? 1 : 0}`;
   }
 
   // Move to main window (structural), then the popup closes. An attached terminal gets a pane or a tab
@@ -151,14 +181,50 @@ export class Viewer {
   // The header of an attach popup (the terminal itself is the block below it).
   attachHeader(t) {
     const p = this.p;
-    const where = [p.parent ? `started by ${p.parent}` : null, p.machine ? machineLabel(p.machine) : null, p.terminal].filter(Boolean).join(" · ");
+    const term = p.terminal ? terminals().find((x) => x.address === p.terminal) : null;
+    const raw = term ? (typeof term.status === "string" ? term.status : term.status?.state) : "working";
+    const st = normStatus(raw) || "idle";
+    const stLabel = st === "blocked" ? "needs you" : st;
+    const stColor = st === "blocked" || st === "failed" ? t.blocked : st === "working" ? t.working : t.muted;
+    const mainSess = p.terminal ? placedSessionOf(p.terminal) : null;
+    const mainAddr = mainSess?.address ?? p.mainTerminal ?? null;
+    const mainLabel = mainSess?.label ?? p.mainTab ?? null;
+    const where = [
+      p.parent ? `started by ${p.parent}` : null,
+      p.machine ? machineLabel(p.machine) : null,
+      p.terminal,
+      "Esc detaches · click terminal to type",
+    ].filter(Boolean).join(" · ");
     return h_flex().id("vtitle").h(36).flex_none().pl(12).pr(6).gap(8).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .child(icon("terminal", S.icon, t.muted))
       .child(div().flex_none().max_w(260).truncate().text_size(S.text).font_semibold().text_color(t.foreground).child(p.title || p.terminal))
-      .child(h_flex().flex_none().gap(4).items_center().child(statusMark("working", 11)).child(div().text_size(S.textXs).text_color(t.working).child("live")))
+      .child(h_flex().flex_none().gap(4).items_center().child(statusMark(st, 11)).child(div().text_size(S.textXs).text_color(stColor).child(stLabel)))
       .child(div().flex_1().min_w(0).truncate().text_size(S.textXs).text_color(t.dim).child(where))
+      .when(Boolean(mainAddr), (e) => e.child(
+        h_flex().id("v-main-tab").h(24).px(8).gap(5).flex_none().items_center().rounded(S.radius).cursor_pointer()
+          .border_1().border_color(t.input).text_size(S.textXs).text_color(t.muted)
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(`Go to ${mainLabel || mainAddr}`)
+          .on_mouse_down("left", stop)
+          .on_click((_e, cx) => { cx.stop_propagation(); this.close(); revealTerminal(mainAddr); })
+          .child(icon("locate", S.iconXs))
+          .child(div().whitespace_nowrap().child("Main tab")),
+      ))
       .child(this.moveButton(t))
-      .child(iconButton({ id: "v-close", icon: "x", tip: "Close", onClick: () => this.close() }));
+      .child(this.detachButton(t));
+  }
+
+  // Detach, in words (a bare x here reads as "end the program"): the popup closes, the terminal keeps running in
+  // the background and stays listed in the Outline.
+  detachButton(t) {
+    return h_flex().id("v-detach").h(24).px(8).gap(5).flex_none().items_center().rounded(S.radius).cursor_pointer()
+      .border_1().border_color(t.input).text_size(S.textXs).text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(DETACH_POPUP_TIP)
+      .on_mouse_down("left", stop)
+      .on_click((_e, cx) => { cx.stop_propagation(); this.close(); })
+      .child(icon(DETACH_ICON, S.iconXs))
+      .child(div().whitespace_nowrap().child("Detach"));
   }
 
   // ---------------------------------------------------------------- render
@@ -172,7 +238,7 @@ export class Viewer {
       .child(div().flex_none().max_w(narrow ? 200 : 320).truncate().text_size(S.text).font_semibold().text_color(t.foreground).child(p.title || base(p.path)))
       .when(live, (e) => e.child(h_flex().flex_none().gap(4).items_center().child(statusMark("working", 11)).child(div().text_size(S.textXs).text_color(t.working).child("live"))))
       .child(div().flex_1().min_w(0).truncate().text_size(S.textXs).text_color(t.dim).child(narrow ? "" : where))
-      .child(iconButton({ id: "v-follow", icon: "arrow-right", tip: this.follow ? "Following the end (scroll up to stop)" : "Jump to the end and follow", active: this.follow, onClick: (_e, cx) => { this.follow = true; this.needEnd = 2; cx.notify(); } }))
+      .child(iconButton({ id: "v-follow", icon: "arrow-right", tip: this.follow ? "Following the end (scroll up to stop)" : "Jump to the end and follow", active: this.follow, onClick: (_e, cx) => { this.follow = true; this.askEnd(); cx.notify(); } }))
       .child(iconButton({ id: "v-refresh", icon: "refresh", tip: "Read again", onClick: (_e, cx) => this.load(cx) }))
       .child(iconButton({ id: "v-copy", icon: "copy", tip: `Copy path\n${p.path}`, onClick: (_e, cx) => copied(cx, "path", p.path) }))
       .when(Boolean(p.overlay), (e) => e
@@ -240,7 +306,6 @@ export class Viewer {
       return v_flex().id(id).flex_none().mx(14).mt(4)
         .child(h_flex().id(`${id}-h`).h(24).px(8).gap(7).items_center().rounded(S.radius).cursor_pointer()
           .bg(open ? t.hover : alpha(t.raised, 0.6)).hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => { open ? this.open.delete(i) : this.open.add(i); cx.notify(); })
           .child(icon(hasResult ? (open ? "chevron-down" : "chevron-right") : "dot", S.iconXs, t.dim))
           .child(icon(e.error ? "circle-x" : "terminal", S.iconXs, e.error ? t.blocked : t.muted))
           .child(div().flex_none().font_family(MONO).text_size(11).font_semibold().text_color(e.error ? t.blocked : t.muted).child(e.tool ?? "tool"))
@@ -252,24 +317,86 @@ export class Viewer {
       .child(div().h(1).w(18).bg(t.border)).child(div().child(e.text ?? "")).child(div().h(1).flex_1().bg(t.border));
   }
 
-  transcriptBody(t) {
-    return div().id("vtx-wrap").relative().flex_1().min_h(0).bg(t.background)
+  // The transcript: a virtual list (scrolled to the end from code), with rows of measured height. Rows whose
+  // height is not known yet are also drawn, unseen, in a layer behind the list, where on_size_change reports
+  // it; a list row may not register handlers, so a tool row's click goes through the list's on_item_click.
+  transcriptBody(t, plan) {
+    const n = this.entries.length;
+    const zoom = settings().zoom || 1;
+    return div().id("vtx-wrap").relative().flex_1().min_h(0).overflow_hidden().bg(t.background)
       .on_scroll_wheel((e, cx) => { if ((e.delta?.y ?? 0) > 0 && this.follow) { this.follow = false; cx.notify(); } })
-      .child(v_flex().id("vtx").size_full().overflow_y_scroll().track_scroll(this.scroll)
-        .children(this.entries.map((e, i) => this.entry(t, e, i)))
-        .child(div().id("vtx-end").h(14).flex_none()))
-      .child(Scrollbar.vertical("vtx").absolute().inset_0());
+      .child(v_flex().id("vtx-measure").absolute().top(0).left(0).w_full().opacity(0)
+        .children(plan.todo.map((i) => {
+          const k = this.hkey(i);
+          return v_flex().id(`vm-${i}`).w_full().flex_none()
+            .on_size_change((s, cx) => { const h = s.height / zoom; if (h > 0 && Math.abs((this.hts.get(k) ?? 0) - h) > 0.5) { this.hts.set(k, h); cx.notify(); } })
+            .child(this.entry(t, this.entries[i], i));
+        })))
+      .child(v_virtual_list("vtx", n + 1, plan.heights, (i) => (i < n ? `${this.gen}-${i}` : "end"), (range) => {
+        const out = [];
+        for (let i = range.start; i < range.end; i++) {
+          out.push(i < n ? v_flex().w_full().child(this.entry(t, this.entries[i], i)) : div().w_full());
+        }
+        return out;
+      }).track_scroll(this.tscroll).size_full()
+        .on_item_click((key, cx) => {
+          const i = Number(String(key).split("-")[1]);
+          const e = this.entries[i];
+          if (e?.k !== "tool" || e.result == null || e.result === "") return;
+          this.open.has(i) ? this.open.delete(i) : this.open.add(i);
+          cx.notify();
+        }))
+      .child(Scrollbar.vertical("vtx").viewport_from_layout().absolute().inset_0());
+  }
+
+  // Heights for the list, and the rows still to be measured (the width they were measured at is kept:
+  // another width wraps text differently, so they are measured again).
+  transcriptPlan() {
+    const wk = Math.round(this.w);
+    if (wk !== this.htsW) { this.hts.clear(); this.htsW = wk; if (this.follow) this.wantEnd = true; }
+    if (this.hts.size > 4 * this.entries.length + 64) this.hts.clear();
+    const todo = [];
+    let unmeasured = 0;
+    const heights = rowHeights(this.entries.length, (i) => {
+      const h = this.hts.get(this.hkey(i));
+      if (h == null) { unmeasured++; if (todo.length < MEASURE_MAX) todo.push(i); }
+      return h;
+    });
+    return { heights, todo, unmeasured };
   }
 
   render(cx) {
     const t = tc();
     this.p = props() ?? this.p;
-    if (this.isAttach()) return v_flex().id("root").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).child(this.attachHeader(t));
+    if (this.isAttach()) {
+      let sig = "";
+      try { sig = JSON.stringify(keys?.() ?? ""); } catch { sig = ""; }
+      if (sig !== this.keysSig) {
+        const first = this.keysSig === "";
+        this.keysSig = sig;
+        if (!first) cx.timer.after(0, (cx) => this.bindKeys(cx));
+      }
+      return v_flex().id("root").size_full().min_h(0).bg(t.chrome).text_color(t.foreground)
+        .track_focus(this.handle)
+        .key_context("ObAttach")
+        .on_action("ob_outline.attach_detach", (_a, cx) => { cx.stop_propagation(); this.close(); })
+        .on_key_down((e, cx) => {
+          if (e.key === "escape") { cx.stop_propagation(); this.close(); }
+        })
+        .child(this.attachHeader(t));
+    }
     const has = this.p.view === "log" ? this.lines.length > 0 : this.entries.length > 0;
-    // Scroll requests are consumed after layout: ask on this frame and the next (the list may be new).
-    if (has && this.needEnd > 0) {
-      this.toEnd();
-      if (--this.needEnd > 0) cx.timer.after(0, (cx) => cx.notify());
+    let plan = null;
+    if (has && this.p.view === "log") {
+      if (this.wantEnd) {
+        this.wantEnd = false;
+        this.toEnd();
+      }
+    } else if (has) {
+      plan = this.transcriptPlan();
+      const step = endStep({ follow: this.follow, want: this.wantEnd, unmeasured: plan.unmeasured });
+      this.wantEnd = step.want;
+      if (step.scroll) this.toEnd();
     }
     return v_flex().id("root").size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .when(Boolean(this.p.overlay), (e) => e.h(POPUP_H))
@@ -279,7 +406,7 @@ export class Viewer {
       })
       .on_size_change((s, cx) => { const w = s.width / (settings().zoom || 1); if (Math.abs(w - this.w) > 1) { this.w = w; cx.notify(); } })
       .child(this.titleBar(t))
-      .child(has ? (this.p.view === "log" ? this.logBody(t) : this.transcriptBody(t)) : this.stateBody(t))
+      .child(has ? (this.p.view === "log" ? this.logBody(t) : this.transcriptBody(t, plan)) : this.stateBody(t))
       .child(this.footer(t));
   }
 }

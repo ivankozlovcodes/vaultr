@@ -38,7 +38,8 @@ The layout also uses Herdr's shipped `files` and `changes` mods.
 - **`ob-feed`**: Background scanner for Pi runs and Claude Code agent transcripts. It also lists the files each agent touched (paths and tool names from the transcript tail, never contents) and the artifacts it published (from the herdr-artifact store), for the graph's notes and artifacts.
 - **`ob-outline`**: The active tab's panes, each with the agents that run in its terminal nested under it (pi runs, Claude Code agents, child terminals), with task trees, execution steps, tool call logs, and token metrics. "All" groups every machine by session, with unattached background terminals last.
   - A transcript or log opens in a popup over the window. **Move to main window** in its header puts it in the main window as a pane.
-  - **Attach** (the row button, or the context menu) opens a live local `hc` child terminal in a popup you can watch and type into. **Move to main window** gives it a tab of its own.
+  - **Attach** (the row button, or the context menu) opens a live `hc` child terminal in a popup you can watch and type into. **Detach** in its header (or a click outside the popup) closes the popup and leaves the terminal running in the background. **Move to main window** gives it a tab of its own.
+  - A terminal that has a pane goes back to the background with **Detach to background** (the pane's `⋮` menu, a right-click on its Outline row, or on its tab when it is the tab's only pane); the header of a child terminal's pane shows a **Detach** button. Close pane ends the program; Detach does not.
   - Subagents never get a tab or pane by themselves: only **Move to main window** puts one on screen.
 - **`ob-props`**: Detailed properties inspector for active terminals, including environment, git repo details, machine stats, and a Usage section for the followed Claude Code or pi session (tokens by kind, context in use, model, turns, subagents' output tokens).
 - **`ob-graph`**: Interactive relationship graph visualizing connections between machines, spaces, terminals (the panes of one tab drawn as a small cluster), and subagents. Its layout and view follow Quartz v4's graph (MIT) on d3-force (ISC), vendored in `mods/ob-graph/vendor/`; notices in `mods/ob-graph/NOTICE.md`.
@@ -146,7 +147,7 @@ The checks run in seconds and need no Herdr window: `python3 -m unittest discove
 
 ## Known limits
 
-- Attach is local only: it opens `hc` terminals on this computer, not on other machines.
+- Open session (starting a new `pi --session` terminal from a step) is local only; Attach works on live `hc` terminals on this computer and remote machines.
 - The right-hand panels (Properties, Outline's pinned session) follow the last focused main-window pane, or the pin; there is no setting for it. Outline's tab view always shows the active tab's panes.
 - macOS support is untested on a real Mac so far. The keys, the installer and the agent scan (`ps`/`lsof` in place of `/proc`) are covered by tests that fake the Mac side. `ps -E` shows only your own processes' environment, so an agent that runs as another user is not found.
 - Notes and artifacts (ob-graph) are a proof of concept: a touch comes from the last 64 KiB of each transcript, so an older read or write is not seen, and a Write is a "create" only when no earlier touch of that path is in that tail. pi's file-tool names (read, write, edit) are taken from its session format and not yet checked against a live pi session. Attachments in the vault are skipped; a note or plain file on another machine is not shown (only its published artifacts are); a file an agent wrote into its own project shows as an artifact along with its published ones.

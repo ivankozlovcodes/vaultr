@@ -1623,7 +1623,8 @@ def run_obc(body):
             "export const notify = () => null;\n",
             encoding="utf-8",
         )
-        kit = ["machineOf", "tabLabel", "paneName", "dur", "ago", "fmtTokens", "fmtCost", "normStatus", "copyText", "base"]
+        kit = ["machineOf", "tabLabel", "paneName", "dur", "ago", "fmtTokens", "fmtCost", "normStatus", "copyText", "base",
+               "parentAddrOf", "isChildTerminalOf", "getHidden", "updateHidden", "patchHidden", "normHidden", "isSpaceHidden", "isTabHidden"]
         Path(folder, "kit.js").write_text(
             f"export {{ followTarget }} from {json.dumps(FOLLOW.as_uri())};\n"
             'export const MOD = "ob-graph";\n'

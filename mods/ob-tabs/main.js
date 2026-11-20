@@ -27,6 +27,7 @@ import {
 import { vaultFor } from "./vault_rules.js";
 import { zenPlan } from "./zen.js";
 import { isSettingsOpen } from "./settings_open.js";
+import { detachItem } from "./detach.js";
 import {
   S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, stackOf, isShown, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
@@ -356,6 +357,7 @@ export default class Tabs extends View {
       { label: "Move to space…", icon: "move", command: `ob-tabs.move-to:${tab.id}` },
       { separator: true },
       { label: "New tab", icon: "plus", command: "tab.new", args: { space: space.id }, kbd: bindingFor("tab.new") ?? undefined },
+      detachItem(ps, tab.id),
       { label: "Close tab", icon: "x", danger: true, command: "tab.close", args: { id: tab.id }, kbd: bindingFor("tab.close") ?? undefined },
     ], { width: 250, title: tabLabel(tab, ps) });
   }

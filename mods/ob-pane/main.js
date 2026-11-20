@@ -1,7 +1,8 @@
 // ob-pane: the pane header of the obsidian layout (one copy per pane; props { pane, terminal }).
 // Obsidian's view header: back / forward on the left, the breadcrumb
 // "machine / space / tab / pane" centered (left-aligned when narrow), and on the right the
-// sub-agent badge, the status (or "Needs you"), split / zoom / close on hover and "more" (⋮).
+// sub-agent badge, the status (or "Needs you"), split / zoom / close on hover, Detach (a child terminal's
+// pane: back to the background, still running) and "more" (⋮).
 // Every breadcrumb segment opens a menu of its siblings. A click on the header focuses the pane;
 // focus follows the pointer (follow.js).
 // Mod panes (no terminal) show only their name and a close button.
@@ -18,6 +19,7 @@ import {
   normHidden, isTabHidden,
 } from "./kit.js";
 import { follow, DELAY } from "./follow.js"; // focus-to-hover
+import { isChildTerminal, detachItem, DETACH_ICON, DETACH_TIP } from "./detach.js";
 
 const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
 
@@ -141,6 +143,7 @@ export default class PaneHeader extends View {
       { label: p.zoomed ? "Unzoom" : "Zoom", icon: p.zoomed ? "minimize" : "maximize", command: "pane.zoom", args: { pane: p.pane } },
       zenItem,
       { separator: true },
+      detachItem(addr),
       { label: "Close pane", icon: "x", danger: true, command: "pane.close", args: { pane: p.pane } },
     ], { width: 260, title: pTitle });
   }
@@ -206,6 +209,22 @@ export default class PaneHeader extends View {
       }
       right.push(small(`zoom-${p.pane}`, p.zoomed ? "minimize" : "maximize", tip(p.zoomed ? "Unzoom" : "Zoom", "pane.zoom"), () => run("pane.zoom", { pane: p.pane })));
       rightW += (addr ? 3 : 1) * 26;
+    }
+    // A child terminal's pane: Detach is always shown, in words when there is room, so the way back to the
+    // background is not Close pane (that ends the agent).
+    if (addr && isChildTerminal(terminals().find((tm) => tm.address === addr))) {
+      const detach = () => run("terminal.park", { terminal: addr });
+      if (w >= 300) {
+        right.push(h_flex().id(`detach-${p.pane}`).h(20).px(6).gap(4).flex_none().items_center().rounded(S.radius).cursor_pointer()
+          .border_1().border_color(t.input).text_size(S.textXs).font_medium().text_color(t.muted)
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(DETACH_TIP)
+          .on_mouse_down("left", stop)
+          .on_click((_e, cx) => { cx.stop_propagation(); detach(); })
+          .child(icon(DETACH_ICON, S.iconXs))
+          .child("Detach"));
+        rightW += 66;
+      } else { right.push(small(`detach-${p.pane}`, DETACH_ICON, DETACH_TIP, detach)); rightW += 26; }
     }
     if (!addr || this.hovered) { right.push(small(`close-${p.pane}`, "x", tip("Close pane", "pane.close"), () => run("pane.close", { pane: p.pane }))); rightW += 26; }
     if (addr) { right.push(small(`more-${p.pane}`, "more", "More options", () => this.moreMenu(this.ctx() ?? x))); rightW += 26; }

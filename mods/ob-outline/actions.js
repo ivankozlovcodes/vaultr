@@ -29,9 +29,6 @@ export function attachPlan(row) {
   }
   if (row?.kind === "terminal") {
     if (row.state !== "live") return { show: false, enabled: false, tip: "" };
-    if (String(row.address ?? "").includes("/")) {
-      return { show: true, enabled: false, tip: "Attach works for terminals on this computer only" };
-    }
     return { show: true, enabled: true, tip: "Attach: the live terminal in a popup, typeable" };
   }
   return { show: false, enabled: false, tip: "" };
@@ -42,15 +39,25 @@ export function attachPlan(row) {
 // ATTACH_TRIES times ATTACH_WAIT ms apart, then attach gives up with the reason. -> { do: "open"|"retry"|"fail", why? }
 export const ATTACH_TRIES = 4, ATTACH_WAIT = 250;
 export function attachStep(address, term, tries, canWait) {
-  if (String(address ?? "").includes("/")) return { do: "fail", why: "Attach works for terminals on this computer only" };
   if (term?.state === "live") return { do: "open" };
   if (canWait && tries < ATTACH_TRIES) return { do: "retry" };
   return { do: "fail", why: term ? `Terminal ${address} is ${term.state ?? "not live"}` : `No live terminal ${address}` };
 }
 
-// Escape in a popup: a transcript or log closes; an attached terminal keeps Escape (agents use it).
-export function escapeOwner(view) {
-  return view === "attach" ? "terminal" : "close";
+// Escape in a popup: a transcript or log closes; an attached terminal keeps Escape (agents use it)
+// only once the terminal itself has focus. On initial open, the attach header/container has focus so Escape detaches.
+export function escapeOwner(view, terminalFocused = false) {
+  return view === "attach" && terminalFocused ? "terminal" : "close";
+}
+
+// Detach. In an attach popup it closes the popup; for a terminal that has a pane (after "Move to main window")
+// it is Herdr's terminal.park: the pane (or its tab, when it was the only pane) goes away and the program keeps
+// running in the background, where the Outline lists it. Close pane would end the program.
+export const DETACH_ICON = "win-min";
+export const DETACH_POPUP_TIP = "Detach: close popup and leave terminal running in background";
+// -> the menu item that parks a placed terminal, or null for a pane without one (a mod pane).
+export function detachItem(terminal) {
+  return terminal ? { label: "Detach to background", icon: DETACH_ICON, command: "terminal.park", args: { terminal } } : null;
 }
 
 // Move to main window: beside the focused pane when there is one, else a new tab. The popup closes after.

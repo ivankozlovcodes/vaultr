@@ -2,7 +2,7 @@
 // Built on kit.subagentsOf (the only reader of the shared feed). Same file in ob-sessions.
 
 import { terminals } from "herdr";
-import { subagentsOf, normStatus } from "./kit.js";
+import { subagentsOf, normStatus, isChildTerminalOf } from "./kit.js";
 
 // A Claude Code sub-agent's state. Herdr's live records win; without one, the feed's `ended`
 // decides, and an unfinished transcript counts as working only while it was written to lately
@@ -37,7 +37,7 @@ export function subItems(address, all = null, now = Date.now()) {
       text: [c.desc, c.type, c.model].filter(Boolean).join(" ") });
   }
   for (const t of all ?? terminals()) {
-    if (t.parent !== address || t.state !== "live") continue;
+    if (!isChildTerminalOf(t, address)) continue;
     const status = t.status === "error" ? "blocked" : t.status === "done" ? "idle" : t.status ?? null;
     const label = t.name || t.template || t.program?.name || t.address;
     out.push({ kind: "child", key: `h:${t.address}`, id: t.address, label, detail: t.address, status, live: isLive(normStatus(status)), at: t.created_ms ?? 0, item: t, text: label });

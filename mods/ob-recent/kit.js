@@ -569,6 +569,14 @@ export const machineOf = (addr) => (String(addr ?? "").includes("/") ? String(ad
 export const localId = (addr) => String(addr ?? "").split("/").pop();
 export const addrOn = (machine, id) => (machine ? `${machine}/${id}` : id);
 export const machineLabel = (m) => m ?? "This computer";
+// Parent terminal address of `t` (ignoring self-loops).
+export function parentAddrOf(t) {
+  return t?.parent && t.parent !== t.address ? t.parent : null;
+}
+export function isChildTerminalOf(t, parentAddr) {
+  if (!t || t.state !== "live" || !parentAddr || t.address === parentAddr) return false;
+  return parentAddrOf(t) === parentAddr;
+}
 // Where a space is now: its first terminal's live folder, else where it was made. ps = panes() read once.
 export function place(space, ps) {
   const tabs = new Set((space?.tabs ?? []).map((c) => c.id));

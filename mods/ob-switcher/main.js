@@ -20,7 +20,7 @@ import {
 import {
   S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel,
   feed, bookmarks, VIEWS, findNode, current, chordParts, kbd, sessionTitleOf,
-  normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden,
+  normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden, parentAddrOf,
 } from "./kit.js";
 import { commandRows } from "./commands.js";
 import { sessionTitles, bestTitle } from "./titles.js";
@@ -210,10 +210,11 @@ export default class Switcher extends View {
     // Sub-agents: hc child terminals, pi runs, Claude agents.
     const parentText = (addr) => { const w = where.get(addr); return w ? tabText(w.tab) : addr ?? "?"; };
     for (const t of terms) {
-      if (!t?.parent || t.state !== "live") continue;
+      const parentAddr = parentAddrOf(t);
+      if (!parentAddr || parentAddr === t?.address || t.state !== "live") continue;
       items.push({
         key: `child:${t.address}`, kind: "child", label: t.name || t.program?.name || t.title || t.address,
-        context: `subagent of ${parentText(t.parent)}`, words: `subagent ${t.program?.name ?? ""}`,
+        context: `subagent of ${parentText(parentAddr)}`, words: `subagent ${t.program?.name ?? ""}`,
         status: t.status ?? null, terminal: t.address, bookmarked: isBm("terminal", t.address),
         lead: () => programIcon(t.program, S.icon), go: () => run("terminal.peek", { terminal: t.address }),
       });
