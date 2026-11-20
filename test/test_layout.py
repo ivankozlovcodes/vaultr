@@ -1,5 +1,6 @@
 """layouts/vaultr.json: it parses, its ids are unique, every block names a mod that exists (or one of Herdr's shipped
 mods), each stack's active child is one of its children, and the four side stacks hold the panels the README lists."""
+import copy
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
 import json
 import os
@@ -218,6 +219,51 @@ class Layout(unittest.TestCase):
         bad_nodes = {k: v for k, v in tables["node"].items() if v not in layout_ids}
         self.assertEqual(bad_nodes, {}, "NODE values missing from layout")
         self.assertTrue(hideable_ids().issubset(layout_ids))
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_views_resolve_wherever_they_sit(self):
+        """A view is found by its id, never by its position."""
+        rearranged = copy.deepcopy(self.layout)
+        stacks = [n for n in walk(rearranged) if n.get("type") == "stack"]
+        orig_children = [list(s["children"]) for s in stacks]
+        orig_stack = {c["id"]: s["id"] for s in stacks for c in s["children"]}
+        moved_stack = {}
+        for i, s in enumerate(stacks):
+            s["children"] = list(reversed(orig_children[(i - 1) % len(stacks)]))
+            s["active"] = s["children"][0]["id"]
+            for c in s["children"]:
+                moved_stack[c["id"]] = s["id"]
+
+        res = run_kit(
+            f"const shipped = {json.dumps(self.layout)};\n"
+            f"const moved = {json.dumps(rearranged)};\n"
+            "const out = {};\n"
+            "for (const id of Object.keys(K.VIEWS)) {\n"
+            "  const node = K.findNode(moved, id);\n"
+            "  const stack = K.stackOf(moved, id);\n"
+            "  const origNode = K.findNode(shipped, id);\n"
+            "  out[id] = {\n"
+            "    foundId: node?.id ?? null,\n"
+            "    stackId: stack?.id ?? null,\n"
+            "    info: K.viewInfo(node),\n"
+            "    shippedInfo: K.viewInfo(origNode),\n"
+            "    shown: K.isShown(moved, id),\n"
+            "  };\n"
+            "}\n"
+            "return out;",
+            layout_tree=rearranged,
+        )
+        self.assertEqual(set(res), set(orig_stack))
+        for vid, got in res.items():
+            with self.subTest(view=vid):
+                self.assertEqual(got["foundId"], vid)
+                self.assertEqual(got["stackId"], moved_stack[vid])
+                self.assertNotEqual(got["stackId"], orig_stack[vid])
+                self.assertEqual(got["info"], got["shippedInfo"])
+        for s in stacks:
+            self.assertTrue(res[s["active"]]["shown"], s["active"])
+            for other in s["children"][1:]:
+                self.assertFalse(res[other["id"]]["shown"], other["id"])
 
 
 if __name__ == "__main__":
