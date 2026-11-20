@@ -124,7 +124,8 @@ def run_main(body, titles=None):
         Path(folder, "herdr.js").write_text("".join(f"export const {n} = () => [];\n" for n in herdr_fns), encoding="utf-8")
         kit_stubs = ["S", "icon", "programIcon", "iconButton", "treeRow", "sectionHeader", "emptyState", "openMenu",
                      "statusMark", "needsYou", "normStatus", "takeFocus", "machineOf", "isBookmarked", "toggleBookmark",
-                     "mainAgents", "placedTerminals", "getHidden", "isHidden", "hideItem", "unhideItem", "hiddenSummary",
+                     "mainAgents", "placedTerminals", "normHidden", "isMachineHidden", "isSpaceHidden", "isTabHidden",
+                     "getHidden", "isHidden", "hideItem", "unhideItem", "hiddenSummary",
                      "dismissedSet", "needsYouShown", "dismissNeedsYou", "restoreNeedsYou", "pruneDismissed"]
         Path(folder, "kit.js").write_text(
             'export { cleanTitle } from "./names.js";\n'
