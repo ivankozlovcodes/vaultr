@@ -16,7 +16,7 @@
 //
 // History (shared "ob.history" = { entries: [{space, tab, pane, terminal, at}], index }): every
 // render compares focused() with the entry at `index` and pushes a new entry when it changed,
-// unless the change comes from back/forward. Mirrored to localStorage "history" for restarts.
+// unless the change comes from back/forward.
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
@@ -77,7 +77,6 @@ export default class Tabs extends View {
     this.pressed = null;     // tab id pressed (drag to reorder)
     this.over = null;        // tab id the drag is over
     this.nav = null;         // { space, tab, pane, until }: a back/forward jump in flight
-    this.restoreHistory();
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -95,17 +94,8 @@ export default class Tabs extends View {
     return h && Array.isArray(h.entries) ? h : { entries: [], index: -1 };
   }
 
-  restoreHistory() {
-    if (shared("ob.history")) return;
-    try {
-      const saved = JSON.parse(localStorage.getItem("history") ?? "null");
-      if (saved && Array.isArray(saved.entries)) setShared("ob.history", saved);
-    } catch { /* nothing saved */ }
-  }
-
   writeHistory(h) {
     setShared("ob.history", h);
-    try { localStorage.setItem("history", JSON.stringify(h)); } catch { /* storage unavailable */ }
   }
 
   // Called from render: record the focused spot (deferred out of render with a 0 ms timer).

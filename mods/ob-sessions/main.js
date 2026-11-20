@@ -23,7 +23,7 @@ import {
   avatar, emptyState, inputFrame, openMenu, ago, dur, tilde, highlight, takeFocus, bindingFor,
   chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneLabelOf, paneSecondary, place, openView,
   mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden, getHidden, updateHidden,
-  lsGet, lsSet, hasMod,
+  hasMod,
   paneAttention, tabAttention, spaceAttention, getDismissed, terminalsByAddress,
 } from "./kit.js";
 import { Git } from "./git.js";
@@ -95,16 +95,10 @@ export default class Sessions extends View {
     this.input.on("blur", (_e, cx) => { this.inputFocused = false; cx.notify(); });
     this.open = load("tree.open", {});
     this.folded = new Set(load("machines.folded", []));
-    let rawHidden = shared("ob.hidden");
-    if (!rawHidden) {
-      rawHidden = lsGet("hidden", null);
-      if (!rawHidden) {
-        const legacyMachines = load("machines.hidden", []);
-        const settledTabs = spaces().flatMap((s) => (s.tabs ?? []).filter((t) => t.settled).map((t) => t.id));
-        rawHidden = { machines: Array.isArray(legacyMachines) ? legacyMachines : [], spaces: [], tabs: settledTabs };
-      }
-      setShared("ob.hidden", rawHidden);
-      lsSet("hidden", rawHidden);
+    if (!shared("ob.hidden")) {
+      const legacyMachines = load("machines.hidden", []);
+      const settledTabs = spaces().flatMap((s) => (s.tabs ?? []).filter((t) => t.settled).map((t) => t.id));
+      setShared("ob.hidden", { machines: Array.isArray(legacyMachines) ? legacyMachines : [], spaces: [], tabs: settledTabs });
     }
     this.hiddenOpen = Boolean(load("hidden.open", false));
     this.reconnecting = load("machines.reconnecting", {});

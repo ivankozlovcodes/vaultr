@@ -64,20 +64,15 @@ export function lsSet(k, v) {
   }
 }
 
+// Hidden machines, spaces, and tabs: persisted in shared("ob.hidden").
 export function getHidden() {
-  let h = shared("ob.hidden");
-  if (!h) {
-    h = lsGet("hidden", null);
-    if (h) setShared("ob.hidden", h);
-  }
-  return h ?? { machines: [], spaces: [], tabs: [] };
+  return shared("ob.hidden") ?? { machines: [], spaces: [], tabs: [] };
 }
 
 export function updateHidden(mutator) {
   const cur = getHidden();
   const next = typeof mutator === "function" ? mutator(cur) : mutator;
   setShared("ob.hidden", next);
-  lsSet("hidden", next);
   return next;
 }
 
@@ -92,20 +87,14 @@ import {
   isRecordLive, effectiveTermStatus,
 } from "./attention.js";
 
-// Dismissals { [terminal address]: stamp }: shared as ob.dismissed and kept in storage, like ob.hidden.
+// Dismissals { [terminal address]: stamp }: persisted in shared("ob.dismissed").
 export function getDismissed() {
-  let d = shared("ob.dismissed");
-  if (!d) {
-    d = lsGet("dismissed", null);
-    if (d) setShared("ob.dismissed", d);
-  }
-  return normDismissed(d);
+  return normDismissed(shared("ob.dismissed"));
 }
 
 export function updateDismissed(mutator) {
   const next = normDismissed(typeof mutator === "function" ? mutator(getDismissed()) : mutator);
   setShared("ob.dismissed", next);
-  lsSet("dismissed", next);
   return next;
 }
 

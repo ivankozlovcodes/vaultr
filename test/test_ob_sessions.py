@@ -206,17 +206,15 @@ class SessionsHideWiring(unittest.TestCase):
         self.assertIn("const isSub = SUB_KINDS.has(n.kind);", node_row.group(0))
         self.assertIn("const hovered = this.hover === r.key || cur;", node_row.group(0))
 
-    def test_sessions_imports_ls_helpers_used_by_init(self):
-        # Regression test: init() calls lsGet("hidden") and lsSet("hidden"), which must be imported from ./kit.js,
-        # and kit.js keeps plain unprefixed localStorage JSON helpers (Herdr gives each mod copy its own store).
-        m = re.search(r'import\s*\{([^}]*)\}\s*from\s*"\./kit\.js"', self.src)
-        self.assertIsNotNone(m)
-        imported = {tok.strip() for tok in m.group(1).split(",") if tok.strip()}
-        for sym in ("lsGet", "lsSet"):
-            if f"{sym}(" in self.src:
-                self.assertIn(sym, imported)
+    def test_sessions_migrates_legacy_hidden_without_ls_mirror(self):
+        # ob-sessions keeps only the one-time machines.hidden and settled-tab migration into shared("ob.hidden"),
+        # while kit.js keeps plain unprefixed localStorage JSON helpers (lsGet/lsSet) for panel view settings.
+        self.assertNotIn("lsGet(", self.src)
+        self.assertNotIn("lsSet(", self.src)
         kit_src = Path(ROOT, "kit", "kit.js").read_text(encoding="utf-8")
         self.assertNotIn("lsKey", kit_src)
+        self.assertIn("export function lsGet(", kit_src)
+        self.assertIn("export function lsSet(", kit_src)
         self.assertIn("localStorage.getItem(k)", kit_src)
         self.assertIn("localStorage.setItem(k, JSON.stringify(v))", kit_src)
 
