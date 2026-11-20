@@ -207,7 +207,7 @@ class Arguments(unittest.TestCase):
             "ob-tabs.bookmark", "ob-tabs.back", "ob-tabs.forward", "ob-tabs.last",
             "ob-tabs.settings:hotkeys", "mod.open:ob-settings", "ob-tabs.tab-list",
             "ob-tabs.new", "ob-tabs.switcher:views", "ob-tabs.switcher:move",
-            "ob-tabs.open:ob-sessions@reveal", "ob-tabs.toggle:ob-outline",
+            "ob-tabs.open:ob-sessions@reveal", "ob-tabs.toggle:ob-outline", "ob-tabs.toggle:ob-quotas",
             "ob-sessions.collapse-all",
             "ob-sessions.expand-all", "ob-feed.refresh", "ob-graph.fit", "ob-tabs.zen",
         ]:

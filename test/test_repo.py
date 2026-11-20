@@ -249,6 +249,24 @@ class Repo(unittest.TestCase):
                 paths.extend(re.findall(r"mods/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", line))
         self.assertTrue(paths)
         self.assertIn("mods/ob-settings/registry_rules.js", paths)
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, "LICENSE-shepherdr")))
+        with open(os.path.join(ROOT, "LICENSE-shepherdr"), encoding="utf-8") as f:
+            lic_sh = f.read()
+        self.assertIn("MIT License", lic_sh)
+        self.assertIn("Copyright (c) 2026 Elias Stravik", lic_sh)
+        self.assertIn("Shepherdr", notice)
+        self.assertIn("mods/ob-feed/providers/claude/quota.py", notice)
+        self.assertIn("mods/tasks/bin/herdr_task/machine.py", notice)
+        self.assertIn("LICENSE-shepherdr", notice)
+        for line in notice.splitlines():
+            if line.startswith("- ") and "Shepherdr's" in line:
+                first_path = re.findall(r"mods/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", line)[0]
+                paths.append(first_path)
+        with open(os.path.join(ROOT, "mods/ob-feed/providers/claude/quota.py"), encoding="utf-8") as f:
+            quota_hdr = "\n".join(f.read().splitlines()[:6])
+        self.assertIn("Shepherdr", quota_hdr)
+        self.assertIn("mods/tasks/bin/herdr_task/machine.py", quota_hdr)
+        self.assertIn("LICENSE-shepherdr", quota_hdr)
         for rel in paths:
             with self.subTest(path=rel):
                 self.assertTrue(os.path.exists(os.path.join(ROOT, rel)), f"missing {rel} named in NOTICE")

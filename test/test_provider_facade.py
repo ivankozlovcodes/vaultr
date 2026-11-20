@@ -339,6 +339,81 @@ return {
         self.assertEqual(got["usageMissingReader"]["reason"], "missing")
         self.assertEqual(got["searchMissingReader"]["reason"], "missing")
 
+    def test_quota_executes_capable_providers_caches_and_handles_failures(self):
+        got = run_facade(PROVIDERS_SETUP + """
+const QUOTA_PROVIDERS = {
+  ...PROVIDERS,
+  qok: { id: "qok", name: "Q OK", noun: "qok", caps: ["quota"] },
+  qabs: { id: "qabs", name: "Q Absent", noun: "qabs", caps: ["quota"] },
+};
+const Q_FILES = {
+  ...FILES,
+  "/app/mods/ob-feed/providers/index.json": JSON.stringify(["alpha", "beta", "plain", "qok", "qabs"]),
+  "/app/mods/ob-feed/providers/qok/manifest.json": JSON.stringify(QUOTA_PROVIDERS.qok),
+  "/app/mods/ob-feed/providers/qok/quota.py": "print('{}')\\n",
+  "/app/mods/ob-feed/providers/qabs/manifest.json": JSON.stringify(QUOTA_PROVIDERS.qabs),
+  "/app/mods/ob-feed/providers/qabs/quota.py": "print('absent')\\n",
+};
+const qReadCalls = [];
+const qReadTextFile = async (p) => {
+  qReadCalls.push(p);
+  if (Object.prototype.hasOwnProperty.call(Q_FILES, p)) return Q_FILES[p];
+  throw new Error("ENOENT: " + p);
+};
+const exec = async (cmd, args, opts) => {
+  execCalls.push({ cmd, args, opts });
+  const script = args[1];
+  if (script.includes("absent")) {
+    return { code: 0, stdout: JSON.stringify({ provider: "qabs", id: "qabs", installed: false, state: "absent", windows: [] }) };
+  }
+  return {
+    code: 0,
+    stdout: JSON.stringify({
+      provider: "qok",
+      id: "qok",
+      name: "Q OK",
+      installed: true,
+      state: "ok",
+      plan: "pro",
+      windows: [{ id: "5-hour", label: "5-hour", usedPct: 20, remainingPct: 80 }],
+      at: 1234,
+    }),
+  };
+};
+const p = makeProvider({ feed: () => ({ v: 2, providers: QUOTA_PROVIDERS, terms: {} }), exec, readTextFile: qReadTextFile, appHome: () => "/app" });
+const first = await p.quota({ machine: "devbox", timeout: 9000 });
+const second = await p.quota({ provider: "qok" });
+const readsBeforeDrop = qReadCalls.filter((x) => x.endsWith("/qok/quota.py")).length;
+p.dropCache();
+const third = await p.quota({ provider: "qok" });
+const readsAfterDrop = qReadCalls.filter((x) => x.endsWith("/qok/quota.py")).length;
+const unsupFilter = await p.quota({ provider: "alpha" });
+const pNoFeed = makeProvider({ feed: () => null, exec, readTextFile: qReadTextFile, appHome: () => "/app" });
+const noFeed = await pNoFeed.quota();
+const pCrash = makeProvider({
+  feed: () => ({ v: 2, providers: { qok: QUOTA_PROVIDERS.qok }, terms: {} }),
+  exec: async () => ({ code: 1, stdout: "", stderr: "quota boom" }),
+  readTextFile: qReadTextFile,
+  appHome: () => "/app",
+});
+const crashed = await pCrash.quota();
+return { first, second, third, readsBeforeDrop, readsAfterDrop, unsupFilter, noFeed, crashed, firstExec: execCalls[0] };
+""")
+        self.assertTrue(got["first"]["ok"])
+        self.assertEqual([x["id"] for x in got["first"]["providers"]], ["qok"])
+        self.assertEqual(got["first"]["providers"][0]["plan"], "pro")
+        self.assertEqual(got["firstExec"]["opts"], {"on": "devbox", "timeout": 9000})
+        self.assertTrue(got["second"]["ok"])
+        self.assertEqual(got["readsBeforeDrop"], 1)
+        self.assertTrue(got["third"]["ok"])
+        self.assertEqual(got["readsAfterDrop"], 2)
+        self.assertEqual(got["unsupFilter"]["reason"], "unsupported")
+        self.assertTrue(got["noFeed"]["ok"])
+        self.assertEqual([x["id"] for x in got["noFeed"]["providers"]], ["qok"])
+        self.assertFalse(got["crashed"]["ok"])
+        self.assertEqual(got["crashed"]["reason"], "failed")
+        self.assertIn("quota boom", got["crashed"]["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

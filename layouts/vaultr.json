@@ -135,8 +135,9 @@
             {
               "id": "ob-rt-stack",
               "type": "stack",
-              "active": "ob-props",
+              "active": "ob-quotas",
               "children": [
+                { "id": "ob-quotas", "type": "block", "content": { "mod": "ob-quotas", "props": { "slot": "ob-quotas" } } },
                 { "id": "ob-props", "type": "block", "content": { "mod": "ob-props", "props": { "slot": "ob-props" } } },
                 { "id": "ob-files", "type": "block", "content": { "mod": "files" } },
                 { "id": "ob-changes", "type": "block", "content": { "mod": "changes" } },

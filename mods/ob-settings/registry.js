@@ -34,6 +34,8 @@ const OB = [
   ["ob-tabs.open:ob-graph", "Open graph view", ["ctrl-shift-g"], "Graph view: Open graph view (Ctrl+G there; Ctrl+G stays with programs here)"],
   ["ob-tabs.toggle:ob-outline", "Toggle Outline", ["ctrl-shift-a"], null],
   ["ob-tabs.open:ob-outline", "Open outline", ["ctrl-alt-o"], "Outline: Show outline"],
+  ["ob-tabs.open:ob-quotas", "Show quotas", [], null],
+  ["ob-tabs.toggle:ob-quotas", "Toggle Quotas", [], null],
   ["ob-tabs.open:ob-props", "Show properties", ["ctrl-alt-i"], "Properties: Show file properties"],
   ["ob-tabs.open:ob-agents", "Show agents", ["ctrl-alt-a"], null],
   ["ob-tabs.bookmark", "Bookmark current tab", ["ctrl-alt-b"], "Bookmarks: Bookmark..."],

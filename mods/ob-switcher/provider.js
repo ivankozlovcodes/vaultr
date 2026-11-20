@@ -169,7 +169,7 @@ function buildSearchGroups(sources, results, query, opts = {}) {
 }
 
 export function makeProvider({ feed, exec, readTextFile, appHome }) {
-  const cache = { scan: null, scanProviders: null, readers: new Map() };
+  const cache = { scan: null, scanProviders: null, readers: new Map(), quotas: new Map() };
   const rawFeed = () => (typeof feed === "function" ? feed() : null);
   const providersDir = () => `${typeof appHome === "function" ? appHome() : ""}/mods/ob-feed/providers`;
 
@@ -547,15 +547,149 @@ export function makeProvider({ feed, exec, readTextFile, appHome }) {
     };
   }
 
-  async function quota(opts = {}) {
-    const targets = opts?.provider
-      ? [of(opts.provider)].filter(Boolean)
-      : list().map((m) => of(m.id)).filter(Boolean);
-    const capable = targets.filter((p) => p.can("quota"));
+  async function loadQuotaCapabilities(providerFilter) {
+    const listed = list();
+    if (listed.length > 0) {
+      const targets = providerFilter
+        ? [of(providerFilter)].filter(Boolean)
+        : listed.map((m) => of(m.id)).filter(Boolean);
+      const capable = targets.filter((p) => p.can("quota"));
+      if (!capable.length) {
+        return { ok: false, reason: "unsupported", error: "no provider supports quota" };
+      }
+      return { ok: true, capable };
+    }
+    if (typeof readTextFile !== "function") {
+      return { ok: false, reason: "missing", error: "readTextFile unavailable" };
+    }
+    const dir = providersDir();
+    const indexText = await readTextFile(`${dir}/index.json`).catch(() => null);
+    if (!indexText) {
+      return { ok: false, reason: "missing", error: "providers/index.json is missing" };
+    }
+    let ids;
+    try {
+      ids = parseProviderIndex(indexText);
+    } catch (e) {
+      return { ok: false, reason: "failed", error: String(e?.message ?? e) };
+    }
+    const wantIds = providerFilter ? (ids.includes(providerFilter) ? [providerFilter] : []) : ids;
+    const manifests = await Promise.all(
+      wantIds.map(async (id) => {
+        const txt = await readTextFile(`${dir}/${id}/manifest.json`).catch(() => null);
+        if (!txt) return null;
+        try {
+          const m = JSON.parse(txt);
+          const caps = Array.isArray(m?.caps) ? [...m.caps] : [];
+          return {
+            id: m?.id ?? id,
+            name: m?.name ?? id,
+            noun: m?.noun ?? m?.name ?? id,
+            caps,
+            can: (cap) => caps.includes(cap),
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const capable = manifests.filter((p) => p && p.can("quota"));
     if (!capable.length) {
       return { ok: false, reason: "unsupported", error: "no provider supports quota" };
     }
-    return { ok: false, reason: "missing", error: "quota reader is missing" };
+    return { ok: true, capable };
+  }
+
+  async function loadQuotaScript(id) {
+    if (cache.quotas.has(id)) return { ok: true, script: cache.quotas.get(id) };
+    if (typeof readTextFile !== "function") {
+      return { ok: false, reason: "missing", error: "readTextFile unavailable" };
+    }
+    const script = await readTextFile(`${providersDir()}/${id}/quota.py`).catch(() => null);
+    if (!script) {
+      return { ok: false, reason: "missing", error: `${id}/quota.py is missing` };
+    }
+    cache.quotas.set(id, script);
+    return { ok: true, script };
+  }
+
+  function normalizeQuotaEntry(raw, p, parentAt) {
+    if (!raw || typeof raw !== "object") return null;
+    if (raw.installed === false || raw.state === "absent" || raw.status === "absent") return null;
+    const state = raw.state ?? raw.status ?? "unknown";
+    const err = raw.error ?? raw.why ?? null;
+    return {
+      ...raw,
+      id: raw.id ?? raw.provider ?? p.id,
+      provider: raw.provider ?? raw.id ?? p.id,
+      name: raw.name ?? p.name,
+      state,
+      status: raw.status ?? state,
+      plan: raw.plan ?? null,
+      account: raw.account ?? null,
+      windows: Array.isArray(raw.windows) ? raw.windows : [],
+      why: raw.why ?? err,
+      error: err,
+      at: raw.at ?? parentAt ?? Date.now(),
+    };
+  }
+
+  async function quota(opts = {}) {
+    const capRes = await loadQuotaCapabilities(opts?.provider ?? null);
+    if (!capRes.ok) return capRes;
+    const loaded = await Promise.all(capRes.capable.map(async (p) => ({ p, res: await loadQuotaScript(p.id) })));
+    const runnable = loaded.filter((x) => x.res.ok);
+    if (!runnable.length) {
+      return loaded.find((x) => !x.res.ok)?.res ?? { ok: false, reason: "missing", error: "quota reader is missing" };
+    }
+    if (typeof exec !== "function") {
+      return { ok: false, reason: "failed", error: "exec unavailable" };
+    }
+    const { machine, provider: _prov, timeout, ...rest } = opts && typeof opts === "object" ? opts : {};
+    const on = normMachine(machine);
+    const execOpts = { ...(on ? { on } : {}), timeout: timeout ?? 45000 };
+    const runs = await Promise.all(
+      runnable.map(async ({ p, res }) => {
+        try {
+          const r = await exec("python3", ["-c", res.script, JSON.stringify(rest)], execOpts);
+          const parsed = parseJsonLine(r);
+          if (!parsed.ok) return { ok: false, p, error: parsed.error };
+          return { ok: true, p, data: parsed.data };
+        } catch (e) {
+          return { ok: false, p, error: String(e?.message ?? e) };
+        }
+      }),
+    );
+    if (runs.every((x) => !x.ok)) {
+      return { ok: false, reason: "failed", error: runs[0].error || "quota check failed" };
+    }
+    const now = Date.now();
+    const providers = [];
+    for (const item of runs) {
+      if (!item.ok) {
+        providers.push({
+          id: item.p.id,
+          provider: item.p.id,
+          name: item.p.name,
+          state: "unknown",
+          status: "unknown",
+          plan: null,
+          account: null,
+          windows: [],
+          why: item.error,
+          error: item.error,
+          at: now,
+        });
+        continue;
+      }
+      const d = item.data;
+      const listIn = Array.isArray(d?.providers) ? d.providers : d && typeof d === "object" ? [d] : [];
+      for (const raw of listIn) {
+        const entry = normalizeQuotaEntry(raw, item.p, d?.at);
+        if (entry) providers.push(entry);
+      }
+    }
+    return { ok: true, at: now, providers };
   }
 
   async function scan(machine = null, opts = {}) {
@@ -580,6 +714,7 @@ export function makeProvider({ feed, exec, readTextFile, appHome }) {
     cache.scan = null;
     cache.scanProviders = null;
     cache.readers.clear();
+    cache.quotas.clear();
   }
 
   return { list, of, sessions, session, subagents, transcript, usage, search, quota, scan, dropCache };

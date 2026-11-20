@@ -2,5 +2,5 @@
   "id": "claude",
   "name": "Claude Code",
   "noun": "Claude agent",
-  "caps": ["title", "prompts", "transcript", "usage", "search", "touches", "subagents"]
+  "caps": ["title", "prompts", "transcript", "usage", "search", "touches", "subagents", "quota"]
 }

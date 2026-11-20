@@ -6,16 +6,16 @@ Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [
 
 - **`kit/`**: Shared mod foundation. Contains `kit.js` (reusable GPUI components, theme tokens, shell helpers, and SVG icons), `provider.js` (provider index loader and Python script assembly), and `sync.sh` (tool to propagate `kit.js`, helper modules, and icons into each `mods/ob-*` folder).
 - **`layouts/`**: Herdr workspace layout specifications:
-  - `vaultr.json`: A center column between two sidebars, each split into two stacks of tabs. Left top: Sessions, Search, Bookmarks. Left bottom: Agents, Recent. Right top: Properties, Files, Changes, Insights, Notes. Right bottom: Graph, Outline.
+  - `vaultr.json`: A center column between two sidebars, each split into two stacks of tabs. Left top: Sessions, Search, Bookmarks. Left bottom: Agents, Recent. Right top: Quotas, Properties, Files, Changes, Insights, Notes. Right bottom: Graph, Outline.
   - `vaultr.svg`: Layout preview icon.
-- **`mods/`**: The 19 mods: 17 Obsidian-style `ob-*` mods, plus `insights` and `obsidian` (origin in `mods/ORIGIN.md`).
+- **`mods/`**: The 20 mods: 18 Obsidian-style `ob-*` mods, plus `insights` and `obsidian` (origin in `mods/ORIGIN.md`).
 - **`keys/`**: Keybinding configurations:
   - `vaultr-keys.json`: Custom keybinding definitions for `layout:vaultr` and `mod:ob-sessions`.
 - **`install.sh`**: One-step installer, activator, and uninstaller.
 
 ---
 
-## The 19 Vaultr Mods
+## The 20 Vaultr Mods
 
 The layout also uses Herdr's shipped `files` and `changes` mods.
 
@@ -35,6 +35,7 @@ The layout also uses Herdr's shipped `files` and `changes` mods.
 - **`ob-recent`**: Chronological activity timeline of tab visits and agent events (Today, Yesterday, Earlier).
 
 ### Right Sidebar (Inspection & Data)
+- **`ob-quotas`**: Plan quota monitor for Claude Code (5-hour, weekly, and per-model windows) on this computer or the followed/selected remote machine via `provider.quota()`, highlighting the active session's pool and keeping the last good read if a refresh fails.
 - **`ob-feed`**: Background scanner for Pi runs and Claude Code agent transcripts. It also lists the files each agent touched (paths and tool names from the transcript tail, never contents) and the artifacts it published (from the herdr-artifact store), for the graph's notes and artifacts.
 - **`ob-outline`**: The active tab's panes, each with the agents that run in its terminal nested under it (pi runs, Claude Code agents, child terminals), with task trees, execution steps, tool call logs, and token metrics. "All" groups every machine by session, with unattached background terminals last.
   - A transcript or log opens in a popup over the window. **Move to main window** in its header puts it in the main window as a pane.
@@ -113,6 +114,7 @@ The settings dialog opens from the gear in the footer. `ob-tabs.settings:<tab>` 
 - `ob-outline` reads `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`) from the Herdr app folder to run `python3` in `entries` mode when opening a transcript or finding a Claude Code background agent's transcript (`~/.claude/projects`).
 - `ob-search` runs `python3` on this computer with the transcript search reader assembled from `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`, read from the Herdr app folder). It reads the transcript files that the sub-agent feed (`ob.subagents`, written by `ob-feed`) names for live agent sessions and their sub-agents: those live under `~/.claude/projects` and `~/.pi/agent/sessions`, or the pi-subagents temp folder. It reads each file's last 3 MiB and changes nothing.
 - `ob-props` runs `python3` on this computer, or on the terminal's machine, with the usage reader assembled from `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`, read from the Herdr app folder), for the followed agent's session file (the transcript path the sub-agent feed names: `~/.claude/projects` or `~/.pi/agent/sessions`). Every 10 seconds while the panel shows it checks the file's size and modification time, and reads its last 32 MiB only when they changed; it changes nothing. It reads no plan or account limits.
+- `ob-quotas` reads plan limits through `provider.quota()`, which runs `python3 -c <quota.py>` on this computer or the selected machine for each provider with the `"quota"` capability (`mods/ob-feed/providers/claude/quota.py`). Before running any CLI command, `providers/claude/quota.py` verifies that `$CLAUDE_CONFIG_DIR` (default `~/.claude`) exists and inspects the resolved `claude` executable (and any wrapper target path) for Claude Code package paths or binary markers; unrelated executables named `claude` are never run. It reads `$CLAUDE_CONFIG_DIR/.credentials.json`, `$CLAUDE_CONFIG_DIR/.claude.json`, and `~/.claude.json` (`subscriptionType`, OAuth expiration, `oauthAccount.emailAddress`). When verified and not due for token renewal, it runs `mise which claude` (only for a `mise` shim/wrapper), probes `/usr/bin/bwrap` with `true` on Linux to run `nice -n 19 claude -p /usage --output-format json --no-session-persistence --setting-sources "" --strict-mcp-config` read-only inside `bwrap` (or a throwaway `TMPDIR` if `bwrap` is unavailable), and on macOS reads Keychain entry `"Claude Code-credentials"` via `/usr/bin/security find-generic-password` and runs `claude` inside `/usr/bin/sandbox-exec` (verified with `/bin/sh`, `/usr/bin/touch`, and `/usr/bin/security list-keychains`) against a temp copy of `.credentials.json` stripped of `refreshToken`.
 - `ob-sessions` offers its worktree actions only when the `worktree` mod is installed; to know that, it looks for `mods/worktree/mod.json` (or `main.js`) in the Herdr app folder.
 
 The Herdr app folder is `~/.config/herdr-app`; set `HERDR_APP_HOME` to use another.
@@ -159,8 +161,9 @@ The checks run in seconds and need no Herdr window: `python3 -m unittest discove
 ## Credits
 
 - [Quartz](https://github.com/jackyzha0/quartz) (MIT, Jacky Zhao): the graph view that `ob-graph` is ported from.
+- [Shepherdr](https://github.com/eliasstravik/shepherdr) (MIT, Elias Stravik): portions of `mods/ob-feed/providers/claude/quota.py` adapted from `mods/tasks/bin/herdr_task/machine.py`.
 - [d3-force](https://github.com/d3/d3-force), [d3-quadtree](https://github.com/d3/d3-quadtree) and [d3-dispatch](https://github.com/d3/d3-dispatch) (ISC, Mike Bostock), vendored in `mods/ob-graph/vendor/`.
 - [Lucide](https://github.com/lucide-icons/lucide) (ISC, Lucide Contributors; parts from [Feather](https://github.com/feathericons/feather), MIT, Cole Bemis): the icons in `mods/obsidian/` and most of the shared icon set in `kit/icons/` (which `kit/sync.sh` copies into each `ob-*` mod).
 - [Simple Icons](https://github.com/simple-icons/simple-icons) (CC0-1.0) and [Lobe Icons](https://github.com/lobehub/lobe-icons) (MIT, LobeHub): the provider logos in `mods/insights/logos/`. The logos are trademarks of their owners.
 - [tokscale#713](https://github.com/junhoyeo/tokscale/pull/713) and [openusage#1139](https://github.com/robinebers/openusage/pull/1139): notes on the Antigravity transcript format that `insights` reads.
-- Notices and licence texts: [LICENSE](LICENSE) (MIT), [NOTICE](NOTICE), [LICENSE-herdr](LICENSE-herdr) (Apache-2.0 for Herdr-derived mods), `mods/ob-graph/NOTICE.md`, `mods/ob-graph/vendor/*/LICENSE`, `mods/obsidian/NOTICE.md`, `mods/insights/NOTICE.md`, `kit/NOTICE.md`, `mods/ORIGIN.md`.
+- Notices and licence texts: [LICENSE](LICENSE) (MIT), [NOTICE](NOTICE), [LICENSE-herdr](LICENSE-herdr) (Apache-2.0 for Herdr-derived mods), [LICENSE-shepherdr](LICENSE-shepherdr) (MIT for Shepherdr-derived code), `mods/ob-graph/NOTICE.md`, `mods/ob-graph/vendor/*/LICENSE`, `mods/obsidian/NOTICE.md`, `mods/insights/NOTICE.md`, `kit/NOTICE.md`, `mods/ORIGIN.md`.

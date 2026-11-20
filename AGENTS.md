@@ -4,7 +4,7 @@ Vaultr is a Herdr layout (`layouts/vaultr.json`) plus the mods it shows (`mods/`
 The mods share one kit (`kit/`), keys are in `keys/`, and `install.sh` links everything into the Herdr app folder.
 
 The four side stacks: left top is Sessions, Search, Bookmarks (opens on Sessions). Left bottom is Agents, Recent
-(opens on Agents). Right top is Properties, Files, Changes, Insights, Notes (opens on Properties). Right bottom is
+(opens on Agents). Right top is Quotas, Properties, Files, Changes, Insights, Notes (opens on Quotas). Right bottom is
 Graph, Outline (opens on Graph). Outline is the one panel for what runs in each tab: its panes with their agents nested
 under them (it replaced the Subagents panel).
 

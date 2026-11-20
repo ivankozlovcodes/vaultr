@@ -8,6 +8,11 @@ Some of Vaultr's mods began as forks of, or carry forward code and action lists 
 
 The Herdr app is licensed under the Apache License, Version 2.0; its license is in LICENSE-herdr. Those portions remain under that license.
 
+Portions of Vaultr's quota collector are adapted from Shepherdr (https://github.com/eliasstravik/shepherdr):
+- mods/ob-feed/providers/claude/quota.py (adapted from Shepherdr's mods/tasks/bin/herdr_task/machine.py)
+
+Shepherdr is Copyright (c) 2026 Elias Stravik and licensed under the MIT License; its license is in LICENSE-shepherdr.
+
 Third-party icons, logos, vendored libraries, and mod-specific notices are in:
 - kit/NOTICE.md (Lucide icons, ISC; Feather icons, MIT)
 - mods/ob-graph/NOTICE.md and mods/ob-graph/vendor/*/LICENSE (Quartz v4, MIT; d3-force, d3-quadtree, d3-dispatch, ISC)

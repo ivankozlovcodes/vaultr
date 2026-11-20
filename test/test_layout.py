@@ -97,7 +97,7 @@ class Layout(unittest.TestCase):
         expected = {
             "ob-left": [(["ob-sessions", "ob-search", "ob-bookmarks"], "ob-sessions"),
                         (["ob-agents", "ob-recent"], "ob-agents")],
-            "ob-right": [(["ob-props", "files", "changes", "insights", "obsidian"], "ob-props"),
+            "ob-right": [(["ob-quotas", "ob-props", "files", "changes", "insights", "obsidian"], "ob-quotas"),
                          (["ob-graph", "ob-outline"], "ob-graph")],
         }
         for column, stacks_wanted in expected.items():

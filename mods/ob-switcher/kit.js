@@ -532,6 +532,7 @@ export const VIEWS = {
   "ob-bookmarks": { title: "Bookmarks", icon: "bookmark" },
   "ob-agents": { title: "Agents", icon: "bot" },
   "ob-recent": { title: "Recent", icon: "history" },
+  "ob-quotas": { title: "Quotas", icon: "chart" },
   "ob-props": { title: "Properties", icon: "info" },
   "ob-files": { title: "Files", icon: "files" },
   "ob-changes": { title: "Changes", icon: "git-compare" },
