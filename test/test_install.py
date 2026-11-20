@@ -143,6 +143,27 @@ class Install(unittest.TestCase):
         run(self.app, "--uninstall")
         self.assertTrue(os.path.isfile(self.p("mods", "obsidian", "mine.txt")))
 
+    def test_install_writes_layout_record_outside_layouts_and_uninstall_removes_it(self):
+        run(self.app)
+        rec = self.p("vaultr-layout.installed.json")
+        self.assertTrue(os.path.isfile(rec))
+        self.assertFalse(os.path.exists(self.p("layouts", "vaultr-layout.installed.json")))
+        with open(os.path.join(ROOT, "layouts", "vaultr.json"), "rb") as a, open(rec, "rb") as b:
+            self.assertEqual(a.read(), b.read())
+        run(self.app, "--uninstall")
+        self.assertFalse(os.path.lexists(rec))
+
+    def test_ci_smoke_install_then_uninstall_leaves_no_layout(self):
+        fresh_app = os.path.join(self.base, "fresh-app")
+        os.makedirs(fresh_app)
+        run(fresh_app)
+        self.assertTrue(os.path.isfile(os.path.join(fresh_app, "layouts", "vaultr.json")))
+        self.assertTrue(os.path.islink(os.path.join(fresh_app, "mods", "ob-tabs")))
+        run(fresh_app, "--uninstall")
+        self.assertFalse(os.path.lexists(os.path.join(fresh_app, "layouts", "vaultr.json")))
+        self.assertFalse(os.path.lexists(os.path.join(fresh_app, "mods", "ob-tabs")))
+        self.assertFalse(os.path.lexists(os.path.join(fresh_app, "vaultr-layout.installed.json")))
+
 
 class LayoutCopy(unittest.TestCase):
     """The layout is copied into the Herdr app folder, so the arrangement the person makes (it is written to that
@@ -187,11 +208,34 @@ class LayoutCopy(unittest.TestCase):
     def backups(self):
         return sorted(glob.glob(self.target() + ".bak-*"))
 
+    def record(self):
+        return os.path.join(self.app, "vaultr-layout.installed.json")
+
+    def build_checkout(self, layout_data, name="checkout"):
+        repo = os.path.join(self.base, name)
+        os.makedirs(os.path.join(repo, "kit"), exist_ok=True)
+        os.makedirs(os.path.join(repo, "keys"), exist_ok=True)
+        os.makedirs(os.path.join(repo, "layouts"), exist_ok=True)
+        os.makedirs(os.path.join(repo, "mods"), exist_ok=True)
+        shutil.copy(INSTALL, os.path.join(repo, "install.sh"))
+        shutil.copy(os.path.join(ROOT, "kit", "sync.sh"), os.path.join(repo, "kit", "sync.sh"))
+        shutil.copy(os.path.join(ROOT, "keys", "vaultr-keys.json"), os.path.join(repo, "keys", "vaultr-keys.json"))
+        shutil.copy(os.path.join(ROOT, "layouts", "vaultr.svg"), os.path.join(repo, "layouts", "vaultr.svg"))
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(layout_data, indent=2) + "\n")
+        return repo
+
+    def install_from(self, repo, *args):
+        p = subprocess.run(["bash", os.path.join(repo, "install.sh"), *args], capture_output=True, text=True,
+                           env=dict(os.environ, HERDR_APP_HOME=self.app), cwd=repo, stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return p.stdout + p.stderr
+
     def test_a_fresh_install_copies_the_layout(self):
         self.install()
         self.assertFalse(os.path.islink(self.target()))
         self.assertEqual(self.read(self.target()), self.default)
         self.assertTrue(os.path.isfile(os.path.join(self.app, "layouts", "vaultr.svg")))
+        self.assertEqual(self.read(self.record()), self.default)
 
     def test_an_old_symlink_into_the_repo_becomes_a_copy(self):
         os.makedirs(os.path.join(self.app, "layouts"))
@@ -339,6 +383,305 @@ class LayoutCopy(unittest.TestCase):
         self.assertFalse(os.path.lexists(self.target()))
         self.assertEqual(len(self.backups()), 1)
         self.assertEqual(self.read(self.backups()[0]), '{"name": "mine"}\n')
+        self.assertFalse(os.path.lexists(self.record()))
+
+    def _base_layout(self):
+        return {
+            "id": "root",
+            "type": "row",
+            "children": [
+                {
+                    "id": "ob-left",
+                    "type": "column",
+                    "size": {"px": 300},
+                    "children": [
+                        {
+                            "id": "ob-lt-stack",
+                            "type": "stack",
+                            "active": "ob-sessions",
+                            "children": [
+                                {"id": "ob-sessions", "type": "block", "content": {"mod": "ob-sessions"}},
+                                {"id": "ob-search", "type": "block", "content": {"mod": "ob-search"}},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "id": "ob-right",
+                    "type": "column",
+                    "size": {"px": 368},
+                    "children": [
+                        {
+                            "id": "ob-rb-stack",
+                            "type": "stack",
+                            "active": "ob-graph",
+                            "children": [
+                                {"id": "ob-graph", "type": "block", "content": {"mod": "ob-graph"}},
+                                {"id": "ob-outline", "type": "block", "content": {"mod": "ob-outline"}},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+
+    def test_b1_no_copy_with_and_without_record(self):
+        # Without record (already covered by fresh install) and with an older stale record:
+        self.write(self.record(), '{"id": "stale"}\n')
+        out = self.install()
+        self.assertIn("copied layout:", out)
+        self.assertEqual(self.read(self.target()), self.default)
+        self.assertEqual(self.read(self.record()), self.default)
+
+    def test_b2_copy_equals_repo_with_and_without_record(self):
+        # Without a record: copy matches repo -> stays untouched and record is written.
+        self.write(self.target(), self.default)
+        out = self.install()
+        self.assertEqual(self.read(self.target()), self.default)
+        self.assertEqual(self.read(self.record()), self.default)
+        self.assertNotIn("updated layout:", out)
+        self.assertNotIn("kept your layout:", out)
+        # With a stale record: refreshes record while leaving matching copy alone.
+        self.write(self.record(), '{"id": "stale"}\n')
+        out = self.install()
+        self.assertEqual(self.read(self.record()), self.default)
+        self.assertEqual(self.backups(), [])
+        self.assertNotIn("updated layout:", out)
+
+    def test_b3_copy_differs_and_equals_record_replaces_without_backup(self):
+        v1 = json.dumps({"id": "root", "children": [{"id": "a"}]}) + "\n"
+        v2 = json.dumps({"id": "root", "children": [{"id": "a"}, {"id": "b"}]}) + "\n"
+        self.write(os.path.join(self.repo, "layouts", "vaultr.json"), v1)
+        self.install()
+        self.write(os.path.join(self.repo, "layouts", "vaultr.json"), v2)
+        out = self.install()
+        self.assertEqual(self.read(self.target()), v2)
+        self.assertEqual(self.read(self.record()), v2)
+        self.assertEqual(self.backups(), [])
+        self.assertIn(f"updated layout: {self.target()} (unchanged since the last install)", out)
+
+    def test_b3_without_record_falls_back_to_b4(self):
+        v1 = {"id": "root", "children": [{"id": "a"}]}
+        v2 = {"id": "root", "children": [{"id": "a"}, {"id": "b"}]}
+        self.write(os.path.join(self.repo, "layouts", "vaultr.json"), json.dumps(v1) + "\n")
+        self.install()
+        os.remove(self.record())
+        self.write(os.path.join(self.repo, "layouts", "vaultr.json"), json.dumps(v2) + "\n")
+        out = self.install()
+        self.assertNotIn("unchanged since the last install", out)
+        self.assertIn("added to your layout: b (in root)", out)
+        self.assertEqual(len(self.backups()), 1)
+        self.assertEqual([c["id"] for c in load(self.target())["children"]], ["a", "b"])
+
+    def test_b4_with_and_without_record_when_nothing_to_add(self):
+        # With record: nothing new in repo -> keeps copy unrewritten and prints kept your layout.
+        self.install()
+        mine = '{"name": "mine",  "extra": 1}\n'
+        self.write(self.target(), mine)
+        out = self.install()
+        self.assertEqual(self.read(self.target()), mine)
+        self.assertIn("kept your layout:", out)
+        self.assertEqual(self.backups(), [])
+        # Without record: still keeps copy unrewritten and writes the record.
+        os.remove(self.record())
+        out = self.install()
+        self.assertEqual(self.read(self.target()), mine)
+        self.assertIn("kept your layout:", out)
+        self.assertEqual(self.backups(), [])
+        self.assertEqual(self.read(self.record()), self.default)
+
+    def test_untouched_old_copy_in_checkout_receives_new_panel(self):
+        v1 = self._base_layout()
+        repo = self.build_checkout(v1)
+        self.install_from(repo)
+        v2 = self._base_layout()
+        v2["children"][0]["children"][0]["children"].append(
+            {"id": "ob-inbox", "type": "block", "content": {"mod": "ob-inbox"}}
+        )
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(v2, indent=2) + "\n")
+        out = self.install_from(repo)
+        self.assertIn("(unchanged since the last install)", out)
+        ids = [c["id"] for c in load(self.target())["children"][0]["children"][0]["children"]]
+        self.assertEqual(ids, ["ob-sessions", "ob-search", "ob-inbox"])
+
+    def test_changed_copy_receives_new_panel_and_keeps_change(self):
+        v1 = self._base_layout()
+        repo = self.build_checkout(v1)
+        self.install_from(repo)
+        # Person resizes ob-left, reorders ob-lt-stack, and adds a custom field.
+        mine = load(self.target())
+        mine["children"][0]["size"] = {"px": 420}
+        mine["children"][0]["children"][0]["children"].reverse()
+        mine_text = json.dumps(mine, indent=2) + "\n"
+        self.write(self.target(), mine_text)
+        # Repo changes ob-left size (must not overwrite person's) and inserts ob-inbox after ob-sessions.
+        v2 = self._base_layout()
+        v2["children"][0]["size"] = {"px": 250}
+        v2["children"][0]["children"][0]["children"].insert(
+            1, {"id": "ob-inbox", "type": "block", "content": {"mod": "ob-inbox"}}
+        )
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(v2, indent=2) + "\n")
+        out = self.install_from(repo)
+        self.assertIn("added to your layout: ob-inbox (in ob-lt-stack)", out)
+        self.assertEqual([self.read(b) for b in self.backups()], [mine_text])
+        updated_raw = self.read(self.target())
+        self.assertTrue(updated_raw.endswith("\n"))
+        updated = json.loads(updated_raw)
+        self.assertEqual(updated_raw, json.dumps(updated, indent=2) + "\n")
+        self.assertEqual(updated["children"][0]["size"], {"px": 420}, "person size preserved; repo property not merged")
+        stack_ids = [c["id"] for c in updated["children"][0]["children"][0]["children"]]
+        self.assertEqual(stack_ids, ["ob-search", "ob-sessions", "ob-inbox"])
+        self.assertEqual(load(self.record()), v2)
+
+    def test_moved_view_is_not_duplicated_and_fallback_placement_appends_at_end(self):
+        v1 = self._base_layout()
+        repo = self.build_checkout(v1)
+        self.install_from(repo)
+        # Person moves ob-outline from ob-rb-stack to ob-lt-stack.
+        mine = load(self.target())
+        outline = mine["children"][1]["children"][0]["children"].pop()
+        mine["children"][0]["children"][0]["children"].append(outline)
+        self.write(self.target(), json.dumps(mine, indent=2) + "\n")
+        # Repo adds ob-inbox right after ob-outline in ob-rb-stack (copy's ob-rb-stack lacks ob-outline).
+        v2 = self._base_layout()
+        v2["children"][1]["children"][0]["children"].append(
+            {"id": "ob-inbox", "type": "block", "content": {"mod": "ob-inbox"}}
+        )
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(v2, indent=2) + "\n")
+        out = self.install_from(repo)
+        self.assertIn("added to your layout: ob-inbox (in ob-rb-stack)", out)
+        merged = load(self.target())
+        all_ids = []
+        stack = [merged]
+        while stack:
+            n = stack.pop()
+            if "id" in n:
+                all_ids.append(n["id"])
+            stack.extend(n.get("children") or [])
+        self.assertEqual(all_ids.count("ob-outline"), 1, "moved view must not be duplicated")
+        self.assertEqual([c["id"] for c in merged["children"][0]["children"][0]["children"]],
+                         ["ob-sessions", "ob-search", "ob-outline"])
+        self.assertEqual([c["id"] for c in merged["children"][1]["children"][0]["children"]],
+                         ["ob-graph", "ob-inbox"])
+
+    def test_person_removed_panel_does_not_come_back_and_dropped_repo_node_stays(self):
+        v1 = self._base_layout()
+        repo = self.build_checkout(v1)
+        self.install_from(repo)
+        # Person removes ob-search.
+        mine = load(self.target())
+        mine["children"][0]["children"][0]["children"] = [
+            c for c in mine["children"][0]["children"][0]["children"] if c["id"] != "ob-search"
+        ]
+        mine_text = json.dumps(mine, indent=2) + "\n"
+        self.write(self.target(), mine_text)
+        # Repo drops ob-outline and adds ob-inbox.
+        v2 = self._base_layout()
+        v2["children"][1]["children"][0]["children"] = [
+            c for c in v2["children"][1]["children"][0]["children"] if c["id"] != "ob-outline"
+        ]
+        v2["children"][0]["children"][0]["children"].append(
+            {"id": "ob-inbox", "type": "block", "content": {"mod": "ob-inbox"}}
+        )
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(v2, indent=2) + "\n")
+        out = self.install_from(repo)
+        self.assertNotIn("ob-search", out)
+        merged = load(self.target())
+        left_ids = [c["id"] for c in merged["children"][0]["children"][0]["children"]]
+        right_ids = [c["id"] for c in merged["children"][1]["children"][0]["children"]]
+        self.assertEqual(left_ids, ["ob-sessions", "ob-inbox"], "removed panel stayed removed")
+        self.assertEqual(right_ids, ["ob-graph", "ob-outline"], "dropped repo node stayed in copy")
+
+    def test_candidate_subtree_strips_existing_descendants_and_is_not_handled_twice(self):
+        v1 = self._base_layout()
+        repo = self.build_checkout(v1)
+        self.install_from(repo)
+        mine = load(self.target())
+        mine["children"][0]["size"] = {"px": 320}
+        self.write(self.target(), json.dumps(mine, indent=2) + "\n")
+        # Repo adds a new group under ob-left holding a new node ob-new-child and already-present ob-search.
+        v2 = self._base_layout()
+        v2["children"][0]["children"].append({
+            "id": "ob-new-group",
+            "type": "column",
+            "children": [
+                {"id": "ob-new-child", "type": "block", "content": {"mod": "ob-inbox"}},
+                {"id": "ob-search", "type": "block", "content": {"mod": "ob-search"}},
+            ],
+        })
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(v2, indent=2) + "\n")
+        out = self.install_from(repo)
+        self.assertIn("added to your layout: ob-new-group (in ob-left)", out)
+        self.assertNotIn("added to your layout: ob-new-child", out)
+        merged = load(self.target())
+        group = next(c for c in merged["children"][0]["children"] if c["id"] == "ob-new-group")
+        self.assertEqual([c["id"] for c in group["children"]], ["ob-new-child"])
+
+    def test_candidate_whose_parent_is_gone_prints_not_added(self):
+        v1 = self._base_layout()
+        repo = self.build_checkout(v1)
+        self.install_from(repo)
+        # Person removes ob-rb-stack (and its children).
+        mine = load(self.target())
+        mine["children"][1]["children"] = []
+        mine_text = json.dumps(mine, indent=2) + "\n"
+        self.write(self.target(), mine_text)
+        # Repo adds ob-inbox inside ob-rb-stack.
+        v2 = self._base_layout()
+        v2["children"][1]["children"][0]["children"].append(
+            {"id": "ob-inbox", "type": "block", "content": {"mod": "ob-inbox"}}
+        )
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(v2, indent=2) + "\n")
+        out = self.install_from(repo)
+        self.assertIn(
+            "not added: ob-inbox (your layout has no ob-rb-stack; --reset-layout takes the repo's layout, after a backup)",
+            out,
+        )
+        self.assertEqual(self.read(self.target()), mine_text)
+        self.assertEqual(self.backups(), [])
+
+    def test_record_is_written_refreshed_and_removed_and_reset_writes_record(self):
+        v1 = {"id": "root", "children": [{"id": "a"}]}
+        v2 = {"id": "root", "children": [{"id": "a"}, {"id": "b"}]}
+        repo = self.build_checkout(v1)
+        self.install_from(repo)
+        self.assertEqual(load(self.record()), v1)
+        self.assertFalse(os.path.exists(os.path.join(self.app, "layouts", "vaultr-layout.installed.json")))
+        self.write(os.path.join(repo, "layouts", "vaultr.json"), json.dumps(v2, indent=2) + "\n")
+        self.install_from(repo)
+        self.assertEqual(load(self.record()), v2)
+        os.remove(self.record())
+        self.write(self.target(), '{"id": "root", "children": []}\n')
+        self.install_from(repo, "--reset-layout")
+        self.assertEqual(load(self.record()), v2)
+        self.install_from(repo, "--uninstall")
+        self.assertFalse(os.path.lexists(self.record()))
+
+    def test_preview_svg_is_copied_whenever_it_differs(self):
+        self.install()
+        svg = os.path.join(self.app, "layouts", "vaultr.svg")
+        self.write(svg, "<svg>old</svg>")
+        out = self.install()
+        self.assertEqual(self.read(svg), "<svg/>")
+        self.assertEqual(glob.glob(svg + ".bak-*"), [])
+        self.assertIn("updated layout:", out)
+
+    def test_uninstall_removes_copy_matching_record_and_leaves_differing_copy(self):
+        v1 = json.dumps({"id": "root", "children": [{"id": "a"}]}) + "\n"
+        v2 = json.dumps({"id": "root", "children": [{"id": "a"}, {"id": "b"}]}) + "\n"
+        self.write(os.path.join(self.repo, "layouts", "vaultr.json"), v1)
+        self.install()
+        # Repo advances without reinstalling: copy still matches record v1, so uninstall removes it.
+        self.write(os.path.join(self.repo, "layouts", "vaultr.json"), v2)
+        self.install("--uninstall")
+        self.assertFalse(os.path.lexists(self.target()))
+        self.assertFalse(os.path.lexists(self.record()))
+        # Differing copy stays on uninstall, while the record is removed.
+        self.install()
+        self.write(self.target(), '{"name": "mine"}\n')
+        self.install("--uninstall")
+        self.assertEqual(self.read(self.target()), '{"name": "mine"}\n')
+        self.assertFalse(os.path.lexists(self.record()))
 
 
 if __name__ == "__main__":

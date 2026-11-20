@@ -86,9 +86,10 @@ backup_layout() {
 }
 
 # Put layouts/<file> into the Herdr app folder as a copy. The copy is the person's arrangement once they move
-# panels: a copy that differs from the repo is kept unless --reset-layout, which backs it up first. An old symlink
-# into this repo, or into another checkout's layouts/, becomes a copy of what it holds; a dangling one is replaced.
-# --link symlinks the repo file instead (development).
+# panels: a copy that differs from the repo is replaced when it still matches the last installed record, otherwise
+# new nodes from the repo are added in place (unless --reset-layout, which backs it up and replaces it). An old
+# symlink into this repo, or into another checkout's layouts/, becomes a copy of what it holds; a dangling one is
+# replaced. --link symlinks the repo file instead (development).
 # a Vaultr checkout has its installer and kit sync script at the top
 is_checkout() { [[ -f "$1/install.sh" && -f "$1/kit/sync.sh" ]]; }
 
@@ -96,6 +97,7 @@ install_layout() {
   local file=$1
   local src="$REPO_DIR/layouts/$file"
   local target="$HERDR_APP_DIR/layouts/$file"
+  local record="$HERDR_APP_DIR/vaultr-layout.installed.json"
   [[ -f "$src" ]] || return 0
   if [[ -L "$target" ]]; then
     local dest
@@ -126,24 +128,198 @@ install_layout() {
     fi
     ln -sfn -- "$src" "$target"
     echo "linked layout: $target -> $src"
+    if [[ "$file" == "vaultr.json" ]]; then
+      rm -f -- "$record"
+    fi
+    return 0
+  fi
+  if [[ "$file" != "vaultr.json" ]]; then
+    if [[ ! -e "$target" ]]; then
+      cp -- "$src" "$target"
+      echo "copied layout: $target"
+    elif ! cmp -s -- "$src" "$target"; then
+      cp -- "$src" "$target"
+      echo "updated layout: $target"
+    fi
     return 0
   fi
   if [[ ! -e "$target" ]]; then
     cp -- "$src" "$target"
     echo "copied layout: $target"
-    return 0
-  fi
-  if cmp -s -- "$src" "$target"; then
-    return 0
-  fi
-  if [[ "$RESET" -eq 1 ]]; then
+  elif cmp -s -- "$src" "$target"; then
+    :
+  elif [[ "$RESET" -eq 1 ]]; then
     backup_layout "$target"
     cp -- "$src" "$target"
     echo "replaced layout with the repo's: $target"
-    return 0
+  elif [[ -f "$record" ]] && cmp -s -- "$record" "$target"; then
+    cp -- "$src" "$target"
+    echo "updated layout: $target (unchanged since the last install)"
+  else
+    rm -f -- "$target.tmp"
+    local merge_out
+    merge_out=$(python3 - "$src" "$target" "$record" "$target.tmp" <<-'PY'
+import copy, json, os, sys
+
+src_path, dst_path, rec_path, out_path = sys.argv[1:5]
+with open(src_path, "r", encoding="utf-8") as f:
+    repo = json.load(f)
+try:
+    with open(dst_path, "r", encoding="utf-8") as f:
+        user = json.load(f)
+except Exception:
+    print(f"kept your layout: {dst_path} differs from the repo (pass --reset-layout to replace it, after a backup)")
+    sys.exit(0)
+
+rec = None
+if rec_path and os.path.isfile(rec_path):
+    try:
+        with open(rec_path, "r", encoding="utf-8") as f:
+            rec = json.load(f)
+    except Exception:
+        rec = None
+
+
+def collect_ids(node):
+    ids = set()
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, dict):
+            nid = n.get("id")
+            if isinstance(nid, str) and nid:
+                ids.add(nid)
+            kids = n.get("children")
+            if isinstance(kids, list):
+                stack.extend(kids)
+    return ids
+
+
+def find_node(node, nid):
+    if not isinstance(node, dict):
+        return None
+    if node.get("id") == nid:
+        return node
+    for c in node.get("children") or []:
+        hit = find_node(c, nid)
+        if hit is not None:
+            return hit
+    return None
+
+
+def prune_existing(node, existing_ids):
+    out = copy.deepcopy(node)
+
+    def strip(n):
+        kids = n.get("children")
+        if not isinstance(kids, list):
+            return
+        kept = []
+        for c in kids:
+            cid = c.get("id") if isinstance(c, dict) else None
+            if isinstance(cid, str) and cid in existing_ids:
+                continue
+            strip(c)
+            kept.append(c)
+        n["children"] = kept
+
+    strip(out)
+    return out
+
+
+orig_copy_ids = collect_ids(user)
+copy_ids = set(orig_copy_ids)
+rec_ids = collect_ids(rec) if rec is not None else set()
+
+added = []
+not_added = []
+
+
+def walk_stripped_existing(node):
+    if not isinstance(node, dict):
+        return
+    for c in node.get("children") or []:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("id")
+        if isinstance(cid, str) and cid in orig_copy_ids:
+            walk_repo(c)
+        else:
+            walk_stripped_existing(c)
+
+
+def walk_repo(node):
+    if not isinstance(node, dict):
+        return
+    parent_id = node.get("id")
+    kids = node.get("children")
+    if not isinstance(kids, list):
+        return
+    for idx, child in enumerate(kids):
+        if not isinstance(child, dict):
+            continue
+        cid = child.get("id")
+        if isinstance(cid, str) and cid and cid not in copy_ids and cid not in rec_ids:
+            target_parent = find_node(user, parent_id) if isinstance(parent_id, str) and parent_id else None
+            if target_parent is None:
+                not_added.append((cid, parent_id or ""))
+            else:
+                subtree = prune_existing(child, copy_ids)
+                prev_id = None
+                if idx > 0 and isinstance(kids[idx - 1], dict):
+                    pid = kids[idx - 1].get("id")
+                    if isinstance(pid, str) and pid:
+                        prev_id = pid
+                dest_kids = target_parent.get("children")
+                if not isinstance(dest_kids, list):
+                    dest_kids = []
+                    target_parent["children"] = dest_kids
+                pos = None
+                if prev_id is not None:
+                    for j, dk in enumerate(dest_kids):
+                        if isinstance(dk, dict) and dk.get("id") == prev_id:
+                            pos = j + 1
+                            break
+                if pos is None:
+                    dest_kids.append(subtree)
+                else:
+                    dest_kids.insert(pos, subtree)
+                copy_ids.update(collect_ids(subtree))
+                added.append((cid, parent_id))
+            walk_stripped_existing(child)
+        else:
+            walk_repo(child)
+
+
+walk_repo(repo)
+
+if added:
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(user, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    for cid, pid in added:
+        print(f"added to your layout: {cid} (in {pid})")
+    for cid, pid in not_added:
+        print(f"not added: {cid} (your layout has no {pid}; --reset-layout takes the repo's layout, after a backup)")
+elif not_added:
+    for cid, pid in not_added:
+        print(f"not added: {cid} (your layout has no {pid}; --reset-layout takes the repo's layout, after a backup)")
+else:
+    print(f"kept your layout: {dst_path} differs from the repo (pass --reset-layout to replace it, after a backup)")
+PY
+)
+    if [[ -f "$target.tmp" ]]; then
+      backup_layout "$target"
+      mv -f -- "$target.tmp" "$target"
+    fi
+    if [[ -n "$merge_out" ]]; then
+      printf '%s\n' "$merge_out"
+    fi
+    warn_missing_mods "$target"
   fi
-  echo "kept your layout: $target differs from the repo (pass --reset-layout to replace it, after a backup)"
-  warn_missing_mods "$target"
+  if ! cmp -s -- "$src" "$record" 2>/dev/null; then
+    cp -- "$src" "$record"
+  fi
 }
 
 # Warn when a kept layout copy names a mod that is neither in this repo, nor in the app's mods folder, nor one of
@@ -178,17 +354,18 @@ if missing:
 PY
 }
 
-# Remove an installed layout copy. Unchanged from the repo, or --reset-layout (backed up first), removes it; a
-# differing copy is the person's and stays.
+# Remove an installed layout copy. Unchanged from the repo or the last installed record, or --reset-layout
+# (backed up first), removes it; a differing copy is the person's and stays.
 uninstall_layout() {
   local file=$1
   local src="$REPO_DIR/layouts/$file"
   local target="$HERDR_APP_DIR/layouts/$file"
+  local record="$HERDR_APP_DIR/vaultr-layout.installed.json"
   if [[ -L "$target" ]]; then
     rm -f -- "$target"
     echo "removed layout: $target"
   elif [[ -f "$target" ]]; then
-    if cmp -s -- "$src" "$target"; then
+    if cmp -s -- "$src" "$target" || { [[ "$file" == "vaultr.json" && -f "$record" ]] && cmp -s -- "$record" "$target"; }; then
       rm -f -- "$target"
       echo "removed layout: $target"
     elif [[ "$RESET" -eq 1 ]]; then
@@ -208,6 +385,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   for file in "vaultr.json" "vaultr.svg"; do
     uninstall_layout "$file"
   done
+  rm -f -- "$HERDR_APP_DIR/vaultr-layout.installed.json"
   for file in "obsidian.json" "obsidian.svg"; do
     if [[ -f "$HERDR_APP_DIR/layouts/$file" || -L "$HERDR_APP_DIR/layouts/$file" ]]; then
       rm -f "$HERDR_APP_DIR/layouts/$file"
