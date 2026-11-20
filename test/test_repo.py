@@ -10,6 +10,7 @@ import socket
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = home_guard.ROOT
 MODS = os.path.join(ROOT, "mods")
@@ -41,8 +42,9 @@ def suffix(paths, *ends):
     return [p for p in paths if p.endswith(ends)]
 
 
-# Words too common to mean a person: a machine that happens to be named after one is not flagged.
-COMMON = {"claude", "local", "localhost", "laptop", "server", "desktop", "sandbox", "machine"}
+# Words too common to mean a person: a machine that happens to be named after one is not flagged. `runner` is the
+# login name on GitHub's hosted runners, where this suite runs for every pull request.
+COMMON = {"claude", "local", "localhost", "laptop", "server", "desktop", "sandbox", "machine", "runner"}
 
 
 def personal_words():
@@ -190,6 +192,12 @@ class Repo(unittest.TestCase):
                 for m in re.finditer(pat, data):
                     bad.append(f"{os.path.relpath(path, ROOT)}: {m.group(0).decode(errors='replace')}")
         self.assertEqual(bad, [])
+
+    def test_the_login_name_of_a_hosted_runner_is_not_personal(self):
+        # GitHub's hosted runners log in as `runner`, a word that tests and fixtures may use.
+        entry = mock.Mock(pw_name="runner", pw_dir=ROOT)
+        with mock.patch("pwd.getpwuid", return_value=entry), mock.patch("shutil.which", return_value=None):
+            self.assertNotIn("runner", personal_words())
 
     def test_keys_name_mods_that_exist(self):
         for ctx, binds in KEYS.items():
