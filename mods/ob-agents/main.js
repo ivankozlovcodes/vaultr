@@ -16,13 +16,14 @@ import {
 import {
   S, icon, programIcon, iconButton, treeRow, sectionHeader, emptyState, openMenu, statusMark,
   needsYou, normStatus, takeFocus, machineOf, isBookmarked, toggleBookmark, mainAgents, placedTerminals,
+  cleanTitle, sessionTitleOf,
 } from "./kit.js";
 
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working", 1: null };
 const SORTS = [["priority", "Priority", "clock"], ["grouped", "Grouped by space", "layers"]];
-const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
+const clean = cleanTitle;
 function load(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) ?? d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage off */ } }
 function splitCmd(c) { const s = String(c ?? ""); const i = s.indexOf(":"); return i < 0 ? [s, ""] : [s.slice(0, i), s.slice(i + 1)]; }
@@ -46,6 +47,8 @@ function leadPanes(all) {
 }
 // A tab's name, or the agent's live title when the tab is unnamed and the title says something.
 function title(tab, l) {
+  const sess = l?.terminal || l?.address ? sessionTitleOf(l.terminal ?? l.address) : null;
+  if ((!tab.named || tab.name === l?.program?.name) && sess) return clean(sess);
   const prog = l?.program?.name;
   const live = clean(l?.title);
   const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));

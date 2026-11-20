@@ -17,8 +17,8 @@ export const LAYOUT = "vaultr";
 export { placedTerminals, mainAgents } from "./agents.js";
 
 // Pure pane naming (kit/names.js): paneLabel(pane, ctx), shortFolder(folder, home). paneLabel is also used here.
-import { paneLabel } from "./names.js";
-export { paneLabel, shortFolder, paneSecondary } from "./names.js";
+import { paneLabel, cleanTitle } from "./names.js";
+export { paneLabel, shortFolder, paneSecondary, cleanTitle } from "./names.js";
 
 // The one fuzzy matcher (kit/fuzzy.js, fzf-style): fuzzy(q, text) -> { score, hits } | null, matchQuery for spans.
 export { fuzzy, matchQuery } from "./fuzzy.js";
@@ -457,13 +457,16 @@ export function place(space, ps) {
   const tabs = new Set((space?.tabs ?? []).map((c) => c.id));
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || space?.folder || "";
 }
-// A pane's name: an agent by its program name, a shell by its title or folder, a program by its name.
+// A pane's name: an agent by its session title or program name, a shell by its clean title or folder, a mod by its view title.
 export function paneName(p) {
   if (!p) return "";
-  if (p.mod) return p.title || p.mod;
+  if (p.mod) return VIEWS[p.mod]?.title || cleanTitle(p.title) || p.mod;
+  const sess = p.terminal ? sessionTitleOf(p.terminal) : null;
+  if (sess) return cleanTitle(sess);
   if (p.program?.agent) return p.program.name;
-  if (p.program?.shell) return p.title || (p.cwd ? base(p.cwd) : p.program.name);
-  return p.program?.name || p.title || "terminal";
+  const t = cleanTitle(p.title);
+  if (p.program?.shell) return t || (p.cwd ? base(p.cwd) : p.program.name);
+  return p.program?.name || t || "terminal";
 }
 // A tab's display name: its name if named, else "<n> · <lead pane name>".
 export function tabLabel(tab, ps) {

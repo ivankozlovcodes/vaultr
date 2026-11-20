@@ -32,6 +32,10 @@ def short(folder, home="/fixture/user"):
     return run_node(f'return N.shortFolder({json.dumps(folder)}, {json.dumps(home)});')
 
 
+def clean(s):
+    return run_node(f'return N.cleanTitle({json.dumps(s)});')
+
+
 @unittest.skipUnless(NODE, "node is not installed")
 class AgentPane(unittest.TestCase):
     def test_an_agent_with_a_session_title_is_named_by_the_title(self):
@@ -147,11 +151,49 @@ class Exports(unittest.TestCase):
             text = f.read()
         self.assertIn('from "./names.js"', text)
         self.assertIn("paneLabel", text)
+        self.assertIn("cleanTitle", text)
 
     def test_sync_copies_names_js_into_every_mod(self):
         with open(os.path.join(ROOT, "kit", "sync.sh"), encoding="utf-8") as f:
             text = f.read()
         self.assertIn("names.js", text)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class CleanTitleAndWrappedAgent(unittest.TestCase):
+    def test_clean_title_trims_and_drops_leading_symbols_while_keeping_words_and_paths(self):
+        self.assertEqual(run_node("return N.cleanTitle.length;"), 1)
+        cases = [
+            ("🟢 Refactor Graph Layout", "Refactor Graph Layout"),
+            ("⠋ · Audit Session Sync", "Audit Session Sync"),
+            ("— Build Bundle", "Build Bundle"),
+            ("🟢 Working · Refactor Graph Layout", "Working · Refactor Graph Layout"),
+            ("Idle: Audit Session Sync", "Idle: Audit Session Sync"),
+            ("~/git/vaultr", "~/git/vaultr"),
+            ("/usr/local/bin", "/usr/local/bin"),
+            ("  plain session title  ", "plain session title"),
+            ("🟢 ", ""),
+            ("", ""),
+            (None, ""),
+        ]
+        for raw, want in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(clean(raw), want)
+
+    def test_shell_wrapped_agent_pane_uses_session_title(self):
+        self.assertEqual(
+            label(
+                {"program": SHELL, "cwd": "/fixture/user"},
+                {"sessionTitle": "🟢 Audit Session Sync", "home": "/fixture/user"},
+            ),
+            "Audit Session Sync",
+        )
+
+    def test_ob_pane_uses_paneLabelOf_instead_of_legacy_paneName(self):
+        with open(os.path.join(ROOT, "mods", "ob-pane", "main.js"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("paneLabelOf(", src)
+        self.assertNotIn("paneName(", src)
 
 
 if __name__ == "__main__":

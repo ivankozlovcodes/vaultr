@@ -13,7 +13,7 @@ import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, spaces, agents, terminals, props, run, nextCommand, shared as _shared, settings, notify } from "herdr";
 import {
-  S, tc, alpha, icon, iconButton, statusMark, needsYou, paneName, tabLabel, machineLabel, programIcon, openMenu,
+  S, tc, alpha, icon, iconButton, statusMark, needsYou, paneLabelOf, tabLabel, machineLabel, programIcon, openMenu,
   subagentsOf, isBookmarked, toggleBookmark, bindingFor, chordLabel, tilde, stop,
 } from "./kit.js";
 import { follow, DELAY } from "./follow.js"; // focus-to-hover
@@ -62,7 +62,9 @@ export default class PaneHeader extends View {
 
   bookmark(x) {
     if (!x.addr) return;
-    const label = `${x.tab ? tabLabel(x.tab, x.ps) : ""}${x.tab ? " · " : ""}${paneName(x.p)}`;
+    const tName = x.tab ? tabLabel(x.tab, x.ps) : "";
+    const pName = paneLabelOf(x.p, tName);
+    const label = `${tName}${tName ? " · " : ""}${pName}`;
     const added = toggleBookmark({ kind: "terminal", id: x.addr, label, machine: x.space?.machine ?? null });
     notify({ title: added ? "Bookmarked" : "Bookmark removed", body: label, level: "info", timeout: 1500 });
   }
@@ -86,18 +88,20 @@ export default class PaneHeader extends View {
       ], { title: space.name || "Space", width: 250 });
     } else {
       if (!tab) return;
+      const tName = tabLabel(tab, ps);
       const mine = ps.filter((q) => q.tab === tab.id);
       openMenu([
-        ...mine.map((q) => ({ label: paneName(q), icon: q.terminal ? "terminal" : "file-text", checked: q.pane === p.pane, hint: q.status && q.status !== "idle" ? q.status : undefined, command: "pane.focus", args: { pane: q.pane } })),
+        ...mine.map((q) => ({ label: paneLabelOf(q, tName), icon: q.terminal ? "terminal" : "file-text", checked: q.pane === p.pane, hint: q.status && q.status !== "idle" ? q.status : undefined, command: "pane.focus", args: { pane: q.pane } })),
         { separator: true },
         { label: "Split right", icon: "split-right", command: "pane.split", args: { direction: "right", pane: p.pane } },
         { label: "Split down", icon: "split-down", command: "pane.split", args: { direction: "down", pane: p.pane } },
-      ], { title: tabLabel(tab, ps), width: 250 });
+      ], { title: tName, width: 250 });
     }
   }
 
   moreMenu(x) {
-    const { p, tab, addr } = x;
+    const { p, ps, tab, addr } = x;
+    const pTitle = paneLabelOf(p, tab ? tabLabel(tab, ps) : "");
     const zenActive = Boolean(shared()?.["ob.zen"]?.active);
     const zenItem = {
       label: zenActive ? "Exit Zen mode" : "Enter Zen mode",
@@ -111,7 +115,7 @@ export default class PaneHeader extends View {
         zenItem,
         { separator: true },
         { label: "Close pane", icon: "x", danger: true, command: "pane.close", args: { pane: p.pane } },
-      ], { width: 240, title: paneName(p) });
+      ], { width: 240, title: pTitle });
       return;
     }
     const agent = agents().find((a) => a.address === addr);
@@ -136,7 +140,7 @@ export default class PaneHeader extends View {
       zenItem,
       { separator: true },
       { label: "Close pane", icon: "x", danger: true, command: "pane.close", args: { pane: p.pane } },
-    ], { width: 260, title: paneName(p) });
+    ], { width: 260, title: pTitle });
   }
 
   render(cx) {
@@ -156,7 +160,7 @@ export default class PaneHeader extends View {
     const h = shared("ob.history");
     const canBack = Boolean(h && h.index > 0);
     const canFwd = Boolean(h && Array.isArray(h.entries) && h.index < h.entries.length - 1);
-    const raw = paneName(p);
+    const raw = paneLabelOf(p, tab ? tabLabel(tab, ps) : "");
     const name = p.mod && raw === p.mod ? raw.charAt(0).toUpperCase() + raw.slice(1) : raw;
 
     // Right side.
