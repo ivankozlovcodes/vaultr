@@ -12,11 +12,13 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = home_guard.ROOT
-ATTENTION = Path(ROOT, "kit", "attention.js")
+KIT_DIR = Path(ROOT, "kit")
+ATTENTION = KIT_DIR / "attention.js"
 NODE = shutil.which("node")
 
 # A terminal as terminals() gives it, trimmed to the fields the stamp uses.
@@ -235,6 +237,169 @@ class OtherPanelsWiring(unittest.TestCase):
                 src = read("mods", mod, "main.js")
                 for name in ("attentionStatus(", "agentAttention(", "paneAttention(", "getDismissed(", "ob.dismissed"):
                     self.assertNotIn(name, src)
+
+
+def run_kit(body, state=None):
+    folder = tempfile.mkdtemp(prefix="kit-att-")
+    try:
+        for p in KIT_DIR.glob("*.js"):
+            src = p.read_text(encoding="utf-8")
+            if p.name == "kit.js":
+                src = (src.replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                          .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                          .replace('from "herdr"', 'from "./herdr.js"'))
+            (Path(folder) / p.name).write_text(src, encoding="utf-8")
+        (Path(folder) / "gpui-kit.js").write_text(
+            "const el = () => new Proxy(() => el(), { get: () => el }); export const div = el, svg = el, image = el;\n",
+            encoding="utf-8",
+        )
+        (Path(folder) / "gpui-base.js").write_text(
+            "const el = () => new Proxy(() => el(), { get: () => el }); export const h_flex = el, v_flex = el;\n",
+            encoding="utf-8",
+        )
+        (Path(folder) / "herdr.js").write_text(
+            f"const S = {json.dumps(state or {})};\n"
+            "const sharedMap = new Map(Object.entries(S.shared || {}));\n"
+            "export const theme = () => ({});\n"
+            "export const run = () => {};\n"
+            "export const exec = async () => ({ code: 0, stdout: '' });\n"
+            "export const openOverlay = () => {};\n"
+            "export const closeOverlay = () => {};\n"
+            "export const layout = () => ({});\n"
+            "export const shared = (k) => sharedMap.get(k);\n"
+            "export const setShared = (k, v) => sharedMap.set(k, v);\n"
+            "export const keys = () => [];\n"
+            "export const spaces = () => S.spaces || [];\n"
+            "export const agents = () => S.agents || [];\n"
+            "export const terminals = () => S.terminals || [];\n"
+            "export const panes = () => S.panes || [];\n"
+            "export const focused = () => null;\n"
+            "export const home = () => '/srv/home';\n"
+            "export const appHome = () => '/app';\n"
+            "export const readTextFile = async () => { throw new Error('ENOENT'); };\n"
+            "export const window = () => ({ platform: 'linux' });\n",
+            encoding="utf-8",
+        )
+        script = (
+            f'import * as K from "{(Path(folder) / "kit.js").as_uri()}";\n'
+            f'const r = (() => {{ {body} }})();\n'
+            f'console.log(JSON.stringify(r));\n'
+        )
+        out = subprocess.run([NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=60)
+        if out.returncode != 0:
+            raise AssertionError(out.stderr.strip() or "node failed")
+        return json.loads(out.stdout)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class WorkingSubagentRecordRollup(unittest.TestCase):
+    """An agent with a live working or blocked sub-agent record counts as working/blocked without module state."""
+
+    def test_pure_is_record_live_and_effective_term_status(self):
+        got = att("""(() => {
+            const subs = [
+                { parent: "t1", id: "ended1", ended: true },
+                { parent: "t1", id: "abcdef1234567890", ended: true },
+                { parent: "t2", id: "ended_other", ended: true },
+            ];
+            return {
+                workIdle: A.effectiveTermStatus("idle", { address: "t1", state: "live", records: { a1: { state: "working" } } }, subs),
+                workDone: A.effectiveTermStatus("done", { address: "t1", state: "live", records: { a1: { state: "working" } } }, subs),
+                blockedOverWork: A.effectiveTermStatus("working", { address: "t1", state: "live", records: { a1: { state: "blocked" } } }, subs),
+                failedBeatsRecWork: A.effectiveTermStatus("failed", { address: "t1", state: "live", records: { a1: { state: "working" } } }, subs),
+                doneRecNoRaise: A.effectiveTermStatus("idle", { address: "t1", state: "live", records: { a1: { state: "done" } } }, subs),
+                exitedIgnoresRec: A.effectiveTermStatus("idle", { address: "t1", state: "exited", records: { a1: { state: "working" } } }, subs),
+                endedAgentSuppresses: A.effectiveTermStatus("idle", { address: "t1", state: "live", records: { ended1: { state: "working" } } }, subs),
+                endedRunPrefixSuppresses: A.effectiveTermStatus("done", { address: "t1", state: "live", records: { "subagents/abcdef123456.0": { state: "working" } } }, subs),
+                otherParentNoSuppress: A.effectiveTermStatus("idle", { address: "t1", state: "live", records: { ended_other: { state: "working" } } }, subs),
+            };
+        })()""")
+        self.assertEqual(got, {
+            "workIdle": "working",
+            "workDone": "working",
+            "blockedOverWork": "blocked",
+            "failedBeatsRecWork": "failed",
+            "doneRecNoRaise": "idle",
+            "exitedIgnoresRec": "idle",
+            "endedAgentSuppresses": "idle",
+            "endedRunPrefixSuppresses": "done",
+            "otherParentNoSuppress": "working",
+        })
+
+    def test_kit_attention_and_subagent_counts_suppress_ended_and_exited_records(self):
+        state = {
+            "terminals": [
+                {"address": "t_idle", "state": "live", "status_ms": 100, "turn": 1, "records": {"a1": {"state": "working"}}},
+                {"address": "t_blk", "state": "live", "status_ms": 200, "turn": 2, "records": {"b1": {"state": "blocked"}}},
+                {"address": "t_end", "state": "live", "status_ms": 300, "turn": 3, "records": {"c1": {"state": "working"}}},
+                {"address": "t_dead", "state": "exited", "status_ms": 400, "turn": 4, "records": {"d1": {"state": "working"}}},
+            ],
+            "panes": [
+                {"pane": "p1", "tab": "tb1", "terminal": "t_idle", "status": "idle"},
+                {"pane": "p2", "tab": "tb2", "terminal": "t_end", "status": "done"},
+            ],
+            "spaces": [
+                {"id": "sp1", "status": "idle", "tabs": [{"id": "tb1", "status": "idle"}]},
+                {"id": "sp2", "status": "done", "tabs": [{"id": "tb2", "status": "done"}]},
+            ],
+            "shared": {
+                "ob.subagents": {
+                    "v": 2,
+                    "providers": {"alpha": {"id": "alpha", "name": "Alpha", "noun": "Alpha agent", "caps": ["subagents"]}},
+                    "terms": {},
+                    "subagents": [
+                        {"key": "local:c1", "machine": None, "parent": "t_end", "provider": "alpha", "id": "c1", "live": False, "ended": True},
+                    ],
+                    "runs": [],
+                },
+            },
+        }
+        got = run_kit("""
+            const tmap = K.terminalsByAddress();
+            const ps = [
+                { pane: "p1", tab: "tb1", terminal: "t_idle", status: "idle" },
+                { pane: "p2", tab: "tb2", terminal: "t_end", status: "done" },
+            ];
+            const sp1 = { id: "sp1", status: "idle", tabs: [{ id: "tb1", status: "idle" }] };
+            const sp2 = { id: "sp2", status: "done", tabs: [{ id: "tb2", status: "done" }] };
+            const blkTerm = tmap.get("t_blk");
+            const dis = K.patchDismissed({}, "t_blk", K.dismissStamp(K.effectiveStatus("done", "t_blk", tmap), blkTerm));
+            const counts = K.subagentCounts();
+            return {
+                agIdleRecWork: K.agentAttention({ address: "t_idle", status: "idle" }, tmap, {}),
+                agBlkRec: K.agentAttention({ address: "t_blk", status: "done" }, tmap, {}),
+                agBlkDismissed: K.agentAttention({ address: "t_blk", status: "done" }, tmap, dis),
+                agEndedSuppressed: K.agentAttention({ address: "t_end", status: "done" }, tmap, {}),
+                agExitedIgnored: K.agentAttention({ address: "t_dead", status: "done" }, tmap, {}),
+                tabWork: K.tabAttention(sp1.tabs[0], ps, tmap, {}),
+                spaceWork: K.spaceAttention(sp1, ps, tmap, {}),
+                tabSuppressed: K.tabAttention(sp2.tabs[0], ps, tmap, {}),
+                spaceSuppressed: K.spaceAttention(sp2, ps, tmap, {}),
+                subEndLive: K.subagentsOf("t_end").live,
+                subDeadLive: K.subagentsOf("t_dead").live,
+                countIdle: counts.byParent.get("t_idle"),
+                countEnd: counts.byParent.get("t_end"),
+                countDead: counts.byParent.get("t_dead") ?? null,
+            };
+        """, state)
+        self.assertEqual(got, {
+            "agIdleRecWork": "working",
+            "agBlkRec": "blocked",
+            "agBlkDismissed": "idle",
+            "agEndedSuppressed": "done",
+            "agExitedIgnored": "done",
+            "tabWork": "working",
+            "spaceWork": "working",
+            "tabSuppressed": "done",
+            "spaceSuppressed": "done",
+            "subEndLive": 0,
+            "subDeadLive": 0,
+            "countIdle": {"live": 1, "total": 1},
+            "countEnd": {"live": 0, "total": 1},
+            "countDead": None,
+        })
 
 
 if __name__ == "__main__":

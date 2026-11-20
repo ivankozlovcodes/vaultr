@@ -11,7 +11,7 @@ import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
 import { spaces, panes, terminals, run, theme, props, nextCommand, settings, setShared } from "herdr";
 import {
   S, icon, programIcon, iconButton, treeRow, avatar, emptyState, openMenu, statusMark, needsYou, normStatus,
-  sectionHeader, takeFocus, bookmarks, toggleBookmark, tabLabel, paneName, current, feed, bindingFor, chordLabel,
+  sectionHeader, takeFocus, bookmarks, toggleBookmark, tabLabel, paneName, current, provider, bindingFor, chordLabel,
   openView, machineOf, ago,
   attentionStatus, paneAttention, tabAttention, spaceAttention, getDismissed, terminalsByAddress,
 } from "./kit.js";
@@ -120,7 +120,7 @@ export default class Bookmarks extends View {
         go: () => { if (s) run("space.select", { id: s.id }); run("tab.select", { id: p.tab }); run("pane.focus", { pane: p.pane }); } };
     }
     if (b.kind === "run") {
-      const r = (feed()?.runs ?? []).find((x) => x.key === b.id);
+      const r = provider.subagents().find((x) => x.kind === "run" && x.key === b.id);
       const chain = (r?.steps ?? []).map((s) => s.agent).filter(Boolean).join(" → ");
       // A run the feed dropped (older than a day) can still be opened by key in Outline's history.
       return { label: chain || b.label || b.id, status: r ? (r.live ? "working" : r.state) : null, gone: !r, lead: icon("subagents", S.iconSm, t.dim),

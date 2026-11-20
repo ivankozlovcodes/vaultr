@@ -5,7 +5,7 @@
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import {
-  theme, run, openOverlay, closeOverlay, layout, shared, setShared, keys, spaces, agents,
+  theme, run, exec, openOverlay, closeOverlay, layout, shared, setShared, keys, spaces, agents,
   terminals, panes, focused, home, appHome, readTextFile, window as appWindow,
 } from "herdr";
 
@@ -34,6 +34,10 @@ export { followTarget } from "./follow_target.js";
 
 // Pure macOS traffic-light inset rule (kit/lights.js): left padding for top-left chrome bars.
 export { lightsLeftPad, paneLightsLeftPad } from "./lights.js";
+
+// Provider facade (kit/provider.js): single entry point for provider discovery, transcripts, usage, search, scan.
+import { makeProvider } from "./provider.js";
+export { makeProvider };
 
 // Pure hidden rules and shared state (kit/hidden.js): hidden machines, spaces, tabs.
 export {
@@ -81,9 +85,12 @@ export function updateHidden(mutator) {
 // attention only (sections, counts, badges, pills); the pane header, Properties and Outline show the real status.
 export {
   attentionWord, attentionRank, attentionCounts, isNeedsYou, dismissStamp, normDismissed, isDismissed,
-  attentionStatus, patchDismissed, pruneDismissed,
+  attentionStatus, patchDismissed, pruneDismissed, isRecordLive, effectiveTermStatus,
 } from "./attention.js";
-import { attentionStatus, dismissStamp, normDismissed, isDismissed, patchDismissed, pruneDismissed } from "./attention.js";
+import {
+  attentionStatus, dismissStamp, normDismissed, isDismissed, patchDismissed, pruneDismissed,
+  isRecordLive, effectiveTermStatus,
+} from "./attention.js";
 
 // Dismissals { [terminal address]: stamp }: shared as ob.dismissed and kept in storage, like ob.hidden.
 export function getDismissed() {
@@ -197,29 +204,42 @@ export function worst(list) { return list.reduce((m, s) => ((RANK[normStatus(s)]
 // The status for attention (sections, counts, badges, pills): the agent's or pane's own status, idle while its
 // current report is dismissed. tmap: terminalsByAddress(); dis: getDismissed(). The pane header, Properties and
 // Outline keep reading a.status / p.status.
+// Effective status before dismissal: raises an idle/done/ok terminal to "working"/"blocked" when a live record says so.
+export function effectiveStatus(raw, addr, tmap = null) {
+  const term = addr ? tmap?.get(addr) : null;
+  const subs = term?.records ? provider.subagents({ parent: addr }) : null;
+  return effectiveTermStatus(raw ?? null, term, subs, normStatus);
+}
 export function agentAttention(a, tmap = null, dis = null) {
   if (!a) return null;
-  return attentionStatus(dis, a.address, a.status ?? null, tmap?.get(a.address));
+  const term = tmap?.get(a.address);
+  return attentionStatus(dis, a.address, effectiveStatus(a.status ?? null, a.address, tmap), term);
 }
 export function paneAttention(p, tmap = null, dis = null) {
   if (!p) return null;
   if (!p.terminal) return p.status ?? null;
-  return attentionStatus(dis, p.terminal, p.status ?? null, tmap?.get(p.terminal));
+  const term = tmap?.get(p.terminal);
+  return attentionStatus(dis, p.terminal, effectiveStatus(p.status ?? null, p.terminal, tmap), term);
 }
-// A tab's or space's status for attention: Herdr's own, unless one of its panes has a dismissed report; then the
-// worst of its panes' attention statuses.
-const anyDismissed = (mine, tmap, dis) => mine.some((p) => p.terminal && isDismissed(dis, p.terminal, p.status, tmap?.get(p.terminal)));
+// A tab's or space's status for attention: Herdr's own, unless one of its panes has a dismissed report or a live
+// sub-agent record raising its status; then the worst of its panes' attention statuses.
+const hasAttentionOverride = (mine, tmap, dis) => mine.some((p) => {
+  if (!p.terminal) return false;
+  const term = tmap?.get(p.terminal);
+  const eff = effectiveStatus(p.status ?? null, p.terminal, tmap);
+  return eff !== (p.status ?? null) || Boolean(dis && isDismissed(dis, p.terminal, eff, term));
+});
 export function tabAttention(tab, ps, tmap = null, dis = null) {
   if (!tab) return null;
   const mine = (ps ?? []).filter((p) => p.tab === tab.id);
-  if (!dis || !anyDismissed(mine, tmap, dis)) return tab.status ?? null;
+  if (!hasAttentionOverride(mine, tmap, dis)) return tab.status ?? null;
   return worst(mine.map((p) => paneAttention(p, tmap, dis)).filter(Boolean));
 }
 export function spaceAttention(space, ps, tmap = null, dis = null) {
   if (!space) return null;
   const tabs = space.tabs ?? [];
   const ids = new Set(tabs.map((tb) => tb.id));
-  if (!dis || !anyDismissed((ps ?? []).filter((p) => ids.has(p.tab)), tmap, dis)) return space.status ?? null;
+  if (!hasAttentionOverride((ps ?? []).filter((p) => ids.has(p.tab)), tmap, dis)) return space.status ?? null;
   return worst(tabs.map((tb) => tabAttention(tb, ps, tmap, dis)).filter(Boolean));
 }
 
@@ -618,10 +638,10 @@ export function tabLabel(tab, ps) {
   const lead = mine.find((p) => p.program?.agent) ?? mine.find((p) => p.focused) ?? mine[0];
   return lead ? paneName(lead) : tab.name;
 }
-// An agent's session title: the feed's name for its session (Claude Code's, from its session record), else none. The
+// An agent's session title: the feed's name for its session, else none. The
 // agent's terminal title is left out: it is a task line that changes ("bash in src"), not the session.
 export function sessionTitleOf(address) {
-  const named = feed()?.terms?.[address]?.name;
+  const named = provider.session(address)?.title;
   return typeof named === "string" && named.trim() ? named.trim() : null;
 }
 // A pane's label (kit/names.js paneLabel): an agent by its session title, a shell by its folder, a mod by its panel's
@@ -661,17 +681,14 @@ export function toggleBookmark(item) {
 }
 
 // ---------------------------------------------------------------- sub-agents (shared "ob.subagents")
-// Written only by mods/ob-feed/main.js. Readers use these helpers, never the raw key.
-// feed(): { v, at, machines: { [name|"local"]: { ok, at, error, ms } }, runs: Run[], claude: ClaudeAgent[] } or null.
-// Run: { key, machine, id, short, mode, state, live, startedAt, endedAt, lastUpdate, cwd, parent (address|null),
-//        parentGuess, parentSession, tokens, cost, turns, toolCount, error, log, dir, steps: Step[] }
-// Step: { agent, label, task, status, model, startedAt, endedAt, tokens, cost, turns, toolCount, tools:[{tool,args,at}], out:[], error, session, transcript }
-// ClaudeAgent: { key, machine, parent (address), id, type, desc, model, updatedAt, lastTool, outTokens, live, transcript }
+// Written only by mods/ob-feed/main.js. Readers use `provider` or these helpers, never raw buckets.
+// feed(): { v: 2, at, providers, machines: { [name|"local"]: { ok, at, error, ms } }, runs, subagents, terms, touches, scriptError } or null.
 export function feed() {
   const f = shared("ob.subagents");
-  return f && f.v === 1 ? f : null;
+  return f && f.v === 2 ? f : null;
 }
-// Live claude sub-agent ids per parent address, from herdr itself (no polling): terminals()[].records.
+export const provider = makeProvider({ feed, exec, readTextFile, appHome });
+// Live sub-agent ids per parent address, from herdr itself (no polling): terminals()[].records.
 export function liveRecords() {
   const out = new Map();
   for (const t of terminals()) {
@@ -681,29 +698,53 @@ export function liveRecords() {
   return out;
 }
 // Everything known about sub-agents of one parent terminal address.
-// -> { runs: Run[], claude: ClaudeAgent[], live: number, total: number, worst: status|null }
+// -> { runs: Run[], agents: SubAgent[], live: number, total: number, worst: status|null }
 export function subagentsOf(address) {
-  const f = feed();
-  const runs = (f?.runs ?? []).filter((r) => r.parent === address);
-  const claude = (f?.claude ?? []).filter((c) => c.parent === address).map((c) => ({ ...c }));
-  const recs = liveRecords().get(address) ?? {};
+  const subs = provider.subagents({ parent: address });
+  const runs = subs.filter((x) => x.kind === "run");
+  const agents = subs.filter((x) => x.kind === "agent").map((c) => ({ ...c }));
+  const term = terminalsByAddress().get(address);
+  const termLive = !term?.state || term.state === "live";
+  const recs = term?.records && typeof term.records === "object" ? term.records : {};
   for (const [id, r] of Object.entries(recs)) {
-    const c = claude.find((x) => x.id === id);
-    if (c) c.live = r.state === "working" || r.state === "blocked";
-    else claude.push({ key: `${address}#${id}`, machine: machineOf(address), parent: address, id, type: r.app, desc: r.title, live: true, state: r.state });
+    if (/^subagents\/[0-9a-f]{12}(\.|$)/i.test(id)) continue;
+    const live = isRecordLive(address, id, r, subs, normStatus, termLive);
+    const c = agents.find((x) => x.id === id);
+    if (c) {
+      if (!c.ended) { c.live = Boolean(c.live) || live; c.state = r?.state; }
+    } else if (live || (termLive && r?.state)) {
+      agents.push({ kind: "agent", key: `${address}#${id}`, machine: machineOf(address), parent: address, id, type: r.app, desc: r.title, live, state: r.state });
+    }
   }
-  const live = runs.filter((r) => r.live).length + claude.filter((c) => c.live).length;
-  return { runs, claude, live, total: runs.length + claude.length, worst: worst([...runs.map((r) => r.state), ...claude.map((c) => (c.live ? "working" : "ok"))]) };
+  const live = runs.filter((r) => r.live).length + agents.filter((c) => c.live).length;
+  return { runs, agents, live, total: runs.length + agents.length, worst: worst([...runs.map((r) => r.state), ...agents.map((c) => (c.live ? "working" : "ok"))]) };
 }
 // Counts for badges: { live, total, byParent: Map(address -> { live, total }) }.
 export function subagentCounts() {
-  const f = feed();
+  const subs = provider.subagents();
+  const tmap = terminalsByAddress();
   const byParent = new Map();
   const bump = (p, live) => { if (!p) return; const c = byParent.get(p) ?? { live: 0, total: 0 }; c.total++; if (live) c.live++; byParent.set(p, c); };
-  for (const r of f?.runs ?? []) bump(r.parent, r.live);
   const seen = new Set();
-  for (const c of f?.claude ?? []) { seen.add(`${c.parent}#${c.id}`); bump(c.parent, c.live); }
-  for (const [addr, recs] of liveRecords()) for (const id of Object.keys(recs)) if (!seen.has(`${addr}#${id}`)) bump(addr, true);
+  for (const x of subs) {
+    if (x.kind === "agent" && x.id) seen.add(`${x.parent}#${x.id}`);
+    const term = x.parent ? tmap.get(x.parent) : null;
+    const termLive = !term?.state || term.state === "live";
+    const rec = x.kind === "agent" && x.id ? term?.records?.[x.id] : null;
+    const rLive = rec ? isRecordLive(x.parent, x.id, rec, subs, normStatus, termLive) : false;
+    bump(x.parent, Boolean(x.live) || (!x.ended && rLive));
+  }
+  for (const [addr, recs] of liveRecords()) {
+    const term = tmap.get(addr);
+    const termLive = !term?.state || term.state === "live";
+    for (const [id, r] of Object.entries(recs)) {
+      if (/^subagents\/[0-9a-f]{12}(\.|$)/i.test(id)) continue;
+      if (!seen.has(`${addr}#${id}`)) {
+        const live = isRecordLive(addr, id, r, subs, normStatus, termLive);
+        if (live || (termLive && r?.state)) bump(addr, live);
+      }
+    }
+  }
   let live = 0, total = 0;
   for (const c of byParent.values()) { live += c.live; total += c.total; }
   return { live, total, byParent };

@@ -3,33 +3,32 @@
 //   { view, path, ... } a log / transcript viewer (popup, or pane after "Move to main window")  viewer.js
 //   { view: "attach", terminal, ... } a header for a live hc child terminal in a popup         viewer.js
 //
-// The panel lists the active tab's panes. Under each pane: the sub-agents that run in its terminal (pi
-// background runs, Claude Code agents, child terminals), each with state, tools and tokens; a click expands
-// it into steps and actions (Follow log, Transcript, Open child session, Bookmark). A pinned session outside
-// this tab is shown after the panes. "All" groups every machine by session, with "Unattached" background
-// terminals last. Live only and the machine filter apply to both.
+// The panel lists the active tab's panes. Under each pane: the sub-agents that run in its terminal (runs,
+// sub-agents, child terminals), each with state, tools and tokens; a click expands it into steps and actions
+// (Follow log, Transcript, Open child session, Bookmark). A pinned session outside this tab is shown after the
+// panes. "All" groups every machine by session, with "Unattached" background terminals last. Live only and
+// the machine filter apply to both.
 // Logs, transcripts and live terminals open in a popup (openViewer / openAttach in obc.js); "Move to main
-// window" in the popup puts them on screen. Data: kit.feed() (ob-feed's scan) + terminals().records (live
-// Claude agents) + hc children.
+// window" in the popup puts them on screen. Data: provider (kit/provider.js) + terminals().records + hc children.
 //
 // Commands (ob-outline.<cmd>; keys and tests): focus, next, prev, open, expand:<key>, collapse:<key>,
-//   live-only:<on|off>, log:<runKey>, transcript:<runKey|claudeKey>[#<step>], copy-id:<key>,
+//   live-only:<on|off>, log:<runKey>, transcript:<runKey|agentKey>[#<step>], copy-id:<key>,
 //   open-session:<runKey>[#<step>], attach:<address>, bookmark:<runKey>, menu:<key>, scope:<tab|all>,
 //   machine:<name|local|all>, inspect:<address>, unpin, up, down, enter, refresh. Viewer copies take viewer-*.
 // Router intents: run:<key> (expand + scroll to it), term:<address> (inspect that session).
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
-import { props, run, nextCommand, settings, exec, hc, machines, spaces, panes, layout, focused, terminals, notify, readTextFile, appHome } from "herdr";
-import { loadProviders, assembleReader } from "./provider.js";
+import { props, run, nextCommand, settings, exec, hc, machines, spaces, panes, layout, focused, terminals, notify } from "herdr";
 import {
   S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, treeRow, emptyState, openMenu,
-  programIcon, feed, machineLabel, machineOf, ago, dur, fmtTokens, fmtCost, takeFocus, isBookmarked, toggleBookmark,
-  isShown, base, stop, kbd, feedLine, paneLabelOf, tabLabel, cleanTitle, sessionTitleOf, tilde,
+  programIcon, feed, provider, machineLabel, machineOf, ago, dur, fmtTokens, fmtCost, takeFocus,
+  isBookmarked, toggleBookmark, isShown, base, stop, kbd, feedLine, paneLabelOf, tabLabel, cleanTitle,
+  sessionTitleOf, tilde,
 } from "./kit.js";
 import {
   MONO, splitCmd, sessionOf, placedSessionOf, inspected, inspect, revealTerminal, runTitle, runModels, shortModel, runWhen, currentStep, lastTool,
-  runMeta, stepTranscript, claudeAll, recordRuns, openViewer, openAttach, copied, lines,
+  runMeta, stepTranscript, allSubagents, openViewer, openAttach, copied, lines,
 } from "./obc.js";
 import { Viewer } from "./viewer.js";
 import { rowClick } from "./rows.js";
@@ -52,12 +51,11 @@ class Panel {
     this.folded = new Set(load("folded", []));
     this.cursor = null;     // item key under the keyboard cursor
     this.w = 0;
-    this.piSession = {};    // machine key -> true/false: pi accepts --session there (U7)
+    this.sessionSupport = {}; // "<machine>:<prog>" -> true/false: accepts --session there
     this.index = new Map(); // item key -> row index (for scroll_to_item)
     cx.timer.every(1000, (cx) => {
       // Elapsed times of live runs (data, not animation): only while something runs and the panel shows.
-      const f = feed();
-      if ((f?.runs ?? []).some((r) => r.live) && isShown(layout(), props()?.slot ?? "ob-outline")) cx.notify();
+      if (provider.subagents().some((r) => r.kind === "run" && r.live) && isShown(layout(), props()?.slot ?? "ob-outline")) cx.notify();
     });
   }
 
@@ -69,19 +67,21 @@ class Panel {
   }
 
   // ---------------------------------------------------------------- lookups
-  runOf(key) { return feed()?.runs.find((r) => r.key === key) ?? null; }
-  claudeOf(key) { return claudeAll().find((c) => c.key === key) ?? null; }
+  allSubagents() { return allSubagents(); }
+  runOf(key) { return this.allSubagents().runs.find((r) => r.key === key) ?? null; }
+  agentOf(key) { return this.allSubagents().agents.find((c) => c.key === key) ?? null; }
 
-  // Does pi on that machine know --session? Checked once per machine (read-only `pi --help`).
-  checkPi(machine, cx) {
-    const k = machine ?? "local";
-    if (k in this.piSession) return;
-    this.piSession[k] = false;
+  // Does a run provider CLI on that machine accept --session? Checked once per (machine, program).
+  checkSessionSupport(machine, prog, cx) {
+    if (!prog) return;
+    const k = `${machine ?? "local"}:${prog}`;
+    if (k in this.sessionSupport) return;
+    this.sessionSupport[k] = false;
     cx.spawn(async (cx) => {
       try {
-        const r = await exec("pi", ["--help"], { ...(machine ? { on: machine } : {}), timeout: 15000 });
-        this.piSession[k] = /--session\s/.test(`${r.stdout}\n${r.stderr}`);
-      } catch { this.piSession[k] = false; }
+        const r = await exec(prog, ["--help"], { ...(machine ? { on: machine } : {}), timeout: 15000 });
+        this.sessionSupport[k] = /--session\s/.test(`${r.stdout}\n${r.stderr}`);
+      } catch { this.sessionSupport[k] = false; }
       cx.notify();
     });
   }
@@ -112,60 +112,40 @@ class Panel {
     this.showViewer("log", { view: "log", machine: r.machine, path: r.log, title: `${runTitle(r)} · log`, live: r.live, key: `log-${r.key}`, runKey: r.key });
   }
 
-  // Transcript of a run step, Claude agent, or child terminal. A Claude agent seen only through a live record has no
-  // path in the feed: its transcript is found by agent id (the entries mode of providers/reader_main.py, with --find). Failures say why in a notice.
+  // Transcript of a run step, sub-agent, or child terminal. A sub-agent seen only through a live record has no
+  // path in the feed: its transcript is found by agent id via provider.transcript(..., { find: true }).
   async transcript(key) {
     if (String(key ?? "").startsWith("h:")) {
       const addr = String(key).slice(2);
       const k = terminals().find((x) => x.address === addr);
-      const plan = transcriptPlan({ path: feed()?.terms?.[addr]?.transcript ?? null, title: `${this.childTitle(k ?? { address: addr })} · transcript` });
+      const plan = transcriptPlan({ path: provider.session(addr)?.transcript ?? null, title: `${this.childTitle(k ?? { address: addr })} · transcript` });
       if (!plan.open) { this.notice("No transcript", plan.notice); return; }
       const st = normStatus(typeof k?.status === "string" ? k.status : k?.status?.state);
       this.showViewer("transcript", { view: "transcript", machine: machineOf(addr), path: plan.path, title: plan.title, live: st === "working" || st === "blocked", key: `tx-h-${addr}` });
       return;
     }
-    const hit = resolveKey(key, { runs: (feed()?.runs ?? []).map((r) => r.key), claude: claudeAll().map((c) => c.key) });
+    const { runs, agents } = this.allSubagents();
+    const hit = resolveKey(key, { runs: runs.map((r) => r.key), agents: agents.map((c) => c.key) });
     if (!hit) { this.notice("No transcript", "That agent is no longer in the feed", "error"); return; }
-    const r = this.runOf(hit.key);
+    const r = runs.find((x) => x.key === hit.key) ?? null;
     if (r) {
       const step = hit.step != null ? r.steps[hit.step] : (stepTranscript(currentStep(r)) ? currentStep(r) : r.steps.find(stepTranscript));
-      const plan = transcriptPlan({ path: stepTranscript(step), title: `${step?.agent ?? "run"}${step?.label ? " · " + step.label : ""} · transcript` });
+      const plan = transcriptPlan({ path: stepTranscript(step), title: `${step?.agent ?? provider.of(r)?.noun ?? "run"}${step?.label ? " · " + step.label : ""} · transcript` });
       if (!plan.open) { this.notice("No transcript", "No transcript is recorded for this run yet"); return; }
       this.showViewer("transcript", { view: "transcript", machine: r.machine, path: plan.path, title: plan.title, live: r.live, key: `tx-${r.key}-${r.steps.indexOf(step)}`, runKey: r.key });
       return;
     }
-    const c = this.claudeOf(hit.key);
+    const c = agents.find((x) => x.key === hit.key) ?? null;
     if (!c) { this.notice("No transcript", "That agent is no longer in the feed", "error"); return; }
     let path = c.transcript;
-    if (!path && c.id) path = await this.findTranscript(c);
-    const plan = transcriptPlan({ transcript: path, desc: c.desc, type: c.type });
-    if (!plan.open) { this.notice("No transcript", "No transcript file for this agent yet: Claude Code writes it as the agent runs"); return; }
-    this.showViewer("transcript", { view: "transcript", machine: c.machine, path: plan.path, title: plan.title, live: c.live, key: `tx-${c.key}`, runKey: c.live ? null : c.key });
-  }
-
-  async loadViewerScript() {
-    const providersDir = `${appHome()}/mods/ob-feed/providers`;
-    const [readerMain, readers] = await Promise.all([
-      readTextFile(`${providersDir}/reader_main.py`).catch(() => null),
-      loadProviders({ readTextFile, providersDir }),
-    ]);
-    if (!readerMain || !readers.length) return null;
-    return assembleReader(readerMain, readers, "entries");
-  }
-
-  // The transcript file of a Claude Code background agent, found by its id on that machine. null when none.
-  async findTranscript(c) {
-    try {
-      this.viewerScript ||= await this.loadViewerScript();
-      const script = this.viewerScript;
-      if (!script) return null;
-      const r = await exec("python3", ["-c", script, "--find", c.id], { ...(c.machine ? { on: c.machine } : {}), timeout: 15000 });
-      const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
-      return line.startsWith("{") ? JSON.parse(line).path ?? null : null;
-    } catch (e) {
-      this.notice("Couldn't find the transcript", e?.message ?? e, "error");
-      return null;
+    if (!path && c.id) {
+      const found = await provider.transcript(c, { find: true });
+      if (found.ok) path = found.path;
+      else if (found.reason === "failed") this.notice("Couldn't find the transcript", found.error, "error");
     }
+    const plan = transcriptPlan({ transcript: path, desc: c.desc, type: c.type });
+    if (!plan.open) { this.notice("No transcript", "No transcript file for this agent yet: it writes one as it runs"); return; }
+    this.showViewer("transcript", { view: "transcript", machine: c.machine, path: plan.path, title: plan.title, live: c.live, key: `tx-${c.key}`, runKey: c.live ? null : c.key });
   }
 
   // A click or Enter on a card head: expand in place or collapse (rows.js). A starting run says why.
@@ -179,19 +159,21 @@ class Panel {
     cx.notify();
   }
 
-  // Open a step's child session: pi --session in a new terminal started as a child of the run's parent
+  // Open a step's child session in a new terminal started as a child of the run's parent
   // (so it shows under the parent), attached in a popup. Local runs only; it reaches the main window
   // only through the popup's "Move to main window".
   async openSession(key, cx = null) {
-    const hit = resolveKey(key, { runs: (feed()?.runs ?? []).map((x) => x.key) });
-    const r = hit ? this.runOf(hit.key) : null;
+    const runs = this.allSubagents().runs;
+    const hit = resolveKey(key, { runs: runs.map((x) => x.key) });
+    const r = hit ? runs.find((x) => x.key === hit.key) ?? null : null;
     if (!r || r.machine) return;
+    const prog = provider.of(r)?.id;
     const step = hit.step != null ? r.steps[hit.step] : currentStep(r);
-    if (!step?.session || !this.piSession.local) return;
+    if (!step?.session || !prog || !this.sessionSupport[`local:${prog}`]) return;
     const parentLocal = r.parent && !machineOf(r.parent) ? r.parent : null;
     const args = ["run", "--json", ...(r.cwd ? ["--cwd", r.cwd] : []),
       ...(parentLocal ? ["--parent", parentLocal, "--outlive-parent"] : ["--no-parent"]),
-      "--", "pi", "--session", step.session];
+      "--", prog, "--session", step.session];
     try {
       const res = await hc(args);
       const address = JSON.parse(String(res.stdout).trim().split("\n").pop())?.address;
@@ -235,13 +217,14 @@ class Panel {
     if (String(key ?? "").startsWith("h:")) {
       const addr = String(key).slice(2);
       const k = terminals().find((x) => x.address === addr);
-      if (k) this.childMenu(k, this.childTitle(k), attachPlan({ kind: "terminal", address: addr, state: k.state }), feed()?.terms?.[addr]?.transcript ?? null);
+      if (k) this.childMenu(k, this.childTitle(k), attachPlan({ kind: "terminal", address: addr, state: k.state }), provider.session(addr)?.transcript ?? null);
       return;
     }
     const r = this.runOf(key);
     if (r) {
       const step = currentStep(r);
-      const canOpen = Boolean(step?.session) && !r.machine && Boolean(this.piSession.local);
+      const prog = provider.of(r)?.id;
+      const canOpen = Boolean(step?.session) && !r.machine && Boolean(prog && this.sessionSupport[`local:${prog}`]);
       const mainSess = r.parent ? placedSessionOf(r.parent) : null;
       const toMain = Boolean(mainSess && mainSess.address !== r.parent);
       openMenu([
@@ -258,11 +241,11 @@ class Panel {
       ], { width: 240, title: `${runTitle(r)} · ${r.short}` });
       return;
     }
-    const c = this.claudeOf(key);
+    const c = this.agentOf(key);
     if (c) {
       const mainSess = c.parent ? placedSessionOf(c.parent) : null;
       const toMain = Boolean(mainSess && mainSess.address !== c.parent);
-      const showTx = !(!c.transcript && c.type && c.type !== "claude");
+      const showTx = Boolean(c.transcript || (c.id && (!c.type || (provider.of(c) ?? provider.of(c.type))?.can("transcript"))));
       openMenu([
         ...(showTx ? [{ label: "Transcript", icon: "file-text", command: `ob-outline.transcript:${key}` }] : []),
         { label: "Attach", icon: "terminal", disabled: true, hint: "no terminal" },
@@ -271,7 +254,7 @@ class Panel {
         { separator: true },
         { label: "Copy agent id", icon: "copy", copy: c.id },
         ...(c.transcript ? [{ label: "Copy transcript path", icon: "copy", copy: c.transcript }] : []),
-      ], { width: 240, title: c.desc || c.type });
+      ], { width: 240, title: c.desc || c.type || provider.of(c)?.noun || c.id });
     }
   }
 
@@ -292,7 +275,7 @@ class Panel {
       case "open-session": await this.openSession(arg, cx); break;
       case "attach": this.attach(arg, undefined, cx); break;
       case "reveal-session": revealTerminal(arg); break;
-      case "copy-id": { const r = this.runOf(arg) ?? this.claudeOf(arg); if (r) copied(cx, r.short ? "run id" : "agent id", r.id); break; }
+      case "copy-id": { const r = this.runOf(arg) ?? this.agentOf(arg); if (r) copied(cx, r.short ? "run id" : "agent id", r.id); break; }
       case "bookmark": { const r = this.runOf(arg); if (r) this.bookmark(r); break; }
       case "menu": this.menu(arg, cx); break;
       case "inspect": inspect(arg || null); this.persist(); break;
@@ -309,7 +292,7 @@ class Panel {
     if (!intent) return;
     if (intent.startsWith("run:")) {
       const key = intent.slice(4);
-      const r = this.runOf(key), c = r ? null : this.claudeOf(key);
+      const r = this.runOf(key), c = r ? null : this.agentOf(key);
       const parent = r?.parent ?? c?.parent ?? null;
       if (parent !== inspected().address) this.scope = "all";
       const mk = r ? (r.machine ?? "local") : c ? (c.machine ?? "local") : null;
@@ -366,16 +349,17 @@ class Panel {
     return s === "working" || s === "blocked";
   }
 
-  // Items of one parent (or of "no parent" on a machine): runs, Claude agents, hc children.
+  // Items of one parent (or of "no parent" on a machine): runs, sub-agents, hc children.
   build() {
     const f = feed();
-    const runs = [...recordRuns(), ...(f?.runs ?? [])].filter((r) => !this.liveOnly || r.live);
-    const claude = claudeAll().filter((c) => !this.liveOnly || c.live);
+    const merged = this.allSubagents();
+    const runs = merged.runs.filter((r) => !this.liveOnly || r.live);
+    const agents = merged.agents.filter((c) => !this.liveOnly || c.live);
     const ts = terminals();
     const allKids = listedTerminals(ts, panes());
     const parents = parentMap(ts);
-    const kids = this.liveOnly ? keepLiveAncestors(allKids, { runs, claude }, (k) => this.kidActive(k), parents) : allKids;
-    return { f, runs, claude, kids, parents };
+    const kids = this.liveOnly ? keepLiveAncestors(allKids, { runs, agents }, (k) => this.kidActive(k), parents) : allKids;
+    return { f, runs, agents, kids, parents };
   }
 
   // ---------------------------------------------------------------- rendering pieces
@@ -430,8 +414,9 @@ class Panel {
     const tool = live ? lastTool(r) : null;
     const step = currentStep(r);
     const id = `run-${r.key}`;
-    if (open) this.needPi.add(r.machine ?? "local");
-    const canOpen = Boolean(step?.session) && !r.machine && Boolean(this.piSession.local);
+    const prog = provider.of(r)?.id;
+    if (open && prog) this.needSession.add(`${r.machine ?? "local"}\u0000${prog}`);
+    const canOpen = Boolean(step?.session) && !r.machine && Boolean(prog && this.sessionSupport[`local:${prog}`]);
     const anyTx = r.steps.some(stepTranscript);
     return v_flex().id(id).relative().flex_none().ml(S.pad + depth * 10).mr(S.pad).mb(6).rounded(S.radiusLg).overflow_hidden()
       .border_1().border_color(cur ? alpha(t.accent, 0.7) : live ? alpha(t.working, 0.45) : t.border)
@@ -459,20 +444,20 @@ class Panel {
           .when(Boolean(r.log), (x) => x.child(this.actionButton(t, `${id}-log`, "scroll", "Follow log", `Follow ${base(r.log)} (tail, refreshed while live)`, () => this.follow(r))))
           .child(this.actionButton(t, `${id}-tx`, "file-text", "Transcript", anyTx ? "Read the transcript of the current step" : "No transcript recorded for this run yet", () => this.transcript(r.key), { disabled: !anyTx }))
           .child(this.actionButton(t, `${id}-copy`, "copy", "Copy id", `Copy run id ${r.id}`, (_e, cx) => copied(cx, "run id", r.id)))
-          .when(canOpen, (x) => x.child(this.actionButton(t, `${id}-open`, "play", "Open session", "Open this step's child session (pi --session) in a popup, a new terminal shown there", (_e, cx) => this.openSession(r.key, cx))))
+          .when(canOpen, (x) => x.child(this.actionButton(t, `${id}-open`, "play", "Open session", "Open this step's child session in a popup, a new terminal shown there", (_e, cx) => this.openSession(r.key, cx))))
           .child(this.actionButton(t, `${id}-bm`, isBookmarked("run", r.key) ? "bookmark" : "bookmark-plus", isBookmarked("run", r.key) ? "Bookmarked" : "Bookmark", "Bookmark this run", () => this.bookmark(r), { active: isBookmarked("run", r.key) }))
           .child(div().flex_1())
           .child(div().flex_none().font_family(MONO).text_size(10.5).text_color(t.dim).child(r.short)))));
   }
 
-  claudeCard(t, c, depth) {
+  agentCard(t, c, depth) {
     const open = this.open.has(c.key);
     const cur = this.cursor === c.key;
     const id = `cl-${c.key}`;
     const meta = [c.type, shortModel(c.model), c.toolCount ? `${c.toolCount} tool${c.toolCount === 1 ? "" : "s"}` : null, c.outTokens ? `${fmtTokens(c.outTokens)} out` : null, c.updatedAt ? `${ago(c.updatedAt)}${ago(c.updatedAt) === "now" ? "" : " ago"}` : null].filter(Boolean).join(" · ");
     const tool = c.lastTool ? `${c.lastTool.tool ?? ""} ${c.lastTool.args ?? ""}`.trim() : null;
     const st = c.live ? (c.state === "blocked" ? "blocked" : "working") : "ok";
-    const showTx = !(!c.transcript && c.type && c.type !== "claude");
+    const showTx = Boolean(c.transcript || (c.id && (!c.type || (provider.of(c) ?? provider.of(c.type))?.can("transcript"))));
     const shortId = String(c.id ?? "").split("/").pop().slice(0, 8);
     return v_flex().id(id).relative().flex_none().ml(S.pad + depth * 10).mr(S.pad).mb(6).rounded(S.radiusLg).overflow_hidden()
       .border_1().border_color(cur ? alpha(t.accent, 0.7) : c.live ? alpha(t.working, 0.45) : t.border)
@@ -482,7 +467,7 @@ class Panel {
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.cursor = c.key; this.menu(c.key, cx); })
         .child(h_flex().h(18).gap(6).items_center()
           .child(statusMark(st, 12))
-          .child(div().min_w(0).flex_shrink(1).truncate().text_size(S.text).font_medium().text_color(c.live || open ? t.foreground : t.muted).child(c.desc || c.type || c.id))
+          .child(div().min_w(0).flex_shrink(1).truncate().text_size(S.text).font_medium().text_color(c.live || open ? t.foreground : t.muted).child(c.desc || c.type || provider.of(c)?.noun || c.id))
           .child(div().flex_1().min_w(4))
           .child(icon("bot", S.iconXs, t.dim)))
         .when(Boolean(meta), (e) => e.child(div().truncate().text_size(S.textXs).text_color(t.dim).child(meta)))
@@ -519,8 +504,9 @@ class Panel {
     const showSlug = Boolean(slug && slug !== name);
     const mainSess = this.scope === "all" ? placedSessionOf(k.address) : null;
     const showGo = Boolean(mainSess && mainSess.address !== rootAddr);
-    const tx = feed()?.terms?.[k.address]?.transcript ?? null;
-    const last = feed()?.terms?.[k.address]?.lastTool;
+    const sess = provider.session(k.address);
+    const tx = sess?.transcript ?? null;
+    const last = sess?.lastTool;
     const tool = st === "working" && last ? `${last.tool ?? ""} ${last.args ?? ""}`.trim() || null : null;
     const active = st === "working" || st === "blocked";
     const plan = attachPlan({ kind: "terminal", address: k.address, state: k.state });
@@ -576,20 +562,20 @@ class Panel {
   renderSubtree(t, rows, sub, depth, rootAddr = null) {
     const sorted = [
       ...(sub.runs ?? []).map((r) => ({ live: r.live, at: r.lastUpdate ?? 0, el: () => this.runCard(t, r, depth), key: r.key })),
-      ...(sub.claude ?? []).map((c) => ({ live: c.live, at: c.updatedAt ?? Date.now(), el: () => this.claudeCard(t, c, depth), key: c.key })),
+      ...(sub.agents ?? []).map((c) => ({ live: c.live, at: c.updatedAt ?? Date.now(), el: () => this.agentCard(t, c, depth), key: c.key })),
     ].sort((a, b) => (b.live - a.live) || (b.at - a.at));
     for (const x of sorted) rows.push([x.key, x.el()]);
     for (const k of sub.kids ?? []) {
       rows.push([`h:${k.address}`, this.childRow(t, k, depth + 1, rootAddr)]);
-      if (k.sub && (k.sub.runs.length || k.sub.claude.length || k.sub.kids.length)) {
+      if (k.sub && (k.sub.runs.length || k.sub.agents.length || k.sub.kids.length)) {
         this.renderSubtree(t, rows, k.sub, depth + 1, rootAddr);
       }
     }
   }
 
   // Rows for one parent's items. Pushes [key, element] pairs.
-  items(t, rows, runs, claude, kids, depth, rootAddr = null) {
-    this.renderSubtree(t, rows, nestItems({ runs, claude, kids }), depth, rootAddr);
+  items(t, rows, runs, agents, kids, depth, rootAddr = null) {
+    this.renderSubtree(t, rows, nestItems({ runs, agents, kids }), depth, rootAddr);
   }
 
   toolbar(t, pinned) {
@@ -654,7 +640,7 @@ class Panel {
       const addr = p.terminal ?? null;
       live += liveCount(g, (k) => this.kidActive(k));
       rows.push([`pane:${p.pane}`, this.paneRow(t, p, Boolean(pinned) && pinnedAddr === addr && addr != null, tabLabel(curTab, ps))]);
-      this.items(t, rows, g.runs, g.claude, g.kids, 1);
+      this.items(t, rows, g.runs, g.agents, g.kids, 1);
     });
     return { live };
   }
@@ -704,15 +690,15 @@ class Panel {
       const mk = m ?? "local";
       if (this.machine && this.machine !== mk) continue;
       const runs = data.runs.filter((r) => (r.machine ?? null) === m);
-      const claude = data.claude.filter((c) => (c.machine ?? null) === m);
+      const agents = data.agents.filter((c) => (c.machine ?? null) === m);
       const kids = data.kids.filter((k) => machineOf(k.address) === m);
       const sessions = new Map();
       const sess = (a) => { if (!sessions.has(a)) sessions.set(a, sessionOf(a, ps, sp)); return sessions.get(a); };
       const isOn = (a) => { const st = normStatus(sess(a)?.status); return st === "working" || st === "blocked"; };
       const placed = ps.filter((p) => p?.terminal && machineOf(p.terminal) === m)
-        .map((p) => ({ address: p.terminal, active: isOn(p.terminal), at: f?.terms?.[p.terminal]?.updatedAt ?? Number(sess(p.terminal)?.term?.status_ms ?? sess(p.terminal)?.term?.created_ms ?? 0) }));
+        .map((p) => ({ address: p.terminal, active: isOn(p.terminal), at: provider.session(p.terminal)?.updatedAt ?? Number(sess(p.terminal)?.term?.status_ms ?? sess(p.terminal)?.term?.created_ms ?? 0) }));
       // Active sessions and children first, then by newest activity, Unattached last.
-      const list = sessionGroups(placed, { runs, claude, kids }, { kidActive: (k) => this.kidActive(k), sessionActive: isOn, liveOnly: this.liveOnly, parents: data.parents });
+      const list = sessionGroups(placed, { runs, agents, kids }, { kidActive: (k) => this.kidActive(k), sessionActive: isOn, liveOnly: this.liveOnly, parents: data.parents });
       const n = list.length;
       const st = f?.machines?.[mk];
       if (!n && !(st && !st.ok)) continue;
@@ -723,14 +709,14 @@ class Panel {
       for (const [p, x] of list) {
         const key = `p:${mk}:${p ?? "-"}`;
         const s = p ? sess(p) : null;
-        rows.push([key, this.parentRow(t, key, p ? s : null, { live: x.live, total: x.runs.length + x.claude.length + x.kids.length })]);
+        rows.push([key, this.parentRow(t, key, p ? s : null, { live: x.live, total: x.runs.length + x.agents.length + x.kids.length })]);
         if (this.folded.has(key)) continue;
-        this.items(t, rows, x.runs, x.claude, x.kids, 0, p);
+        this.items(t, rows, x.runs, x.agents, x.kids, 0, p);
       }
     }
     if (!shown && !rows.length) {
       return { empty: emptyState({ icon: this.liveOnly ? "zap" : "subagents", title: this.liveOnly ? "Nothing running" : f ? "No sub-agents" : "Scanning machines…",
-        body: this.liveOnly ? "No pi run, Claude agent or child terminal is working right now." : f ? "pi background runs from the last 48 h, Claude Code agents and child terminals of every machine show up here." : "Reading pi-subagents runs and Claude Code agents on every machine.",
+        body: this.liveOnly ? "No run, sub-agent or child terminal is working right now." : f ? "Background runs from the last 48 h, sub-agents and child terminals of every machine show up here." : "Reading runs and sub-agents on every machine.",
         action: this.liveOnly ? { id: "show-finished", label: "Show finished too", onClick: (_e, cx) => { this.liveOnly = false; this.persist(); cx.notify(); } } : null }) };
     }
     return {};
@@ -741,17 +727,25 @@ class Panel {
     takeFocus(this, cx, props()?.slot ?? "ob-outline", this.handle, (_cx, intent) => this.intent(intent));
     const data = this.build();
     const rows = [];
-    this.needPi = new Set();
+    this.needSession = new Set();
     const res = this.scope === "all" ? this.allView(t, rows, data) : this.tabView(t, rows, data);
     this.index = new Map(rows.map(([k], i) => [k, i]));
-    this.order = rows.map(([k]) => k).filter((k) => this.runOf(k) || this.claudeOf(k) || k.startsWith("h:") || k.startsWith("pane:"));
+    this.order = rows.map(([k]) => k).filter((k) => this.runOf(k) || this.agentOf(k) || k.startsWith("h:") || k.startsWith("pane:"));
     if (this.pendingScroll && this.index.has(this.pendingScroll)) {
       this.scroll.scroll_to_item(this.index.get(this.pendingScroll));
       this.pendingScroll = null;
     }
-    const need = [...this.needPi].filter((m) => !(m in this.piSession));
-    this.needPi.clear();
-    if (need.length) cx.timer.after(0, (cx) => { for (const m of need) this.checkPi(m === "local" ? null : m, cx); });
+    const need = [...this.needSession].filter((pair) => {
+      const [mk, prog] = pair.split("\u0000");
+      return !(`${mk}:${prog}` in this.sessionSupport);
+    });
+    this.needSession.clear();
+    if (need.length) cx.timer.after(0, (cx) => {
+      for (const pair of need) {
+        const [mk, prog] = pair.split("\u0000");
+        this.checkSessionSupport(mk === "local" ? null : mk, prog, cx);
+      }
+    });
     const pinned = this.scope === "tab" && Boolean(this.pinnedInTab);
     return v_flex().id("root").track_focus(this.handle).size_full().min_h(0).bg(t.chrome).text_color(t.foreground)
       .on_size_change((s, cx) => { const w = s.width / (settings().zoom || 1); if (Math.abs(w - this.w) > 1) { this.w = w; cx.notify(); } })

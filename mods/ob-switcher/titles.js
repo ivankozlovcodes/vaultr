@@ -1,12 +1,12 @@
 // The session titles a tab holds, for the quick switcher's search: the titles of the agents and terminals in its
-// panes (Claude Code's session title, a pi session's name, a terminal's title) and the session names the sub-agent
-// feed knows for them. Pure functions (no Herdr or gpui imports, so test/ runs them under node).
+// panes (agent session titles, terminal titles) and the session names the provider facade knows for them.
+// Pure functions (no Herdr or gpui imports, so test/ runs them under node).
 
 import { cleanTitle } from "./names.js";
 
 // tabOf: Map terminal address -> tab id (the panes that show a terminal). agents: agents(). terminals: terminals().
-// terms: the feed's terms, { [address]: { name } }. -> Map tab id -> [title, ...] (trimmed, no repeats).
-export function sessionTitles(tabOf, { agents = [], terminals = [], terms = {} } = {}) {
+// sessions: provider.sessions() rows [{ address, title }]. -> Map tab id -> [title, ...] (trimmed, no repeats).
+export function sessionTitles(tabOf, { agents = [], terminals = [], sessions = [] } = {}) {
   const out = new Map();
   const note = (address, title) => {
     const tab = tabOf.get(address);
@@ -18,7 +18,7 @@ export function sessionTitles(tabOf, { agents = [], terminals = [], terms = {} }
   };
   for (const a of agents ?? []) note(a?.address, a?.title);
   for (const t of terminals ?? []) { note(t?.address, t?.title); note(t?.address, t?.name); }
-  for (const [address, info] of Object.entries(terms ?? {})) note(address, info?.name);
+  for (const s of sessions ?? []) note(s?.address, s?.title ?? s?.name);
   return out;
 }
 

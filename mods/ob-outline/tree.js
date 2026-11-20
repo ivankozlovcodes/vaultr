@@ -1,7 +1,7 @@
 // Pure: which agents sit under which pane of the active tab (the Outline's tree). No Herdr or kit imports, so
 // test/test_ob_outline.py runs it under node.
 //
-// A pane's agents are the runs, Claude agents and child terminals whose parent (or ancestor through child
+// A pane's agents are the runs, sub-agents and child terminals whose parent (or ancestor through child
 // terminals / exited terminals) is that pane's terminal. A mod pane has no terminal and takes nothing. An agent
 // whose root is no pane of this tab comes back apart, in `outside`, so the caller can show it after the panes.
 
@@ -39,34 +39,34 @@ export function resolveRoot(addr, roots, parentOf) {
   }
 }
 
-// panes: the tab's panes in order ({ pane, terminal? }). data: { runs, claude, kids } (each item has `parent`, or
+// panes: the tab's panes in order ({ pane, terminal? }). data: { runs, agents, kids } (each item has `parent`, or
 // `address` for a child terminal's own key). opts: { parents? } (Map or plain object from terminals()).
-// Returns { groups: [{ pane, runs, claude, kids }], outside: { runs, claude, kids } }.
+// Returns { groups: [{ pane, runs, agents, kids }], outside: { runs, agents, kids } }.
 export function paneAgents(panes, data, opts = {}) {
-  const runs = data?.runs ?? [], claude = data?.claude ?? [], kids = data?.kids ?? [];
+  const runs = data?.runs ?? [], agents = data?.agents ?? [], kids = data?.kids ?? [];
   const groups = (panes ?? []).map((p) => {
-    return { pane: p?.pane, runs: [], claude: [], kids: [], terminal: p?.terminal ?? null };
+    return { pane: p?.pane, runs: [], agents: [], kids: [], terminal: p?.terminal ?? null };
   });
   const byTerminal = new Map(groups.filter((g) => g.terminal).map((g) => [g.terminal, g]));
   const roots = new Set(byTerminal.keys());
   const parentOf = buildParentMap(kids, opts?.parents);
-  const outside = { runs: [], claude: [], kids: [] };
+  const outside = { runs: [], agents: [], kids: [] };
   for (const r of runs) (byTerminal.get(resolveRoot(r.parent, roots, parentOf))?.runs ?? outside.runs).push(r);
-  for (const c of claude) (byTerminal.get(resolveRoot(c.parent, roots, parentOf))?.claude ?? outside.claude).push(c);
+  for (const c of agents) (byTerminal.get(resolveRoot(c.parent, roots, parentOf))?.agents ?? outside.agents).push(c);
   for (const k of kids) (byTerminal.get(resolveRoot(k.parent, roots, parentOf))?.kids ?? outside.kids).push(k);
   return { groups: groups.map(({ terminal, ...g }) => g), outside };
 }
 
 // What runs under one session right now: its live runs and agents, and its child terminals that are working or
 // blocked. A child terminal that finished its turn (done, idle) is still listed, but it is not "live".
-// g: { runs, claude, kids }. kidActive(kid) -> true while that child terminal is working or blocked.
+// g: { runs, agents, kids }. kidActive(kid) -> true while that child terminal is working or blocked.
 export function liveCount(g, kidActive) {
-  return (g?.runs ?? []).filter((r) => r.live).length + (g?.claude ?? []).filter((c) => c.live).length
+  return (g?.runs ?? []).filter((r) => r.live).length + (g?.agents ?? []).filter((c) => c.live).length
     + (g?.kids ?? []).filter((k) => kidActive(k)).length;
 }
 
-// Keep every kid that is active itself OR is an ancestor of any live run, live Claude agent, or active kid.
-export function keepLiveAncestors(allKids, { runs = [], claude = [] } = {}, kidActive = () => false, parents = null) {
+// Keep every kid that is active itself OR is an ancestor of any live run, live sub-agent, or active kid.
+export function keepLiveAncestors(allKids, { runs = [], agents = [] } = {}, kidActive = () => false, parents = null) {
   const kids = allKids ?? [];
   const byAddr = new Map();
   for (const k of kids) if (k?.address) byAddr.set(k.address, k);
@@ -85,19 +85,19 @@ export function keepLiveAncestors(allKids, { runs = [], claude = [] } = {}, kidA
   };
   for (const k of kids) if (kidActive(k)) markUp(k.address);
   for (const r of runs ?? []) if (r?.live && r.parent) markUp(r.parent);
-  for (const c of claude ?? []) if (c?.live && c.parent) markUp(c.parent);
+  for (const c of agents ?? []) if (c?.live && c.parent) markUp(c.parent);
   return kids.filter((k) => keep.has(k.address));
 }
 
-// Nest a flat session/pane group `{ runs, claude, kids }` into a recursive tree where each kid carries
-// `sub: { runs, claude, kids }` for items whose direct parent is that kid. Cycles and missing parents never drop items.
+// Nest a flat session/pane group `{ runs, agents, kids }` into a recursive tree where each kid carries
+// `sub: { runs, agents, kids }` for items whose direct parent is that kid. Cycles and missing parents never drop items.
 export function nestItems(group) {
   const runs = group?.runs ?? [];
-  const claude = group?.claude ?? [];
+  const agents = group?.agents ?? [];
   const kids = group?.kids ?? [];
   const kidAddrs = new Set(kids.map((k) => k?.address).filter(Boolean));
   const subOf = new Map();
-  for (const a of kidAddrs) subOf.set(a, { runs: [], claude: [], kids: [] });
+  for (const a of kidAddrs) subOf.set(a, { runs: [], agents: [], kids: [] });
 
   const topKids = [];
   const childOf = new Map();
@@ -126,20 +126,20 @@ export function nestItems(group) {
     if (r?.parent && subOf.has(r.parent)) subOf.get(r.parent).runs.push(r);
     else topRuns.push(r);
   }
-  const topClaude = [];
-  for (const c of claude) {
-    if (c?.parent && subOf.has(c.parent)) subOf.get(c.parent).claude.push(c);
-    else topClaude.push(c);
+  const topAgents = [];
+  for (const c of agents) {
+    if (c?.parent && subOf.has(c.parent)) subOf.get(c.parent).agents.push(c);
+    else topAgents.push(c);
   }
 
   const attach = (k) => {
     const s = k?.address ? subOf.get(k.address) : null;
-    if (!s) return { ...k, sub: { runs: [], claude: [], kids: [] } };
+    if (!s) return { ...k, sub: { runs: [], agents: [], kids: [] } };
     return {
       ...k,
       sub: {
         runs: s.runs,
-        claude: s.claude,
+        agents: s.agents,
         kids: s.kids.map(attach),
       },
     };
@@ -147,7 +147,7 @@ export function nestItems(group) {
 
   return {
     runs: topRuns,
-    claude: topClaude,
+    agents: topAgents,
     kids: topKids.map(attach),
   };
 }
@@ -156,17 +156,17 @@ export function nestItems(group) {
 // with no parent). A session is every terminal that has a pane (also one that started nothing) and every root
 // address that owns a run, an agent or a child terminal.
 // sessions: [{ address, active, at }], the machine's terminals that have a pane (active: working or blocked now).
-// data: { runs, claude, kids } of that machine (with Live only, the caller has already dropped what is not live).
+// data: { runs, agents, kids } of that machine (with Live only, the caller has already dropped what is not live).
 // opts: kidActive(kid), sessionActive(address) (asked for a parent that has no pane), liveOnly (a session with a
 //   pane that is not active is left out unless something live hangs under it), parents (Map or object), now.
-// -> [[address | null, { runs, claude, kids, live, sessActive, at }]]: active ones first, then the most live
+// -> [[address | null, { runs, agents, kids, live, sessActive, at }]]: active ones first, then the most live
 //    items, then the newest activity; Unattached last.
 export function sessionGroups(sessions, data, opts = {}) {
   const kidActive = opts.kidActive ?? (() => false);
   const sessionActive = opts.sessionActive ?? (() => false);
   const now = opts.now ?? Date.now();
   const groups = new Map();
-  const slot = (p) => { if (!groups.has(p)) groups.set(p, { runs: [], claude: [], kids: [], live: 0, sessActive: false, at: 0 }); return groups.get(p); };
+  const slot = (p) => { if (!groups.has(p)) groups.set(p, { runs: [], agents: [], kids: [], live: 0, sessActive: false, at: 0 }); return groups.get(p); };
   const roots = new Set();
   const sessMeta = new Map();
   for (const s of sessions ?? []) {
@@ -181,7 +181,7 @@ export function sessionGroups(sessions, data, opts = {}) {
   const parentOf = buildParentMap(data?.kids, opts.parents);
   const target = (p) => resolveRoot(p ?? null, roots, parentOf);
   for (const r of data?.runs ?? []) { const x = slot(target(r.parent)); x.runs.push(r); x.live += r.live ? 1 : 0; x.at = Math.max(x.at, r.lastUpdate ?? 0); }
-  for (const c of data?.claude ?? []) { const x = slot(target(c.parent)); x.claude.push(c); x.live += c.live ? 1 : 0; x.at = Math.max(x.at, c.updatedAt ?? 0); }
+  for (const c of data?.agents ?? []) { const x = slot(target(c.parent)); x.agents.push(c); x.live += c.live ? 1 : 0; x.at = Math.max(x.at, c.updatedAt ?? 0); }
   for (const k of data?.kids ?? []) {
     const act = Boolean(kidActive(k));
     const x = slot(target(k.parent));
@@ -201,8 +201,8 @@ export function sessionGroups(sessions, data, opts = {}) {
   return [...groups.entries()].sort(([a, x], [b, y]) => (a === null) - (b === null) || on(y) - on(x) || (y.live - x.live) || (y.at - x.at));
 }
 
-// The machine filter (Panel.machine: null for all, "local" or a machine name), the rule "All" uses: a run or a Claude
-// agent by its `machine`, a child terminal by its address ("box/t6" is on box). Other fields of `data` are kept.
+// The machine filter (Panel.machine: null for all, "local" or a machine name), the rule "All" uses: a run or
+// sub-agent by its `machine`, a child terminal by its address ("box/t6" is on box). Other fields of `data` are kept.
 const machineOfAddress = (a) => (String(a ?? "").includes("/") ? String(a).split("/")[0] : null);
 export function onMachine(data, machine) {
   if (!machine) return data;
@@ -210,7 +210,7 @@ export function onMachine(data, machine) {
   return {
     ...data,
     runs: (data?.runs ?? []).filter((r) => (r.machine ?? null) === want),
-    claude: (data?.claude ?? []).filter((c) => (c.machine ?? null) === want),
+    agents: (data?.agents ?? []).filter((c) => (c.machine ?? null) === want),
     kids: (data?.kids ?? []).filter((k) => machineOfAddress(k.address) === want),
   };
 }

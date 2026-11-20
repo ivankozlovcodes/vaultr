@@ -21,7 +21,7 @@ import {
   needsYou, normStatus, takeFocus, machineOf, isBookmarked, toggleBookmark, mainAgents, placedTerminals,
   cleanTitle, sessionTitleOf,
   normHidden, isMachineHidden, isSpaceHidden, isTabHidden, getHidden,
-  agentAttention, attentionRank, attentionCounts, isNeedsYou, isDismissed, dismissStamp, getDismissed, setDismissed,
+  agentAttention, effectiveStatus, attentionRank, attentionCounts, isNeedsYou, isDismissed, dismissStamp, getDismissed, setDismissed,
   pruneDismissedNow, terminalsByAddress,
 } from "./kit.js";
 
@@ -123,13 +123,15 @@ export default class Agents extends View {
   toggleDismiss(addr) {
     const a = agents().find((x) => x.address === addr);
     if (!a) return;
-    const t = terminalsByAddress(terminals()).get(addr);
-    if (isNeedsYou(a.status)) setDismissed(addr, !isDismissed(getDismissed(), addr, a.status, t), a.status, t);
+    const tmap = terminalsByAddress(terminals());
+    const t = tmap.get(addr);
+    const st = effectiveStatus(a.status, addr, tmap);
+    if (isNeedsYou(st)) setDismissed(addr, !isDismissed(getDismissed(), addr, st, t), st, t);
   }
   // Drop dismissals of agents that are gone or report something new.
   prune() {
     const tmap = terminalsByAddress(terminals());
-    pruneDismissedNow(new Map(agents().map((a) => [a.address, dismissStamp(a.status, tmap.get(a.address))])));
+    pruneDismissedNow(new Map(agents().map((a) => [a.address, dismissStamp(effectiveStatus(a.status, a.address, tmap), tmap.get(a.address))])));
   }
 
   // Each agent's last reported state and when it changed (done and idle count as one; a dismissal is no change).
@@ -151,12 +153,15 @@ export default class Agents extends View {
     const a = agents().find((x) => x.address === addr);
     if (!a) return;
     const bm = isBookmarked("terminal", addr);
-    const dismissed = isDismissed(getDismissed(), addr, a.status, terminalsByAddress(terminals()).get(addr));
+    const tmap = terminalsByAddress(terminals());
+    const t = tmap.get(addr);
+    const st = effectiveStatus(a.status, addr, tmap);
+    const dismissed = isDismissed(getDismissed(), addr, st, t);
     openMenu([
       { label: "Focus", icon: "locate", command: "pane.focus", args: { pane: a.pane } },
       { label: a.pinned ? "Unpin" : "Pin to the top", icon: a.pinned ? "pin-off" : "pin", command: "terminal.pin", args: { terminal: addr, pinned: !a.pinned } },
       { label: "Peek", icon: "eye", command: "terminal.peek", args: { terminal: addr } },
-      isNeedsYou(a.status) ? { label: dismissed ? "Restore" : "Dismiss", icon: dismissed ? "rotate-ccw" : "check", command: `ob-agents.dismiss:${addr}` } : null,
+      isNeedsYou(st) ? { label: dismissed ? "Restore" : "Dismiss", icon: dismissed ? "rotate-ccw" : "check", command: `ob-agents.dismiss:${addr}` } : null,
       { separator: true },
       { label: "Show properties", icon: "info", command: `ob-tabs.open:ob-props@term:${addr}` },
       { label: "Show subagents", icon: "subagents", command: `ob-tabs.open:ob-outline@term:${addr}` },
@@ -182,7 +187,7 @@ export default class Agents extends View {
     // status: for attention (a dismissed report is idle); real: what the agent reports.
     const tmap = terminalsByAddress(terminals());
     const dis = getDismissed();
-    let list = mainAgents(agents(), placedTerminals(ps)).map((a) => ({ ...a, status: agentAttention(a, tmap, dis), real: a.status }));
+    let list = mainAgents(agents(), placedTerminals(ps)).map((a) => ({ ...a, status: agentAttention(a, tmap, dis), real: effectiveStatus(a.status, a.address, tmap) }));
     const h = normHidden(shared("ob.hidden") ?? getHidden());
     const spList = spaces();
     const spMap = new Map(spList.map((s) => [s.id, s]));

@@ -15,7 +15,7 @@ import { classifyAll } from "./touches.js";
 
 const OP_RANK = { read: 0, edit: 1, write: 2, create: 3, publish: 4 };
 
-// The machine an agent key belongs to: a remote terminal address is "<machine>/<id>", a Claude or pi run key is
+// The machine an agent key belongs to: a remote terminal address is "<machine>/<id>", a run or sub-agent key is
 // "<machine or local>:<id>". null is this computer.
 export function machineOfKey(key) {
   if (key.startsWith("term:")) {

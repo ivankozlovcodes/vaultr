@@ -1,19 +1,19 @@
 // ob-outline: pure decisions behind the panel's actions (Transcript, Attach, Escape, Move to main window).
-// No Herdr or kit imports, so test/test_ob_subagents.py runs them under node.
+// No Herdr or kit imports, so test/test_ob_outline.py runs them under node.
 
-// A row key is a run key ("<machine>:<id>"), a Claude agent key ("<machine>:<id>" from the feed, or
-// "<parent>#<id>" from a live record) or a pi step key ("<run key>#<step index>"). A Claude key may contain "#",
+// A row key is a run key ("<machine>:<id>"), an agent key ("<machine>:<id>" from the feed, or
+// "<parent>#<id>" from a live record) or a run step key ("<run key>#<step index>"). An agent key may contain "#",
 // so a key that is a known row is taken whole before the step suffix is read.
 // -> { key, step: number | null } or null when nothing matches.
-export function resolveKey(key, { runs = [], claude = [] } = {}) {
-  if (runs.includes(key) || claude.includes(key)) return { key, step: null };
+export function resolveKey(key, { runs = [], agents = [] } = {}) {
+  if (runs.includes(key) || agents.includes(key)) return { key, step: null };
   const m = /^(.*)#(\d+)$/.exec(String(key ?? ""));
   if (m && runs.includes(m[1])) return { key: m[1], step: Number(m[2]) };
   return null;
 }
 
 // What Transcript does for a row that has (or may have) a transcript file.
-// item: { path } for a pi step, or { transcript, desc, type, live } for a Claude agent.
+// item: { path } for a run step, or { transcript, desc, type, live } for a sub-agent.
 // -> { open: true, path, title } or { open: false, notice }
 export function transcriptPlan(item) {
   const path = item?.path ?? item?.transcript ?? null;
@@ -21,10 +21,10 @@ export function transcriptPlan(item) {
   return { open: false, notice: "No transcript is recorded for this agent yet" };
 }
 
-// Attach on a row. kind "terminal": an hc child terminal; "claude": a Claude Code agent (no terminal of its own).
+// Attach on a row. kind "terminal": an hc child terminal; "agent": a sub-agent (no terminal of its own).
 // -> { show, enabled, tip }
 export function attachPlan(row) {
-  if (row?.kind === "claude") {
+  if (row?.kind === "agent") {
     return { show: true, enabled: false, tip: "No terminal: this agent runs inside its parent; open its transcript" };
   }
   if (row?.kind === "terminal") {

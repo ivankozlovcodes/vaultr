@@ -12,13 +12,12 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, ScrollHandle, Scrollbar } from "gpui-base";
-import { spaces, panes, terminals, focused, run, hc, theme, props, nextCommand, settings, exec, readTextFile, appHome, openOverlay } from "herdr";
-import { loadProviders, assembleReader } from "./provider.js";
+import { spaces, panes, terminals, focused, run, hc, theme, props, nextCommand, settings, openOverlay } from "herdr";
 import {
   S, alpha, icon, programIcon, iconButton, badge, treeRow, emptyState, inputFrame, openMenu, statusMark,
-  takeFocus, tabLabel, paneLabelOf, machineOf, machineLabel, current, feed, matchQuery,
+  takeFocus, tabLabel, paneLabelOf, machineOf, machineLabel, current, provider, matchQuery,
 } from "./kit.js";
-import { sourcesFrom, buildGroups, txStatus, latestOnly } from "./transcripts.js";
+import { txStatus, latestOnly } from "./transcripts.js";
 
 const LINES = 1500, PARALLEL = 6, TTL = 15000, SHOW = 5, MAX_HITS = 400;
 const TX_SHOW = 5, MAX_TX = 200;   // transcript hits: per session, and in all
@@ -204,56 +203,32 @@ export default class Search extends View {
     this.results = [...this.results.filter((g) => g.addr !== tg.addr), group].sort((a, b) => (b.best - a.best) || (a.order - b.order));
   }
 
-  // Transcripts of the agent sessions the feed knows about, on this computer, scanned off the UI path by
-  // the assembled search reader (exec, like ob-feed's scan). Runs beside the terminal read: its results land when
-  // they land, and a newer query drops this one (gen). Scope "this space" keeps the sessions of its terminals.
-// Transcripts are matched fuzzily only: with regex on they are not searched, and the section says so.
+  // Transcripts of the agent sessions on this computer, searched via provider.search() off the UI path.
+  // Runs beside the terminal read: its results land when they land, and a newer query drops this one (gen).
+  // Scope "this space" keeps the sessions of its terminals.
+  // Transcripts are matched fuzzily only: with regex on they are not searched, and the section says so.
   searchTranscripts(cx, q, gen) {
     if (this.opts.regex) { this.tx = { status: "done", groups: [], error: null, partial: false, regex: true }; return; }
     const parents = this.opts.scope === "space" ? new Set(this.targets().map((t) => t.addr)) : null;
-    const sources = sourcesFrom(feed(), parents ? { parents } : {});
-    if (!sources.length) { this.tx = { status: "done", groups: [], error: null, partial: false, none: true }; return; }
     this.tx = { status: "searching", groups: [], error: null, partial: false };
     const caseSensitive = this.opts.case;
-    const words = q.split(/\s+/).filter(Boolean);
     this.scan ??= latestOnly((cx, job) => this.scanTranscripts(cx, job));
-    cx.spawn((cx) => this.scan(cx, { q, gen, sources, caseSensitive, words }));
+    cx.spawn((cx) => this.scan(cx, { q, gen, parents, caseSensitive }));
   }
 
   // One scan (see latestOnly): its results are dropped when a newer query has started (gen).
-  async scanTranscripts(cx, { q, gen, sources, caseSensitive, words }) {
-    let results = [], partial = false, error = null;
-    try {
-      const script = await this.helperScript();
-      if (!script) throw new Error("search reader is missing");
-      const opts = { terms: words, caseSensitive, files: sources.map((s) => ({ id: s.id, path: s.path })) };
-      const r = await exec("python3", ["-c", script, JSON.stringify(opts)], { timeout: 15000 });
-      const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
-      if (!line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());
-      const d = JSON.parse(line);
-      if (d.error) throw new Error(d.error);
-      results = Array.isArray(d.files) ? d.files : [];
-      partial = Boolean(d.partial);
-    } catch (e) {
-      error = String(e?.message ?? e).slice(0, 200);
-    }
+  async scanTranscripts(cx, { q, gen, parents, caseSensitive }) {
+    const res = await provider.search(q, { ...(parents ? { parents } : {}), caseSensitive, perGroup: TX_SHOW, total: MAX_TX });
     if (gen !== this.gen) return;
-    const groups = buildGroups(sources, results, q, { caseSensitive, perGroup: TX_SHOW, total: MAX_TX });
-    this.tx = { status: "done", groups, error, partial, none: false };
-    cx.notify();
-  }
-
-  // Assembled transcript search reader, built on the first transcript search and kept (a failed read is tried again next time).
-  async helperScript() {
-    if (!this.script) {
-      const providersDir = `${appHome()}/mods/ob-feed/providers`;
-      const [readerMain, readers] = await Promise.all([
-        readTextFile(`${providersDir}/reader_main.py`).catch(() => null),
-        loadProviders({ readTextFile, providersDir }),
-      ]);
-      if (readerMain && readers.length) this.script = assembleReader(readerMain, readers, "search");
+    if (!res.ok) {
+      const error = res.reason === "unsupported" ? null : String(res.error ?? "couldn't search").slice(0, 200);
+      this.tx = { status: "done", groups: [], error, partial: false, none: res.reason === "unsupported" };
+    } else if (res.none) {
+      this.tx = { status: "done", groups: [], error: null, partial: false, none: true };
+    } else {
+      this.tx = { status: "done", groups: res.groups ?? [], error: null, partial: Boolean(res.partial), none: false };
     }
-    return this.script;
+    cx.notify();
   }
 
   // A transcript opens in ob-outline' popup, from the top of its last entries (the popup has no way to

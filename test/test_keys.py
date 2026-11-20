@@ -103,7 +103,7 @@ def kit_keys_eval(body, platform="linux", home_dir="/var/tmp/u", key_list=()):
         Path(folder, "kit.js").write_text(kit_src, encoding="utf-8")
         Path(folder, "gpui-kit.js").write_text("export const div = () => null; export const svg = () => null; export const image = () => null;\n", encoding="utf-8")
         Path(folder, "gpui-base.js").write_text("export const h_flex = () => null; export const v_flex = () => null;\n", encoding="utf-8")
-        herdr_fns = ["theme", "run", "openOverlay", "closeOverlay", "layout", "shared", "setShared", "spaces", "agents", "terminals", "panes", "focused"]
+        herdr_fns = ["theme", "run", "exec", "openOverlay", "closeOverlay", "layout", "shared", "setShared", "spaces", "agents", "terminals", "panes", "focused"]
         Path(folder, "herdr.js").write_text(
             "".join(f"export const {n} = () => [];\n" for n in herdr_fns)
             + f"export const keys = () => {json.dumps(list(key_list))};\n"

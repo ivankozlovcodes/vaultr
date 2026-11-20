@@ -203,6 +203,8 @@ def run_obc(body, feed=None, records=None):
     with tempfile.TemporaryDirectory(prefix="ob-props-obc-") as folder:
         src = (MOD / "obc.js").read_text(encoding="utf-8").replace('from "herdr"', 'from "./herdr.js"')
         Path(folder, "obc.js").write_text(src, encoding="utf-8")
+        for kname in ("provider.js", "fuzzy.js"):
+            shutil.copy(Path(ROOT, "kit", kname), Path(folder, kname))
         Path(folder, "herdr.js").write_text(
             "const st = { terminals: [], agents: [], panes: [], spaces: [], focused: null, shared: {} };\n"
             "export const __set = (patch) => Object.assign(st, patch);\n"
@@ -223,9 +225,11 @@ def run_obc(body, feed=None, records=None):
         Path(folder, "kit.js").write_text(
             'export const MOD = "ob-props";\n'
             f"export {{ followTarget }} from {json.dumps(FOLLOW.as_uri())};\n"
+            'import { makeProvider } from "./provider.js";\n'
             + "".join(f"export const {n} = () => null;\n" for n in kit)
             + f"export const feed = () => ({json.dumps(feed)});\n"
-            + f"export const liveRecords = () => new Map(Object.entries({json.dumps(records or {})}));\n",
+            + f"export const liveRecords = () => new Map(Object.entries({json.dumps(records or {})}));\n"
+            + 'export const provider = makeProvider({ feed, exec: async () => ({ code: 1 }), readTextFile: async () => null, appHome: () => "/tmp" });\n',
             encoding="utf-8",
         )
         code = (
@@ -241,22 +245,23 @@ def run_obc(body, feed=None, records=None):
 
 @unittest.skipUnless(NODE, "node is not installed")
 class ClaudeLiveness(unittest.TestCase):
-    """claudeAll(): a sub-agent is live when the feed's scan says so or its terminal's live record does (the rule
+    """allSubagents(): a sub-agent is live when the feed's scan says so or its terminal's live record does (the rule
     ob-outline uses, so the two panels agree)."""
-    SUB = {"key": "local:a1", "machine": None, "parent": "t3c", "id": "a1", "type": "Explore", "desc": "look", "live": True}
+    PROV = {"claude": {"id": "claude", "name": "Claude Code", "noun": "Claude agent", "caps": ["title", "subagents"]}}
+    SUB = {"key": "local:a1", "machine": None, "parent": "t3c", "provider": "claude", "id": "a1", "type": "Explore", "desc": "look", "live": True}
 
     def test_a_feed_sub_agent_marked_live_without_a_record_is_live(self):
-        out = run_obc("return O.claudeAll().map((c) => [c.id, c.live]);", {"claude": [self.SUB]}, {})
+        out = run_obc("return O.allSubagents().agents.map((c) => [c.id, c.live]);", {"v": 2, "providers": self.PROV, "subagents": [self.SUB]}, {})
         self.assertEqual(out, [["a1", True]])
 
     def test_a_record_working_makes_it_live(self):
         sub = {**self.SUB, "live": False}
-        out = run_obc("return O.claudeAll().map((c) => c.live);", {"claude": [sub]}, {"t3c": {"a1": {"state": "working"}}})
+        out = run_obc("return O.allSubagents().agents.map((c) => c.live);", {"v": 2, "providers": self.PROV, "subagents": [sub]}, {"t3c": {"a1": {"state": "working"}}})
         self.assertEqual(out, [True])
 
     def test_neither_says_live_is_not_live(self):
         sub = {**self.SUB, "live": False}
-        out = run_obc("return O.claudeAll().map((c) => c.live);", {"claude": [sub]}, {})
+        out = run_obc("return O.allSubagents().agents.map((c) => c.live);", {"v": 2, "providers": self.PROV, "subagents": [sub]}, {})
         self.assertEqual(out, [False])
 
 
@@ -323,14 +328,15 @@ class UsageUnchanged(unittest.TestCase):
 
 
 class UsageScript(unittest.TestCase):
-    """Weak (source only): fetchUsage runs every 10 s; the assembled usage reader is built once and kept."""
-    def test_usage_py_is_read_once(self):
+    """Source wiring: fetchUsage delegates to provider.usage() and does not assemble scripts directly."""
+    def test_usage_reads_via_provider_facade(self):
         src = (MOD / "main.js").read_text(encoding="utf-8")
-        self.assertIn("this.usageScript ||= await this.loadUsageScript()", src)
-        self.assertEqual(src.count("assembleReader("), 1)
+        self.assertIn("provider.usage(", src)
+        self.assertNotIn("assembleReader(", src)
         body = src[src.index("  fetchUsage("):]
         body = body[:body.index("\n  }\n")]
         self.assertNotIn("readTextFile", body)
+        self.assertNotIn("exec(", body)
 
 
 if __name__ == "__main__":

@@ -74,16 +74,16 @@ def run_actions(body):
 @unittest.skipUnless(NODE, "node is not installed: the action tests are skipped")
 class ResolveKey(unittest.TestCase):
     def test_a_claude_key_with_a_hash_is_found_whole(self):
-        # A Claude agent seen only through a live record has the key "<parent>#<id>": it is not a pi step.
-        r = run_actions('return A.resolveKey("term1#a1b2", { runs: [], claude: ["term1#a1b2"] });')
+        # A sub-agent seen only through a live record has the key "<parent>#<id>": it is not a step key.
+        r = run_actions('return A.resolveKey("term1#a1b2", { runs: [], agents: ["term1#a1b2"] });')
         self.assertEqual(r, {"key": "term1#a1b2", "step": None})
 
     def test_a_pi_step_key_names_run_and_step(self):
-        r = run_actions('return A.resolveKey("local:run1#2", { runs: ["local:run1"], claude: [] });')
+        r = run_actions('return A.resolveKey("local:run1#2", { runs: ["local:run1"], agents: [] });')
         self.assertEqual(r, {"key": "local:run1", "step": 2})
 
     def test_an_unknown_key_resolves_to_nothing(self):
-        r = run_actions('return A.resolveKey("nope", { runs: [], claude: [] });')
+        r = run_actions('return A.resolveKey("nope", { runs: [], agents: [] });')
         self.assertIsNone(r)
 
 
@@ -114,7 +114,7 @@ class AttachPlan(unittest.TestCase):
         self.assertEqual(r["enabled"], True)
 
     def test_a_claude_agent_row_shows_attach_disabled_with_the_reason(self):
-        r = run_actions('return A.attachPlan({ kind: "claude", live: true });')
+        r = run_actions('return A.attachPlan({ kind: "agent", live: true });')
         self.assertEqual(r["show"], True)
         self.assertEqual(r["enabled"], False)
         self.assertEqual(r["tip"], "No terminal: this agent runs inside its parent; open its transcript")
@@ -377,7 +377,7 @@ def run_tree(body):
 
 
 DATA = ('const panes = [{pane:"pa", terminal:"t1"}, {pane:"pb", terminal:"t2"}, {pane:"mod"}];'
-        'const data = { runs: [{key:"r1", parent:"t1"}, {key:"r2", parent:"t9"}], claude: [{key:"c1", parent:"t2"}],'
+        'const data = { runs: [{key:"r1", parent:"t1"}, {key:"r2", parent:"t9"}], agents: [{key:"c1", parent:"t2"}],'
         ' kids: [{address:"k1", parent:"t1"}] };')
 
 
@@ -387,7 +387,7 @@ class PaneAgents(unittest.TestCase):
 
     def test_each_agent_sits_under_the_pane_whose_terminal_runs_it(self):
         r = run_tree(DATA + "const g = paneAgents(panes, data).groups;"
-                     "return g.map((x) => [x.pane, x.runs.map((r) => r.key), x.claude.map((c) => c.key), x.kids.map((k) => k.address)]);")
+                     "return g.map((x) => [x.pane, x.runs.map((r) => r.key), x.agents.map((c) => c.key), x.kids.map((k) => k.address)]);")
         self.assertEqual(r, [["pa", ["r1"], [], ["k1"]], ["pb", [], ["c1"], []], ["mod", [], [], []]])
 
     def test_panes_keep_the_tab_order_and_a_mod_pane_takes_nothing(self):
@@ -400,7 +400,7 @@ class PaneAgents(unittest.TestCase):
         self.assertEqual(r, ["r2"])
 
     def test_the_input_is_not_changed(self):
-        r = run_tree(DATA + "paneAgents(panes, data); return [panes.length, data.runs.length, data.claude.length];")
+        r = run_tree(DATA + "paneAgents(panes, data); return [panes.length, data.runs.length, data.agents.length];")
         self.assertEqual(r, [3, 2, 1])
 
     def test_nested_runs_claude_and_grandkids_roll_up_to_ancestor_pane(self):
@@ -408,11 +408,11 @@ class PaneAgents(unittest.TestCase):
             'const panes = [{pane:"pa", terminal:"t1"}, {pane:"pb", terminal:"t2"}];'
             'const data = {'
             '  runs: [{key:"r1", parent:"k1"}, {key:"r0", parent:"k0"}],'
-            '  claude: [{key:"c1", parent:"k2"}],'
+            '  agents: [{key:"c1", parent:"k2"}],'
             '  kids: [{address:"k1", parent:"t1"}, {address:"k2", parent:"k1"}]'
             '};'
             'const g = paneAgents(panes, data, { parents: { k0: "t1" } }).groups;'
-            'return g.map((x) => [x.pane, x.runs.map((r) => r.key), x.claude.map((c) => c.key), x.kids.map((k) => k.address)]);'
+            'return g.map((x) => [x.pane, x.runs.map((r) => r.key), x.agents.map((c) => c.key), x.kids.map((k) => k.address)]);'
         )
         self.assertEqual(r, [
             ["pa", ["r1", "r0"], ["c1"], ["k1", "k2"]],
@@ -423,26 +423,26 @@ class PaneAgents(unittest.TestCase):
         r = run_tree(
             'const t1 = nestItems({'
             '  runs: [{key:"r0", parent:"t1"}, {key:"r1", parent:"k1"}, {key:"r2", parent:"k2"}],'
-            '  claude: [{key:"c1", parent:"k1"}],'
+            '  agents: [{key:"c1", parent:"k1"}],'
             '  kids: [{address:"k2", parent:"k1"}, {address:"k1", parent:"t1"}]'
             '});'
             'const cyc = nestItems({'
             '  runs: [{key:"ra", parent:"a"}, {key:"rb", parent:"b"}],'
-            '  claude: [],'
+            '  agents: [],'
             '  kids: [{address:"a", parent:"b"}, {address:"b", parent:"a"}]'
             '});'
             'const countKids = (n) => (n.kids || []).reduce((s, k) => s + 1 + countKids(k.sub || {}), 0);'
             'const countRuns = (n) => (n.runs || []).length + (n.kids || []).reduce((s, k) => s + countRuns(k.sub || {}), 0);'
             'const orph = nestItems({'
             '  runs: [{key:"r_ex", parent:"exited_k1"}],'
-            '  claude: [],'
+            '  agents: [],'
             '  kids: [{address:"k2", parent:"exited_k1"}]'
             '});'
             'return {'
             '  topRuns: t1.runs.map((x) => x.key),'
             '  topKids: t1.kids.map((k) => k.address),'
             '  k1Runs: t1.kids[0].sub.runs.map((x) => x.key),'
-            '  k1Claude: t1.kids[0].sub.claude.map((x) => x.key),'
+            '  k1Agents: t1.kids[0].sub.agents.map((x) => x.key),'
             '  k1Kids: t1.kids[0].sub.kids.map((k) => k.address),'
             '  k2Runs: t1.kids[0].sub.kids[0].sub.runs.map((x) => x.key),'
             '  cycCounts: [countKids(cyc), countRuns(cyc)],'
@@ -453,7 +453,7 @@ class PaneAgents(unittest.TestCase):
             "topRuns": ["r0"],
             "topKids": ["k1"],
             "k1Runs": ["r1"],
-            "k1Claude": ["c1"],
+            "k1Agents": ["c1"],
             "k1Kids": ["k2"],
             "k2Runs": ["r2"],
             "cycCounts": [2, 2],
@@ -462,8 +462,8 @@ class PaneAgents(unittest.TestCase):
 
 
 MIXED = ('const f = { f: 1, runs: [{key:"r-local", machine:null}, {key:"r-box", machine:"box"}],'
-         ' claude: [{key:"c-local"}, {key:"c-box", machine:"box"}], kids: [{address:"t5"}, {address:"box/t6"}] };'
-         'const keys = (d) => [d.runs.map((x) => x.key), d.claude.map((x) => x.key), d.kids.map((x) => x.address)];')
+         ' agents: [{key:"c-local"}, {key:"c-box", machine:"box"}], kids: [{address:"t5"}, {address:"box/t6"}] };'
+         'const keys = (d) => [d.runs.map((x) => x.key), d.agents.map((x) => x.key), d.kids.map((x) => x.address)];')
 
 
 @unittest.skipUnless(NODE, "node is not installed: the machine filter test is skipped")
@@ -492,9 +492,9 @@ class MachineFilter(unittest.TestCase):
 
 GROUPS = ('const active = (k) => k.status === "working" || k.status === "blocked";'
           'const sessions = [{address:"s1", active:false, at:5}, {address:"s2", active:true, at:1}, {address:"s3", active:false, at:9}];'
-          'const data = { runs: [{key:"r1", parent:"s1", live:false, lastUpdate:2}], claude: [{key:"c1", parent:"s9", live:true, updatedAt:3}],'
+          'const data = { runs: [{key:"r1", parent:"s1", live:false, lastUpdate:2}], agents: [{key:"c1", parent:"s9", live:true, updatedAt:3}],'
           ' kids: [{address:"k1", parent:"s1", status:"done"}, {address:"k2", parent:"s3", status:"working"}, {address:"k3", status:"idle"}] };'
-          'const shape = (l) => l.map(([a, x]) => [a, x.live, x.sessActive, x.runs.length + x.claude.length + x.kids.length]);')
+          'const shape = (l) => l.map(([a, x]) => [a, x.live, x.sessActive, x.runs.length + x.agents.length + x.kids.length]);')
 
 
 @unittest.skipUnless(NODE, "node is not installed: the live count test is skipped")
@@ -505,7 +505,7 @@ class LiveCounts(unittest.TestCase):
 
     def test_a_done_or_idle_child_terminal_is_not_counted_as_live(self):
         r = run_tree('const act = (k) => k.status === "working" || k.status === "blocked";'
-                     'return liveCount({ runs: [{live:true}, {live:false}], claude: [{live:true}],'
+                     'return liveCount({ runs: [{live:true}, {live:false}], agents: [{live:true}],'
                      ' kids: [{status:"done"}, {status:"idle"}, {status:"working"}, {status:"blocked"}] }, act);')
         self.assertEqual(r, 4)
 
@@ -513,7 +513,7 @@ class LiveCounts(unittest.TestCase):
         self.assertEqual(run_tree("return liveCount({}, () => true);"), 0)
 
     def test_all_lists_a_session_that_started_nothing(self):
-        r = run_tree(GROUPS + "return shape(sessionGroups(sessions, { runs: [], claude: [], kids: [] }, { kidActive: active }));")
+        r = run_tree(GROUPS + "return shape(sessionGroups(sessions, { runs: [], agents: [], kids: [] }, { kidActive: active }));")
         self.assertEqual(r, [["s2", 0, True, 0], ["s3", 0, False, 0], ["s1", 0, False, 0]])
 
     def test_all_groups_items_by_session_active_first_unattached_last(self):
@@ -522,12 +522,12 @@ class LiveCounts(unittest.TestCase):
         self.assertEqual(r, [["s3", 1, False, 1], ["s9", 1, False, 1], ["s2", 0, True, 0], ["s1", 0, False, 2], [None, 0, False, 1]])
 
     def test_a_parent_without_a_pane_is_asked_whether_it_works(self):
-        r = run_tree(GROUPS + 'return shape(sessionGroups([], { runs: [], claude: [], kids: [{address:"k1", parent:"bg", status:"done"}] },'
+        r = run_tree(GROUPS + 'return shape(sessionGroups([], { runs: [], agents: [], kids: [{address:"k1", parent:"bg", status:"done"}] },'
                               ' { kidActive: active, sessionActive: (a) => a === "bg" }));')
         self.assertEqual(r, [["bg", 0, True, 1]])
 
     def test_live_only_drops_idle_sessions_but_keeps_one_that_owns_something_live(self):
-        r = run_tree(GROUPS + "const live = { runs: [], claude: data.claude, kids: data.kids.filter(active) };"
+        r = run_tree(GROUPS + "const live = { runs: [], agents: data.agents, kids: data.kids.filter(active) };"
                               "return shape(sessionGroups(sessions, live, { kidActive: active, liveOnly: true }));")
         self.assertEqual(r, [["s3", 1, False, 1], ["s9", 1, False, 1], ["s2", 0, True, 0]])
 
@@ -537,11 +537,11 @@ class LiveCounts(unittest.TestCase):
             'const sessions = [{address:"s1", active:false, at:5}];'
             'const data = {'
             '  runs: [],'
-            '  claude: [{key:"c1", parent:"k1", live:true, updatedAt:10}],'
+            '  agents: [{key:"c1", parent:"k1", live:true, updatedAt:10}],'
             '  kids: [{address:"k1", parent:"s1", status:"done"}, {address:"k2", parent:"k1", status:"working"}]'
             '};'
             'return sessionGroups(sessions, data, { kidActive: active }).map(([a, x]) => ['
-            '  a, x.live, x.kids.map((k) => k.address), x.claude.map((c) => c.key)'
+            '  a, x.live, x.kids.map((k) => k.address), x.agents.map((c) => c.key)'
             ']);'
         )
         self.assertEqual(r, [["s1", 2, ["k1", "k2"], ["c1"]]])
@@ -550,7 +550,7 @@ class LiveCounts(unittest.TestCase):
         r = run_tree(
             'const active = (k) => k.status === "working" || k.status === "blocked";'
             'const sessions = [{address:"s1", active:false, at:5}];'
-            'const data = { runs: [{key:"r1", parent:"k1", live:true, lastUpdate:12}], claude: [], kids: [] };'
+            'const data = { runs: [{key:"r1", parent:"k1", live:true, lastUpdate:12}], agents: [], kids: [] };'
             'return sessionGroups(sessions, data, { kidActive: active, liveOnly: true, parents: { k1: "s1" } })'
             '  .map(([a, x]) => [a, x.live, x.runs.map((u) => u.key)]);'
         )
@@ -559,7 +559,7 @@ class LiveCounts(unittest.TestCase):
     def test_session_groups_keeps_standalone_unplaced_root_with_grandkids(self):
         r = run_tree(
             'const active = (k) => k.status === "working" || k.status === "blocked";'
-            'const data = { runs: [], claude: [], kids: [{address:"k1", parent:"bg", status:"done"}, {address:"k2", parent:"k1", status:"working"}] };'
+            'const data = { runs: [], agents: [], kids: [{address:"k1", parent:"bg", status:"done"}, {address:"k2", parent:"k1", status:"working"}] };'
             'return sessionGroups([], data, { kidActive: active, sessionActive: (a) => a === "bg" })'
             '  .map(([a, x]) => [a, x.live, x.sessActive, x.kids.map((k) => k.address)]);'
         )
@@ -575,7 +575,7 @@ class LiveCounts(unittest.TestCase):
             '  {address:"k4", parent:"s1", status:"idle"},'
             '  {address:"k5", parent:"s1", status:"idle"}'
             '];'
-            'const kept = keepLiveAncestors(allKids, { runs: [{key:"r1", parent:"k5", live:true}], claude: [] }, active);'
+            'const kept = keepLiveAncestors(allKids, { runs: [{key:"r1", parent:"k5", live:true}], agents: [] }, active);'
             'return kept.map((k) => k.address);'
         )
         self.assertEqual(r, ["k1", "k2", "k3", "k5"])
@@ -584,7 +584,7 @@ class LiveCounts(unittest.TestCase):
         src = MAIN.read_text(encoding="utf-8")
         self.assertIn("keepLiveAncestors(", src)
         self.assertEqual(src.count("liveCount("), 1)   # the tab view
-        self.assertIn("sessionGroups(placed, { runs, claude, kids }, { kidActive: (k) => this.kidActive(k), sessionActive: isOn, liveOnly: this.liveOnly, parents: data.parents })", src)
+        self.assertIn("sessionGroups(placed, { runs, agents, kids }, { kidActive: (k) => this.kidActive(k), sessionActive: isOn, liveOnly: this.liveOnly, parents: data.parents })", src)
         self.assertNotIn("kids.length;\n      rows.push([`m:${mk}`", src)   # the machine badge no longer counts every child as live
 
 
@@ -710,12 +710,13 @@ class TabViewScope(unittest.TestCase):
 
 
 def run_outline_obc(body, state):
-    """Run ob-outline/obc.js in node with stubbed herdr and kit.js (using real kit/hidden.js)."""
+    """Import ob-outline/obc.js in node with stubbed herdr and kit.js (using real kit/hidden.js and kit/provider.js)."""
     folder = tempfile.mkdtemp(prefix="ob-outline-obc-")
     try:
         src = OBC.read_text(encoding="utf-8").replace('from "herdr"', 'from "./herdr.js"')
         Path(folder, "obc.js").write_text(src, encoding="utf-8")
-        shutil.copy(Path(ROOT, "kit", "hidden.js"), Path(folder, "hidden.js"))
+        for kname in ("hidden.js", "provider.js", "fuzzy.js"):
+            shutil.copy(Path(ROOT, "kit", kname), Path(folder, kname))
         herdr_js = (
             f"const S = {json.dumps(state)};\n"
             "export const calls = [];\n"
@@ -734,6 +735,7 @@ def run_outline_obc(body, state):
         Path(folder, "herdr.js").write_text(herdr_js, encoding="utf-8")
         kit_js = (
             'import { shared, setShared } from "./herdr.js";\n'
+            'import { makeProvider } from "./provider.js";\n'
             'export const MOD = "ob-outline";\n'
             'export { mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden } from "./hidden.js";\n'
             'export const machineOf = (a) => (String(a ?? "").includes("/") ? String(a).split("/")[0] : null);\n'
@@ -758,6 +760,7 @@ def run_outline_obc(body, state):
             'export const copyText = () => {};\n'
             f'export const feed = () => ({json.dumps(state.get("feed"))});\n'
             f'export const liveRecords = () => new Map(Object.entries({json.dumps(state.get("records") or {})}));\n'
+            'export const provider = makeProvider({ feed, exec: async () => ({ code: 1 }), readTextFile: async () => null, appHome: () => "/tmp" });\n'
             'export const base = (p) => String(p ?? "").split("/").pop();\n'
             'export const followTarget = () => ({ terminal: null, last: null });\n'
             'export const termStatus = (t, fb = null) => fb ?? (typeof t?.status === "string" ? t.status : t?.status?.state) ?? null;\n'
@@ -855,15 +858,19 @@ class AncestorNav(unittest.TestCase):
 
 @unittest.skipUnless(NODE, "node is not installed: record card tests are skipped")
 class RecordCards(unittest.TestCase):
-    """claudeAll() maps live record msgs and claudeCard/menu clean up non-Claude record cards."""
+    """allSubagents() maps live record msgs and agentCard/menu clean up non-provider record cards."""
 
     def test_claude_all_maps_live_record_msg_to_last_tool_and_preserves_feed_tool(self):
         state = {
             "feed": {
-                "claude": [
-                    {"key": "local:a1", "machine": None, "parent": "t1", "id": "a1", "type": "Explore", "desc": "scan", "live": True,
+                "v": 2,
+                "providers": {
+                    "claude": {"id": "claude", "name": "Claude Code", "noun": "Claude agent", "caps": ["title", "subagents"]},
+                },
+                "subagents": [
+                    {"key": "local:a1", "machine": None, "parent": "t1", "provider": "claude", "id": "a1", "type": "Explore", "desc": "scan", "live": True,
                      "lastTool": {"tool": "Read", "args": "README.md"}},
-                    {"key": "local:a2", "machine": None, "parent": "t1", "id": "a2", "type": "Plan", "desc": "plan", "live": True,
+                    {"key": "local:a2", "machine": None, "parent": "t1", "provider": "claude", "id": "a2", "type": "Plan", "desc": "plan", "live": True,
                      "lastTool": None},
                 ],
             },
@@ -877,7 +884,7 @@ class RecordCards(unittest.TestCase):
             },
         }
         r = run_outline_obc(
-            "return Object.fromEntries(O.claudeAll().map((c) => [c.id, c.lastTool]));",
+            "return Object.fromEntries(O.allSubagents().agents.map((c) => [c.id, c.lastTool]));",
             state,
         )
         self.assertEqual(r, {
@@ -889,13 +896,13 @@ class RecordCards(unittest.TestCase):
 
     def test_claude_card_omits_dead_attach_strips_prefix_for_8char_id_and_guards_transcript(self):
         src = MAIN.read_text(encoding="utf-8")
-        card = src[src.index("  claudeCard(t, c, depth) {"):src.index("  childMenu(k, name, plan, tx) {")]
+        card = src[src.index("  agentCard(t, c, depth) {"):src.index("  childMenu(k, name, plan, tx) {")]
         self.assertNotIn("${id}-attach", card)
         self.assertIn('String(c.id ?? "").split("/").pop().slice(0, 8)', card)
         self.assertNotIn("c.id.slice(0, 10)", card)
-        self.assertIn('!(!c.transcript && c.type && c.type !== "claude")', card)
+        self.assertIn('can("transcript")', card)
         menu = src[src.index("  menu(key, cx) {"):src.index("  async command(c, cx) {")]
-        self.assertIn('!(!c.transcript && c.type && c.type !== "claude")', menu)
+        self.assertIn('can("transcript")', menu)
 
 
 def run_outline_panel(body, state):
@@ -907,7 +914,7 @@ def run_outline_panel(body, state):
         src = src.replace('from "gpui-base"', 'from "./gpui-base.js"')
         src = src.replace('from "herdr"', 'from "./herdr.js"')
         Path(folder, "main.js").write_text(src, encoding="utf-8")
-        for name in ("rows.js", "terminals.js", "tree.js", "actions.js", "provider.js"):
+        for name in ("rows.js", "terminals.js", "tree.js", "actions.js", "provider.js", "fuzzy.js"):
             shutil.copy(Path(ROOT, "mods", "ob-outline", name), Path(folder, name))
         Path(folder, "viewer.js").write_text("export class Viewer { init() {} render() { return null; } command() {} }\n", encoding="utf-8")
         Path(folder, "gpui-kit.js").write_text(
@@ -962,6 +969,8 @@ def run_outline_panel(body, state):
         )
         Path(folder, "kit.js").write_text(
             f"const S_DATA = {json.dumps(state)};\n"
+            'import { makeProvider } from "./provider.js";\n'
+            'import { exec, readTextFile, appHome } from "./herdr.js";\n'
             "export const S = { rowSm: 24, iconXs: 12, iconSm: 14, textXs: 11, pad: 8, toolbar: 30, radius: 4, radiusLg: 6 };\n"
             "export const tc = () => ({ muted: '#888', dim: '#666', blocked: '#f00', chrome: '#111', foreground: '#eee', border: '#333', accent: '#0af', raised: '#222', selected: '#333', hover: '#2a2a2a' });\n"
             "export const alpha = (c) => c;\n"
@@ -975,7 +984,9 @@ def run_outline_panel(body, state):
             "export const emptyState = (o) => ({ kind: 'emptyState', ...o });\n"
             "export const openMenu = () => {};\n"
             "export const programIcon = () => ({ kind: 'programIcon' });\n"
-            "export const feed = () => S_DATA.feed ?? null;\n"
+            'export const feed = () => (S_DATA.feed?.v === 2 ? S_DATA.feed : null);\n'
+            f"export const liveRecords = () => new Map(Object.entries({json.dumps(state.get('records') or {})}));\n"
+            "export const provider = makeProvider({ feed, exec, readTextFile, appHome });\n"
             "export const machineLabel = (m) => m ?? 'local';\n"
             "export const machineOf = (a) => (String(a ?? '').includes('/') ? String(a).split('/')[0] : null);\n"
             "export const ago = () => '';\n"
@@ -1014,8 +1025,7 @@ def run_outline_panel(body, state):
             "export const lastTool = () => null;\n"
             "export const runMeta = () => '';\n"
             "export const stepTranscript = () => null;\n"
-            "export const claudeAll = () => [];\n"
-            "export const recordRuns = () => [];\n"
+            "export const allSubagents = () => ({ runs: [], agents: [] });\n"
             "export const openViewer = () => {};\n"
             "export const openAttach = () => {};\n"
             "export const copied = () => false;\n"
@@ -1047,9 +1057,10 @@ class ChildRowToolAndGoButton(unittest.TestCase):
     def test_working_child_shows_latest_feed_tool_while_idle_child_shows_slug_or_address(self):
         state = {
             "feed": {
+                "v": 2,
                 "terms": {
-                    "t_work": {"lastTool": {"tool": "Read", "args": "kit/kit.js"}},
-                    "t_idle": {"lastTool": {"tool": "Bash", "args": "ls"}},
+                    "t_work": {"provider": "claude", "lastTool": {"tool": "Read", "args": "kit/kit.js"}},
+                    "t_idle": {"provider": "claude", "lastTool": {"tool": "Bash", "args": "ls"}},
                 },
             },
         }
@@ -1098,7 +1109,7 @@ class ChildRowToolAndGoButton(unittest.TestCase):
         self.assertIn("hc-t_kid-go", r["unattachedRightIds"][0])
         self.assertIn("hc-t_grand-go", r["unattachedRightIds"][1])
         src = MAIN.read_text(encoding="utf-8")
-        self.assertIn("this.items(t, rows, x.runs, x.claude, x.kids, 0, p);", src)
+        self.assertIn("this.items(t, rows, x.runs, x.agents, x.kids, 0, p);", src)
 
 
 if __name__ == "__main__":

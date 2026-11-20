@@ -10,7 +10,7 @@
 // auto-reveal:<on|off|toggle>, filter:<text>, menu[:<rowKey>], rename, close, open-right, new-tab,
 // new-space, up, down, left, right, enter, toggle, cursor:<rowKey>, fold:<rowKey>,
 // hide-machine:<name>, show-machine:<name>, connect:<name>, bookmark:<rowKey>, inspect:<address>,
-// move-to:<tabId>, move:<fromKey>@<toKey> (the drag's drop, for tests).  Row keys: m:<machine|local> s:<space> t:<tab> p:<pane> r:<run> c:<claude> h:<addr>.
+// move-to:<tabId>, move:<fromKey>@<toKey> (the drag's drop, for tests).  Row keys: m:<machine|local> s:<space> t:<tab> p:<pane> r:<run> c:<agent> h:<addr>.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, ScrollHandle, Scrollbar } from "gpui-base";
@@ -37,7 +37,7 @@ const SORTS = [
   ["status", "Needs attention first"],
 ];
 const PALETTE = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
-const SUB_KINDS = new Set(["run", "claude", "child"]);
+const SUB_KINDS = new Set(["run", "agent", "child"]);
 const mkey = (m) => `m:${m ?? "local"}`;
 
 function load(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) ?? d; } catch { return d; } }
@@ -522,7 +522,7 @@ export default class Sessions extends View {
       case "space": run("space.select", { id: r.space }); break;
       case "tab": run("space.select", { id: r.space }); run("tab.select", { id: r.tab }); break;
       case "pane": run("space.select", { id: r.space }); run("tab.select", { id: r.tab }); run("pane.focus", { pane: r.pane }); break;
-      case "run": case "claude": openView("ob-outline", `run:${n.sub.id}`); break;
+      case "run": case "agent": openView("ob-outline", `run:${n.sub.id}`); break;
       case "child": run("terminal.peek", { terminal: n.sub.id }); break;
       default: break;
     }
@@ -802,7 +802,7 @@ export default class Sessions extends View {
       items.push({ label: bm("run", r.key), icon: isBookmarked("run", r.key) ? "bookmark" : "bookmark-plus", command: me(`bookmark:${n.key}`) });
       return items;
     }
-    if (n.kind === "claude") {
+    if (n.kind === "agent") {
       const c = n.sub.item;
       items.push({ label: "Open in Outline", icon: "subagents", command: `ob-tabs.open:ob-outline@run:${c.key}` });
       if (c.transcript) items.push({ label: "Transcript", icon: "file-text", overlay: this.viewer("transcript", c.key, c.machine, c.transcript, `${n.label} · transcript`, n.sub.live) });
@@ -949,7 +949,7 @@ export default class Sessions extends View {
       if (n.kind === "run") o.after.push(bmMark("run", it.id));
       let time = "";
       if (n.kind === "run") time = it.live ? dur(now - (it.item.startedAt ?? now)) : ago(it.item.endedAt ?? it.item.lastUpdate, now);
-      else if (n.kind === "claude" && !it.live) time = ago(it.item.updatedAt, now);
+      else if (n.kind === "agent" && !it.live) time = ago(it.item.updatedAt, now);
       if (time && this.w >= 200) o.right.push(this.tag(time, t));
       o.right.push(statusMark(it.status, S.iconXs));
     }

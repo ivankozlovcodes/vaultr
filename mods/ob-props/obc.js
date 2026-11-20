@@ -4,7 +4,7 @@
 
 import { terminals, agents, panes, spaces, run, openOverlay, shared, setShared, focused, notify } from "herdr";
 import {
-  MOD, machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, feed, liveRecords, base,
+  MOD, machineOf, tabLabel, paneName, dur, ago, fmtTokens, fmtCost, normStatus, copyText, provider, liveRecords, base,
   followTarget, parentAddrOf, isChildTerminalOf, getHidden, updateHidden, patchHidden, normHidden, isSpaceHidden, isTabHidden,
 } from "./kit.js";
 
@@ -100,10 +100,12 @@ export function runTitle(r) {
     const names = [...new Set(steps.map((s) => s.agent))];
     return names.length === 1 ? `${names[0]} ×${steps.length}` : names.join(" ∥ ");
   }
-  return steps.map((s) => s.agent).join(" → ") || r?.mode || "run";
+  return steps.map((s) => s.agent).join(" → ") || provider.of(r)?.noun || r?.mode || "run";
 }
 export function runModels(r) { return [...new Set((r?.steps ?? []).map((s) => s.model).filter(Boolean))].map(shortModel); }
-export function shortModel(m) { return String(m ?? "").replace(/^claude-/, "").replace(/-(\d+)-(\d+)$/, " $1.$2"); }
+export function shortModel(m) {
+  return String(m ?? "").replace(/^[^/]+\//, "").replace(/^[a-z]+-(?=(?:opus|sonnet|haiku|3)-)/i, "").replace(/-(\d+)-(\d+)$/, " $1.$2");
+}
 export function runWhen(r, now = Date.now()) {
   if (r?.live) return r.startedAt ? dur(now - r.startedAt) : "";
   const t = r?.endedAt ?? r?.lastUpdate;
@@ -134,28 +136,58 @@ export function runMeta(r, compact) {
 // A step's best transcript: the child session (full text), else the artifact transcript.
 export function stepTranscript(s) { return s?.session || s?.transcript || null; }
 
-// Every Claude Code sub-agent: the feed's, with live state from terminals().records, plus records
-// the feed hasn't seen yet. -> [{ key, machine, parent, id, type, desc, model, updatedAt, lastTool, outTokens, live, transcript }]
-export function claudeAll() {
-  const f = feed();
+// All sub-agent runs and sub-agents: provider.subagents(filter) merged with live terminals().records
+// (including provisional subagents/<id12> runs started before the next scan). -> { runs, agents }.
+export function allSubagents(filter = {}) {
+  const subs = provider.subagents(filter);
   const recs = liveRecords();
   const recTool = (r) => {
     const msg = typeof r?.msg === "string" ? r.msg.trim() : "";
     return msg ? { tool: msg, args: "" } : null;
   };
-  const out = (f?.claude ?? []).map((c) => {
+  const runs = subs.filter((x) => x.kind === "run");
+  const known = new Set(runs.map((r) => String(r.id ?? "").replace(/-/g, "").slice(0, 12).toLowerCase()).filter(Boolean));
+  const agents = subs.filter((x) => x.kind === "agent").map((c) => {
     const r = recs.get(c.parent)?.[c.id];
     // Live: the scan's transcript says it is running, or the terminal's live record says so.
-    return { ...c, live: Boolean(c.live) || Boolean(r && (r.state === "working" || r.state === "blocked")), state: r?.state ?? null, desc: c.desc || r?.title || c.type, lastTool: c.lastTool ?? recTool(r) };
+    return {
+      ...c,
+      live: Boolean(c.live) || (!c.ended && Boolean(r && (r.state === "working" || r.state === "blocked"))),
+      state: r?.state ?? null,
+      desc: c.desc || r?.title || c.type,
+      lastTool: c.lastTool ?? recTool(r),
+    };
   });
+  const wantParent = filter && Object.prototype.hasOwnProperty.call(filter, "parent") ? filter.parent : undefined;
+  const wantMachine = filter && Object.prototype.hasOwnProperty.call(filter, "machine") ? filter.machine : undefined;
   for (const [addr, rs] of recs) {
+    if (wantParent !== undefined && addr !== wantParent) continue;
+    if (wantMachine !== undefined && machineOf(addr) !== (wantMachine === "local" ? null : wantMachine)) continue;
+    if (!rs || typeof rs !== "object") continue;
     for (const [id, r] of Object.entries(rs)) {
-      if (r?.app === "pi-subagents") continue;   // pi runs report here too: they are runs, see recordRuns()
-      if (out.some((c) => c.parent === addr && c.id === id)) continue;
-      out.push({ key: `${addr}#${id}`, machine: machineOf(addr), parent: addr, id, type: r.app, desc: r.title, model: null, updatedAt: null, lastTool: recTool(r), outTokens: null, live: r.state === "working" || r.state === "blocked", state: r.state, transcript: null });
+      const m = /^subagents\/([0-9a-f]{12})$/i.exec(id);
+      if (m) {
+        const rid = m[1].toLowerCase();
+        if (known.has(rid) || (r.state !== "working" && r.state !== "blocked")) continue;
+        const steps = Object.entries(rs).filter(([k]) => k.startsWith(id + ".")).map(([, x]) => ({ agent: x.title || "step", status: x.state === "working" ? "running" : x.state, tools: [], out: [] }));
+        runs.push({
+          kind: "run", key: `rec:${addr}#${id}`, machine: machineOf(addr), id: m[1], short: m[1].slice(0, 8),
+          mode: steps.length ? "workflow" : null, state: "running", live: true, pending: true,
+          parent: addr, startedAt: null, lastUpdate: Date.now(),
+          steps: steps.length ? steps : [{ agent: r.title || "run", status: "running", tools: [], out: [] }], error: null, log: null,
+        });
+        continue;
+      }
+      if (/^subagents\/[0-9a-f]{12}\./i.test(id)) continue;
+      if (agents.some((c) => c.parent === addr && c.id === id)) continue;
+      agents.push({
+        kind: "agent", key: `${addr}#${id}`, machine: machineOf(addr), parent: addr, id,
+        provider: null, type: r.app, desc: r.title, model: null, updatedAt: null, lastTool: recTool(r),
+        outTokens: null, live: r.state === "working" || r.state === "blocked", state: r.state, transcript: null,
+      });
     }
   }
-  return out;
+  return { runs, agents };
 }
 // hc child terminals (an agent's `hc run`): sub-agents with a terminal of their own.
 export function hcChildren(address) {
@@ -206,25 +238,5 @@ export function lines(text, chars, max = 2) {
   if (cur && out.length < max) out.push(cur);
   const used = out.join(" ").length;
   if (out.length && used < String(text ?? "").replace(/\s+/g, " ").trim().length) out[out.length - 1] = out[out.length - 1].replace(/.{0,1}$/, "") + "…";
-  return out;
-}
-
-// pi-subagents also reports its background runs as records ("subagents/<run id 12>[.<step>]") on the
-// parent terminal, at once. A live one the feed hasn't scanned yet becomes a provisional run, so a
-// new run shows up before the next scan. -> Run-shaped objects with `pending: true`.
-export function recordRuns() {
-  const f = feed();
-  const known = new Set((f?.runs ?? []).map((r) => r.id.replace(/-/g, "").slice(0, 12)));
-  const out = [];
-  for (const [addr, rs] of liveRecords()) {
-    for (const [id, r] of Object.entries(rs)) {
-      const m = /^subagents\/([0-9a-f]{12})$/i.exec(id);
-      if (r?.app !== "pi-subagents" || !m || known.has(m[1].toLowerCase())) continue;
-      if (r.state !== "working" && r.state !== "blocked") continue;
-      const steps = Object.entries(rs).filter(([k]) => k.startsWith(id + ".")).map(([, x]) => ({ agent: x.title || "step", status: x.state === "working" ? "running" : x.state, tools: [], out: [] }));
-      out.push({ key: `rec:${addr}#${id}`, machine: machineOf(addr), id: m[1], short: m[1].slice(0, 8), mode: steps.length ? "workflow" : null, state: "running", live: true, pending: true,
-        parent: addr, startedAt: null, lastUpdate: Date.now(), steps: steps.length ? steps : [{ agent: r.title || "pi run", status: "running", tools: [], out: [] }], error: null, log: null });
-    }
-  }
   return out;
 }

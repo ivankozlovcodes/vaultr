@@ -20,7 +20,7 @@ import {
 } from "herdr";
 import {
   S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel,
-  feed, bookmarks, VIEWS, findNode, current, chordParts, kbd, sessionTitleOf,
+  provider, bookmarks, VIEWS, findNode, current, chordParts, kbd, sessionTitleOf,
   normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden, parentAddrOf,
 } from "./kit.js";
 import { commandRows, VAULTR_COMMANDS } from "./commands.js";
@@ -173,10 +173,9 @@ export default class Switcher extends View {
     for (const p of ps) if (p.terminal && tabById.has(p.tab)) where.set(p.terminal, tabById.get(p.tab));
     const tabText = (tb) => tabLabel(tb, ps);
     const ctxOf = (s) => (s ? `${machineLabel(s.machine)} / ${s.name}` : "");
-    const f = feed();
-    // The session titles each tab holds (its agents' and terminals' titles, the feed's session names): a tab is
-    // found by them too, so "herdr-trials" finds the tab whose Claude Code session has that title.
-    const titles = sessionTitles(new Map([...where].map(([addr, w]) => [addr, w.tab.id])), { agents: ag, terminals: terms, terms: f?.terms ?? {} });
+    // The session titles each tab holds (its agents' and terminals' titles, the provider session names): a tab is
+    // found by them too, so "herdr-trials" finds the tab whose session has that title.
+    const titles = sessionTitles(new Map([...where].map(([addr, w]) => [addr, w.tab.id])), { agents: ag, terminals: terms, sessions: provider.sessions() });
     const h = normHidden(shared("ob.hidden") ?? getHidden());
     const items = [];
 
@@ -232,7 +231,7 @@ export default class Switcher extends View {
       });
     }
 
-    // Sub-agents: hc child terminals, pi runs, Claude agents.
+    // Sub-agents: hc child terminals, provider runs and sub-agents.
     const parentText = (addr) => { const w = where.get(addr); return w ? tabText(w.tab) : addr ?? "?"; };
     for (const t of terms) {
       const parentAddr = parentAddrOf(t);
@@ -244,26 +243,28 @@ export default class Switcher extends View {
         lead: () => programIcon(t.program, S.icon), go: () => run("terminal.peek", { terminal: t.address }),
       });
     }
-    for (const r of f?.runs ?? []) {
-      const chain = (r.steps ?? []).map((st) => st.agent).filter(Boolean);
-      const label = chain.length > 3 ? `workflow · ${chain.length} agents` : chain.join(" → ") || `run ${r.short ?? r.id ?? ""}`;
-      const task = r.steps?.[0]?.task ?? "";
-      items.push({
-        key: `run:${r.key}`, kind: "run", label, context: `subagent of ${r.parent ? parentText(r.parent) : `unattached · ${machineLabel(r.machine)}`}`,
-        words: `subagent pi ${task} ${r.short ?? ""}`, status: r.live ? "working" : r.state, bookmarked: isBm("run", r.key) || isBm("run", r.id),
-        lead: () => icon("subagents", S.icon), go: () => run(`ob-tabs.open:ob-outline@run:${r.key}`),
-      });
-    }
     const liveRec = new Map();
     for (const t of terms) for (const [id, rec] of Object.entries(t?.records ?? {})) liveRec.set(`${t.address}#${id}`, rec);
-    for (const c of f?.claude ?? []) {
-      const rec = liveRec.get(`${c.parent}#${c.id}`);
-      const live = rec ? rec.state === "working" || rec.state === "blocked" : Boolean(c.live);
-      items.push({
-        key: `claude:${c.key}`, kind: "claude", label: c.desc || c.type || "Claude agent", context: `subagent of ${parentText(c.parent)}${c.type ? ` · ${c.type}` : ""}`,
-        words: `subagent claude ${c.type ?? ""}`, status: live ? "working" : "ok",
-        lead: () => icon("bot", S.icon), go: () => run(`ob-tabs.open:ob-outline@run:${c.key}`),
-      });
+    for (const sub of provider.subagents()) {
+      const pName = provider.of(sub)?.name ?? sub.provider ?? "";
+      if (sub.kind === "run") {
+        const chain = (sub.steps ?? []).map((st) => st.agent).filter(Boolean);
+        const label = chain.length > 3 ? `workflow · ${chain.length} agents` : chain.join(" → ") || sub.title || `run ${sub.short ?? sub.id ?? ""}`;
+        const task = sub.steps?.[0]?.task ?? "";
+        items.push({
+          key: `run:${sub.key}`, kind: "run", label, context: `subagent of ${sub.parent ? parentText(sub.parent) : `unattached · ${machineLabel(sub.machine)}`}`,
+          words: `subagent ${pName} ${task} ${sub.short ?? ""}`, status: sub.live ? "working" : sub.state, bookmarked: isBm("run", sub.key) || isBm("run", sub.id),
+          lead: () => icon("subagents", S.icon), go: () => run(`ob-tabs.open:ob-outline@run:${sub.key}`),
+        });
+      } else {
+        const rec = liveRec.get(`${sub.parent}#${sub.id}`);
+        const live = rec ? rec.state === "working" || rec.state === "blocked" : Boolean(sub.live);
+        items.push({
+          key: `sub:${sub.key}`, kind: "agent", label: sub.title || sub.desc || sub.type || "Sub-agent", context: `subagent of ${parentText(sub.parent)}${sub.type ? ` · ${sub.type}` : ""}`,
+          words: `subagent ${pName} ${sub.type ?? ""}`, status: live ? "working" : "ok",
+          lead: () => icon("bot", S.icon), go: () => run(`ob-tabs.open:ob-outline@run:${sub.key}`),
+        });
+      }
     }
 
     // Sidebar views of this layout.
@@ -289,7 +290,7 @@ export default class Switcher extends View {
     const byKey = new Map(items.map((it) => [it.key, it]));
     const bmItems = [];
     for (const b of bms) {
-      const k = b.kind === "tab" ? `tab:${b.id}` : b.kind === "space" ? `space:${b.id}` : b.kind === "run" ? (byKey.has(`run:${b.id}`) ? `run:${b.id}` : `run:${(f?.runs ?? []).find((r) => r.id === b.id)?.key}`)
+      const k = b.kind === "tab" ? `tab:${b.id}` : b.kind === "space" ? `space:${b.id}` : b.kind === "run" ? (byKey.has(`run:${b.id}`) ? `run:${b.id}` : `run:${provider.subagents().find((r) => r.kind === "run" && r.id === b.id)?.key}`)
         : byKey.has(`agent:${b.id}`) ? `agent:${b.id}` : `child:${b.id}`;
       const it = byKey.get(k);
       bmItems.push(it ?? { key: `bm:${b.kind}:${b.id}`, kind: "gone", label: b.label || b.id, context: `bookmark · ${b.kind} · gone`, disabled: true, hint: "gone", lead: () => icon("bookmark", S.icon) });

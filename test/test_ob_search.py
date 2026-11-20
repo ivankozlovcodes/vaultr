@@ -141,53 +141,88 @@ class Fuzzy(unittest.TestCase):
 
 @unittest.skipUnless(NODE, "node is not installed: the transcript source test is skipped")
 class Sources(unittest.TestCase):
-    def js(self, body):
-        return run_node(body, TRANSCRIPTS)
+    def run_search(self, query, feed_data, opts_js="{}", results_fn="() => []"):
+        js = (
+            f'import {{ makeProvider }} from {json.dumps(PROVIDER_JS.as_uri())};\n'
+            'const FILES = {\n'
+            '  "/app/mods/ob-feed/providers/index.json": JSON.stringify(["claude", "pi"]),\n'
+            '  "/app/mods/ob-feed/providers/reader_main.py": "def run_reader_main(m): pass\\n",\n'
+            '  "/app/mods/ob-feed/providers/claude/manifest.json": JSON.stringify({ id: "claude", name: "Claude Code", noun: "Claude agent", caps: ["title", "transcript", "usage", "search", "touches", "subagents"] }),\n'
+            '  "/app/mods/ob-feed/providers/claude/reader.py": "def sniff(r): return True\\ndef events(r): return []\\n",\n'
+            '  "/app/mods/ob-feed/providers/pi/manifest.json": JSON.stringify({ id: "pi", name: "pi", noun: "pi run", caps: ["transcript", "usage", "search", "touches", "subagents"] }),\n'
+            '  "/app/mods/ob-feed/providers/pi/reader.py": "def sniff(r): return False\\ndef events(r): return []\\n",\n'
+            '};\n'
+            'const seenReq = [];\n'
+            'const p = makeProvider({\n'
+            f'  feed: () => ({json.dumps(feed_data)}),\n'
+            '  readTextFile: async (f) => { if (f in FILES) return FILES[f]; throw new Error("ENOENT"); },\n'
+            '  appHome: () => "/app",\n'
+            '  exec: async (_cmd, args) => {\n'
+            '    const req = JSON.parse(args[2]);\n'
+            '    seenReq.push(req);\n'
+            f'    const files = ({results_fn})(req.files);\n'
+            '    return { code: 0, stdout: JSON.stringify({ v: 1, files, partial: false, skipped: 0 }) };\n'
+            '  },\n'
+            '});\n'
+            f'const out = await p.search({json.dumps(query)}, {opts_js});\n'
+            'console.log(JSON.stringify({ out, seenReq }));\n'
+        )
+        out = subprocess.run([NODE, "--input-type=module", "-e", js], capture_output=True, text=True, timeout=60)
+        if out.returncode != 0:
+            raise AssertionError(out.stderr.strip() or "node failed")
+        return json.loads(out.stdout)
 
     FEED = {
-        "terms": {
-            "t1": {"kind": "claude", "transcript": "/t/main.jsonl", "name": "Main", "cwd": "/srv/a"},
-            "box/t9": {"kind": "pi", "session": "/t/remote.jsonl", "name": "Remote", "cwd": "/srv/b"},
+        "v": 2,
+        "providers": {
+            "claude": {"id": "claude", "name": "Claude Code", "noun": "Claude agent", "caps": ["title", "transcript", "usage", "search", "touches", "subagents"]},
+            "pi": {"id": "pi", "name": "pi", "noun": "pi run", "caps": ["transcript", "usage", "search", "touches", "subagents"]},
         },
-        "claude": [
-            {"key": "k:a1", "machine": None, "parent": "t1", "id": "a1", "desc": "Look at the archive", "type": "Explore", "transcript": "/t/sub.jsonl"},
-            {"key": "k:a2", "machine": None, "parent": "t1", "id": "a2", "desc": "", "type": "general", "transcript": "/t/main.jsonl"},
+        "terms": {
+            "t1": {"provider": "claude", "transcript": "/t/main.jsonl", "name": "Main", "cwd": "/srv/a"},
+            "box/t9": {"provider": "pi", "session": "/t/remote.jsonl", "name": "Remote", "cwd": "/srv/b"},
+        },
+        "subagents": [
+            {"key": "k:a1", "machine": None, "parent": "t1", "provider": "claude", "id": "a1", "desc": "Look at the archive", "type": "Explore", "transcript": "/t/sub.jsonl"},
+            {"key": "k:a2", "machine": None, "parent": "t1", "provider": "claude", "id": "a2", "desc": "", "type": "general", "transcript": "/t/main.jsonl"},
         ],
         "runs": [
-            {"machine": None, "parent": "t1", "steps": [{"agent": "scout", "label": "step", "task": "find notes", "session": "/t/pi-child.jsonl", "transcript": None}]},
+            {"machine": None, "parent": "t1", "provider": "pi", "steps": [{"agent": "scout", "label": "step", "task": "find notes", "session": "/t/pi-child.jsonl", "transcript": None}]},
         ],
     }
 
     def test_sources_are_local_main_and_subagents_deduplicated(self):
-        r = self.js("return M.sourcesFrom(%s, {});" % json.dumps(self.FEED))
-        paths = sorted(s["path"] for s in r)
+        res = self.run_search("x", self.FEED)
+        paths = sorted(s["path"] for s in res["out"]["sources"])
         self.assertEqual(paths, ["/t/main.jsonl", "/t/pi-child.jsonl", "/t/sub.jsonl"])
-        main = next(s for s in r if s["path"] == "/t/main.jsonl")
+        main = next(s for s in res["out"]["sources"] if s["path"] == "/t/main.jsonl")
         self.assertEqual(main["kind"], "main")
         self.assertEqual(main["label"], "Main")
 
     def test_remote_sessions_are_left_out(self):
-        r = self.js("return M.sourcesFrom(%s, {});" % json.dumps(self.FEED))
-        self.assertNotIn("/t/remote.jsonl", [s["path"] for s in r])
+        res = self.run_search("x", self.FEED)
+        self.assertNotIn("/t/remote.jsonl", [s["path"] for s in res["out"]["sources"]])
 
     def test_scope_keeps_only_the_given_parents(self):
-        r = self.js('return M.sourcesFrom(%s, { parents: new Set(["t2"]) });' % json.dumps(self.FEED))
-        self.assertEqual(r, [])
+        res = self.run_search("x", self.FEED, '{ parents: new Set(["t2"]) }')
+        self.assertEqual(res["out"]["sources"], [])
+        self.assertTrue(res["out"]["none"])
 
     def test_groups_rank_hits_and_apply_the_caps(self):
-        sources = self.js("return M.sourcesFrom(%s, {});" % json.dumps(self.FEED))
-        sub = next(s for s in sources if s["path"] == "/t/sub.jsonl")
-        results = [{
-            "id": sub["id"], "path": sub["path"],
-            "msgs": [
-                {"i": 0, "role": "user", "ts": 1, "text": "look at the archive folder"},
-                {"i": 1, "role": "assistant", "ts": 2, "text": "The archive has three folders for archive copies."},
-                {"i": 2, "role": "assistant", "ts": 3, "text": "nothing relevant"},
-                {"i": 3, "role": "user", "ts": 4, "text": "archive"},
+        results_fn = """(files) => {
+          const sub = files.find((f) => f.path === "/t/sub.jsonl");
+          return [{
+            id: sub.id, path: sub.path,
+            msgs: [
+              {i: 0, role: "user", ts: 1, text: "look at the archive folder"},
+              {i: 1, role: "assistant", ts: 2, text: "The archive has three folders for archive copies."},
+              {i: 2, role: "assistant", ts: 3, text: "nothing relevant"},
+              {i: 3, role: "user", ts: 4, text: "archive"},
             ],
-        }]
-        r = self.js("return M.buildGroups(%s, %s, 'archive', { perGroup: 2, total: 5 });"
-                     % (json.dumps(sources), json.dumps(results)))
+          }];
+        }"""
+        res = self.run_search("archive", self.FEED, "{ perGroup: 2, total: 5 }", results_fn)
+        r = res["out"]["groups"]
         self.assertEqual(len(r), 1)
         g = r[0]
         self.assertEqual(g["label"], "Look at the archive")
@@ -195,9 +230,8 @@ class Sources(unittest.TestCase):
         self.assertEqual(g["count"], 3)      # all matches counted
         self.assertIn("archive", g["hits"][0]["snippet"]["text"])
         self.assertIn(g["hits"][0]["role"], ("user", "assistant"))
-        capped = self.js("return M.buildGroups(%s, %s, 'archive', { perGroup: 2, total: 1 });"
-                          % (json.dumps(sources), json.dumps(results)))
-        self.assertEqual(sum(len(x["hits"]) for x in capped), 1)  # total cap
+        capped = self.run_search("archive", self.FEED, "{ perGroup: 2, total: 1 }", results_fn)
+        self.assertEqual(sum(len(x["hits"]) for x in capped["out"]["groups"]), 1)  # total cap
 
 
 class Helper(unittest.TestCase):
@@ -292,10 +326,7 @@ class Helper(unittest.TestCase):
         self.assertLessEqual(len(msgs[0]["text"]), 2000)
         self.assertIn("zanzibar ledger", msgs[0]["text"])
         if NODE:
-            groups = run_node("return M.buildGroups(%s, %s, 'zanzibar ledger');" % (
-                json.dumps([{"id": "s0", "path": p, "kind": "main", "label": "x", "parent": None}]),
-                json.dumps(r["files"])), TRANSCRIPTS)
-            self.assertEqual(len(groups), 1)
+            self.assertIsNotNone(run_node("return M.matchQuery('zanzibar ledger', %s);" % json.dumps(msgs[0]["text"])))
 
     def test_terms_far_apart_in_one_long_message_are_both_kept_in_the_returned_text(self):
         # No single 2000-character window holds both terms: the text is cut around each one and joined, so the
@@ -313,10 +344,7 @@ class Helper(unittest.TestCase):
         self.assertIn("zanzibar", msgs[0]["text"])
         self.assertIn("ledger", msgs[0]["text"])
         if NODE:
-            groups = run_node("return M.buildGroups(%s, %s, 'zanzibar ledger');" % (
-                json.dumps([{"id": "s0", "path": p, "kind": "main", "label": "x", "parent": None}]),
-                json.dumps(r["files"])), TRANSCRIPTS)
-            self.assertEqual(len(groups), 1)
+            self.assertIsNotNone(run_node("return M.matchQuery('zanzibar ledger', %s);" % json.dumps(msgs[0]["text"])))
 
     def test_a_short_text_is_returned_whole(self):
         r = run_helper({"terms": ["nightly", "backup"], "files": [{"id": "c", "path": str(CLAUDE_MAIN)}]})
@@ -527,20 +555,21 @@ class RegexAndTranscripts(unittest.TestCase):
 
 
 class HelperReadOnce(unittest.TestCase):
-    """The assembled search reader is built once (lazily, then kept), not on every debounced search."""
+    """Transcript search delegates through provider.search() and runs no reader script directly in ob-search."""
 
     def setUp(self):
         self.src = MAIN.read_text(encoding="utf-8")
 
-    def test_the_search_uses_the_cached_script(self):
+    def test_the_search_uses_provider_facade(self):
         body = self.src[self.src.index("  async scanTranscripts("):]
         body = body[:body.index("\n  }\n")]
-        self.assertIn("await this.helperScript()", body)
+        self.assertIn("await provider.search(", body)
         self.assertNotIn("readTextFile", body)
+        self.assertNotIn("exec(", body)
 
-    def test_the_file_is_read_in_one_place_and_kept(self):
-        self.assertEqual(self.src.count("assembleReader("), 1)
-        self.assertRegex(self.src, r"if \(!this\.script\) \{[\s\S]*this\.script = assembleReader\(")
+    def test_no_reader_assembly_remains_in_search(self):
+        self.assertNotIn("assembleReader", self.src)
+        self.assertNotIn("loadProviders", self.src)
 
 
 class PaneNames(unittest.TestCase):

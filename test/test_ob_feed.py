@@ -60,6 +60,14 @@ class MainAgentAt(unittest.TestCase):
         self.assertIn("mainAgentAt(", src)
         self.assertNotIn("at: Date.now(), tool: info.lastTool", src)
 
+    def test_ticker_items_reads_via_provider(self):
+        src = main_src()
+        body = src[src.index("  tickerItems() {"):src.index("  // A click on a chip:")]
+        self.assertIn("provider.subagents(", body)
+        self.assertIn("provider.sessions(", body)
+        self.assertNotIn("assembleScanner", src)
+        self.assertNotIn("loadProviders", src)
+
 
 if __name__ == "__main__":
     unittest.main()

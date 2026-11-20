@@ -1,7 +1,7 @@
 // ob-graph views: pure, no Herdr or gpui imports (test/test_ob_graph.py runs it under node).
 //
 // A graph is { nodes: [{key, kind, parent?, status?, live?, foreground?, feedAt?}], edges: [[a, b, kind]] }. kind: m
-// (machine), s (space), p (pane), r (run), c (Claude agent), h (hc child). Edge kinds: contain, link, sibling (the
+// (machine), s (space), p (pane), r (run), c (sub-agent), h (hc child). Edge kinds: contain, link, sibling (the
 // invisible spring between the panes of one tab: Local counts it as a neighbour, Active only keeps it between kept nodes).
 // foreground: a pane whose terminal is a main agent placed in a tab (kit mainAgents + placedTerminals). Active is one rule (kit/agents.js activityOf): a foreground
 // pane by its agent's status (working, blocked), a subagent by its live flag and a fresh feed. live alone does not make a pane active.

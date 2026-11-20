@@ -1,7 +1,7 @@
 // ob-props: Obsidian's Properties for a session. Target: ob.inspect's terminal while pinned, else the
 // last focused main pane that holds a terminal (kit/follow_target.js); before any, the focused mod pane (pane facts only).
 // Sections: Session, Location, Process, Labels, Relations, Usage, Session file. Usage reads the followed agent's
-// transcript with the assembled usage reader (exec, off the UI path) on target change and every 10 s; usage.js does the arithmetic. Key column 96 px; hover a
+// transcript via the provider facade (off the UI path) on target change and every 10 s; usage.js does the arithmetic. Key column 96 px; hover a
 // row for its copy button. `hc get <addr> --json` adds what terminals() lacks (status time, exit,
 // notify), on target change and every 10 s while the view shows.
 // Commands (ob-props.<cmd>): inspect:<address>, unpin, pin (pin the focused session), copy:<field>
@@ -11,14 +11,14 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, Scrollbar } from "gpui-base";
-import { props, run, nextCommand, settings, hc, layout, focused, panes, spaces, shared, exec, readTextFile, appHome } from "herdr";
-import { loadProviders, assembleReader } from "./provider.js";
+import { props, run, nextCommand, settings, hc, layout, focused, panes, spaces, shared } from "herdr";
 import {
   S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, emptyState, programIcon, feed,
-  machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts, feedLine, parentAddrOf,
+  provider, machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts,
+  feedLine, parentAddrOf,
 } from "./kit.js";
 import { summarize, usageLines, subagentsLine } from "./usage.js";
-import { MONO, splitCmd, sessionOf, inspected, inspect, revealTerminal, claudeAll, hcChildren, openViewer, copied } from "./obc.js";
+import { MONO, splitCmd, sessionOf, inspected, inspect, revealTerminal, allSubagents, hcChildren, openViewer, copied } from "./obc.js";
 
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* keep in memory */ } };
@@ -65,38 +65,21 @@ export default class Props extends View {
     });
   }
 
-  // The followed agent's token usage: the assembled usage reader over its transcript (exec, time-boxed), summed by usage.js.
-  async loadUsageScript() {
-    const providersDir = `${appHome()}/mods/ob-feed/providers`;
-    const [readerMain, readers] = await Promise.all([
-      readTextFile(`${providersDir}/reader_main.py`).catch(() => null),
-      loadProviders({ readTextFile, providersDir }),
-    ]);
-    if (!readerMain || !readers.length) return null;
-    return assembleReader(readerMain, readers, "usage");
-  }
-
-  // Only a Claude Code or pi session has a transcript; a plain shell has none and gets no section.
+  // The followed agent's token usage: read through provider.usage(), summed by usage.js.
   fetchUsage(addr, cx) {
-    const path = this.transcriptOf(addr);
+    const sess = provider.session(addr);
+    const path = sess?.transcript ?? null;
     if (!path || this.usageBusy.has(addr)) return;
     this.usageBusy.add(addr);
     cx.spawn(async (cx) => {
-      const machine = machineOf(addr);
       try {
-        // Read once: it is the same assembled script every 10 s (a missing one is looked for again next time).
-        this.usageScript ||= await this.loadUsageScript();
-        const script = this.usageScript;
-        if (!script) throw new Error("usage reader is missing");
-        // The last run's signature for this path: an unchanged transcript is not read again (reader_main checks where it lives).
+        // The last run's signature for this path: an unchanged transcript is not read again.
         const last = this.usage[addr];
         const seen = last?.path === path && last?.sig && last?.summary ? last.sig : "";
-        const r = await exec("python3", ["-c", script, path, "", seen], { ...(machine ? { on: machine } : {}), timeout: 8000 });
-        const line = String(r.stdout ?? "").trim().split("\n").pop() ?? "";
-        if (!line.startsWith("{")) throw new Error((r.stderr || `python3 exited ${r.code}`).trim().split("\n").pop());
-        const d = JSON.parse(line);
+        const d = await provider.usage(sess, { seen });
+        if (!d.ok) throw new Error(d.error ?? "usage read failed");
         if (d.unchanged && last) this.usage[addr] = { ...last, at: Date.now() };
-        else this.usage[addr] = { summary: summarize(d.turns), format: d.format, truncated: Boolean(d.truncated), size: d.size, sig: d.sig, path, error: d.error ?? null, at: Date.now() };
+        else this.usage[addr] = { summary: summarize(d.turns), format: d.format, truncated: Boolean(d.truncated), size: d.size, sig: d.sig, path, error: null, at: Date.now() };
       } catch (e) {
         this.usage[addr] = { summary: null, error: String(e?.message ?? e).slice(0, 200), at: Date.now() };
       }
@@ -105,11 +88,9 @@ export default class Props extends View {
     });
   }
 
-  // The session file the feed knows for a terminal (Claude Code: transcript; pi: its session file), or null.
+  // The session file the feed knows for a terminal, or null.
   transcriptOf(addr) {
-    const term = feed()?.terms?.[addr];
-    if (!term) return null;
-    return term.transcript ?? (term.kind === "pi" ? term.session : null) ?? null;
+    return provider.session(addr)?.transcript ?? null;
   }
 
   // The value of a copyable field for the current target.
@@ -117,11 +98,11 @@ export default class Props extends View {
     const a = this.target();
     const s = sessionOf(a);
     const x = this.extra[a] ?? {};
-    const term = feed()?.terms?.[a];
+    const term = provider.session(a);
     const v = {
       address: a, cwd: s?.pane?.cwd ?? s?.term?.cwd ?? x.cwd, pid: s?.term?.foreground?.pid ?? s?.term?.pid ?? x.pid,
       argv: (s?.term?.foreground?.argv ?? s?.term?.argv ?? [])?.join(" "), title: s?.term?.title ?? x.title, session: term?.session,
-      transcript: term?.transcript ?? (term?.kind === "pi" ? term?.session : null), branch: s?.pane?.branch, pane: s?.pane?.pane, space: s?.space?.id,
+      transcript: term?.transcript ?? null, branch: s?.pane?.branch, pane: s?.pane?.pane, space: s?.space?.id,
       tab: s?.tab?.id, machine: machineLabel(s?.machine ?? null), parent: parentAddrOf(s?.term) ?? x.parent,
     }[name];
     return v == null || v === "" ? null : String(v);
@@ -141,8 +122,7 @@ export default class Props extends View {
 
   openTranscript() {
     const a = this.target();
-    const term = feed()?.terms?.[a];
-    const path = term?.transcript ?? (term?.kind === "pi" ? term?.session : null);
+    const path = this.transcriptOf(a);
     if (!path) return;
     const s = sessionOf(a);
     openViewer({ view: "transcript", machine: machineOf(a), path, title: `${s?.label ?? a} · session`, live: s?.status === "working", key: `sess-${a}` });
@@ -217,7 +197,6 @@ export default class Props extends View {
     }
     const x = this.extra[address] ?? {};
     const term = s.term ?? {};
-    const fterm = feed()?.terms?.[address];
     const now = Date.now();
     const rows = [];
     const st = s.status;
@@ -259,29 +238,60 @@ export default class Props extends View {
         h_flex().id("labels").flex_none().flex_wrap().gap(4).px(S.pad + 4).py(4).children(labels.map(([k, v], i) => this.chip(t, `lab-${i}`, `${k}=${v}`))),
       ]);
     }
-    // Relations: parent, hc children, pi runs, Claude agents.
+    // Relations: parent, hc children, sub-agent runs, sub-agents.
+    const fterm = provider.session(address);
     const parent = parentAddrOf(term) ?? x.parent ?? null;
     const kids = hcChildren(address);
-    const runs = (feed()?.runs ?? []).filter((r) => r.parent === address);
-    const claude = claudeAll().filter((c) => c.parent === address);
-    const liveRuns = runs.filter((r) => r.live).length, liveCl = claude.filter((c) => c.live).length;
+    const { runs, agents: subAgents } = allSubagents({ parent: address });
+    const allSubs = [...runs, ...subAgents];
+    const subProviders = provider.list().filter((p) => p.caps.includes("subagents"));
+    const mapped = new Set(subProviders.map((p) => p.id));
+    const relSubs = [];
+    if (subProviders.length) {
+      for (const p of subProviders) {
+        const list = allSubs.filter((x) => x.provider === p.id);
+        const liveCount = list.filter((x) => x.live).length;
+        const unit = list.some((x) => x.kind === "run") ? "run" : "agent";
+        relSubs.push(this.kv(t, `sub-${p.id}`, `${p.noun}s`, list.length ? `${list.length} ${unit}${list.length === 1 ? "" : "s"}` : "None", {
+          color: list.length ? t.accent : t.dim,
+          onClick: list.length ? () => openView("ob-outline", `term:${address}`) : null,
+          after: [liveCount ? badge(`${liveCount} live`, "working") : null],
+          tip: list.length ? "Open in Outline" : undefined,
+        }));
+      }
+      const other = allSubs.filter((x) => !mapped.has(x.provider));
+      if (other.length) {
+        const liveOther = other.filter((x) => x.live).length;
+        relSubs.push(this.kv(t, "sub-other", "Other sub-agents", `${other.length} agent${other.length === 1 ? "" : "s"}`, {
+          color: t.accent,
+          onClick: () => openView("ob-outline", `term:${address}`),
+          after: [liveOther ? badge(`${liveOther} live`, "working") : null],
+          tip: "Open in Outline",
+        }));
+      }
+    } else {
+      const liveRuns = runs.filter((r) => r.live).length, liveSub = subAgents.filter((c) => c.live).length;
+      relSubs.push(
+        this.kv(t, "runs", "Runs", runs.length ? `${runs.length} run${runs.length === 1 ? "" : "s"}` : "None", { color: runs.length ? t.accent : t.dim, onClick: runs.length ? () => openView("ob-outline", `term:${address}`) : null, after: [liveRuns ? badge(`${liveRuns} live`, "working") : null], tip: runs.length ? "Open in Outline" : undefined }),
+        this.kv(t, "subagents", "Sub-agents", subAgents.length ? `${subAgents.length} agent${subAgents.length === 1 ? "" : "s"}` : "None", { color: subAgents.length ? t.accent : t.dim, onClick: subAgents.length ? () => openView("ob-outline", `term:${address}`) : null, after: [liveSub ? badge(`${liveSub} live`, "working") : null], tip: subAgents.length ? "Open in Outline" : undefined }),
+      );
+    }
     this.section(t, rows, "relations", "RELATIONS", null, [
       this.kv(t, "parent", "Parent", parent ? sessionOf(parent)?.label ?? parent : "None", { color: parent ? t.accent : t.dim, onClick: parent ? () => revealTerminal(parent) : null, copy: parent ? "parent" : null, after: [parent ? div().text_size(S.textXs).text_color(t.dim).child(parent) : null] }),
       ...kids.map((k, i) => this.kv(t, `kid-${i}`, i === 0 ? "Terminals" : "", k.name || k.title || k.address, { lead: statusMark(typeof k.status === "string" ? k.status : k.status?.state, 11), color: t.accent, onClick: () => run("terminal.peek", { terminal: k.address }), tip: "Peek", after: [div().text_size(S.textXs).text_color(t.dim).child(k.address)] })),
-      this.kv(t, "pi", "pi runs", runs.length ? `${runs.length} run${runs.length === 1 ? "" : "s"}` : "None", { color: runs.length ? t.accent : t.dim, onClick: runs.length ? () => openView("ob-outline", `term:${address}`) : null, after: [liveRuns ? badge(`${liveRuns} live`, "working") : null], tip: runs.length ? "Open in Outline" : undefined }),
-      this.kv(t, "claude", "Claude agents", claude.length ? `${claude.length} agent${claude.length === 1 ? "" : "s"}` : "None", { color: claude.length ? t.accent : t.dim, onClick: claude.length ? () => openView("ob-outline", `term:${address}`) : null, after: [liveCl ? badge(`${liveCl} live`, "working") : null], tip: claude.length ? "Open in Outline" : undefined }),
+      ...relSubs,
     ]);
-    if (this.transcriptOf(address)) this.usageSection(t, rows, address, now);
+    if (this.transcriptOf(address)) this.usageSection(t, rows, address, subAgents, now);
     if (fterm) {
-      const path = fterm.transcript ?? (fterm.kind === "pi" ? fterm.session : null);
+      const path = fterm.transcript ?? null;
       this.section(t, rows, "file", "SESSION FILE", null, [
-        fterm.kind === "claude" && fterm.session ? this.kv(t, "sid", "Session id", fterm.session, { mono: true, copy: fterm.session }) : null,
+        fterm.session && fterm.session !== path ? this.kv(t, "sid", "Session id", fterm.session, { mono: true, copy: fterm.session }) : null,
         fterm.name ? this.kv(t, "sname", "Name", fterm.name) : null,
         path ? this.kv(t, "path", "File", path.split("/").pop(), { mono: true, copy: path, tip: path, after: [fterm.sessionGuess ? badge("guessed", "working") : null] }) : this.kv(t, "path", "File", "Not found", { color: t.dim }),
         path ? h_flex().id("file-actions").flex_none().px(S.pad + 4).py(4).gap(6)
           .child(this.button(t, "open-tx", "file-text", "Open transcript", () => this.openTranscript()))
           .child(this.button(t, "copy-path", "copy", "Copy path", (_e, cx) => copied(cx, "path", path))) : null,
-        fterm.sessionGuess ? div().px(S.pad + 4).pb(4).text_size(S.textXs).text_color(t.dim).whitespace_normal().child("Guessed: the newest session file in this folder written since pi started.") : null,
+        fterm.sessionGuess ? div().px(S.pad + 4).pb(4).text_size(S.textXs).text_color(t.dim).whitespace_normal().child("Guessed: the newest session file in this folder written since the agent started.") : null,
       ]);
     }
     return root
@@ -293,7 +303,7 @@ export default class Props extends View {
   }
 
   // Usage: the agent's tokens over its session (usage.js), and its subagents' output tokens from the feed.
-  usageSection(t, rows, address, now) {
+  usageSection(t, rows, address, subAgents, now) {
     const u = this.usage[address];
     const body = [];
     if (!u) body.push(this.kv(t, "usage-wait", "Usage", "Reading…", { color: t.dim }));
@@ -301,7 +311,7 @@ export default class Props extends View {
     else if (!u.summary) body.push(this.kv(t, "usage-none", "Usage", "No turns yet", { color: t.dim }));
     else {
       for (const r of usageLines(u.summary)) body.push(this.kv(t, `u-${r.id}`, r.key, r.value, { mono: true, copy: null }));
-      body.push(this.kv(t, "u-subs", "Subagents", subagentsLine(claudeAll().filter((c) => c.parent === address)) ?? "None", { color: null }));
+      body.push(this.kv(t, "u-subs", "Subagents", subagentsLine(subAgents) ?? "None", { color: null }));
       const paused = feedLine(feed()?.at, now);
       if (paused) body.push(div().id("u-paused").px(S.pad + 4).pb(4).text_size(S.textXs).text_color(t.dim).child(paused));
       const ago_ = u.at ? ago(u.at, now) : "";

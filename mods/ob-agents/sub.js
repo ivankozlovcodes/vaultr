@@ -1,14 +1,14 @@
-// Sub-agents of one terminal as uniform items (pi runs, Claude agents, hc child terminals).
+// Sub-agents of one terminal as uniform items (runs, sub-agents, hc child terminals).
 // Built on kit.subagentsOf (the only reader of the shared feed). Same file in ob-sessions.
 
 import { terminals } from "herdr";
-import { subagentsOf, normStatus, isChildTerminalOf } from "./kit.js";
+import { subagentsOf, normStatus, isChildTerminalOf, provider } from "./kit.js";
 
-// A Claude Code sub-agent's state. Herdr's live records win; without one, the feed's `ended`
+// A sub-agent's state. Herdr's live records win; without one, the feed's `ended`
 // decides, and an unfinished transcript counts as working only while it was written to lately
 // (an agent whose session was killed never writes `ended`).
 const FRESH = 180000;
-export function claudeState(c, now = Date.now()) {
+export function agentState(c, now = Date.now()) {
   if (c.state) return c.state === "working" || c.state === "blocked" ? c.state : "ok";
   if (c.live) return "working";
   if (c.ended) return "ok";
@@ -18,22 +18,22 @@ export function claudeState(c, now = Date.now()) {
 
 const isLive = (s) => s === "working" || s === "blocked";
 
-// -> [{ kind: "run"|"claude"|"child", key, label, detail, status, live, at, item }], live first, newest first.
+// -> [{ kind: "run"|"agent"|"child", key, label, detail, status, live, at, item }], live first, newest first.
 export function subItems(address, all = null, now = Date.now()) {
   if (!address) return [];
   const sa = subagentsOf(address);
   const out = [];
   for (const r of sa.runs) {
     const chain = (r.steps ?? []).map((s) => s.agent).filter(Boolean);
-    const label = chain.length > 3 ? `${r.mode ?? "workflow"} · ${chain.length} agents` : chain.join(" → ") || r.mode || r.short || "run";
-    const models = [...new Set((r.steps ?? []).map((s) => s.model).filter(Boolean))].map((m) => String(m).replace(/^claude-/, ""));
+    const label = chain.length > 3 ? `${r.mode ?? "workflow"} · ${chain.length} agents` : chain.join(" → ") || provider.of(r)?.noun || r.mode || r.short || "run";
+    const models = [...new Set((r.steps ?? []).map((s) => s.model).filter(Boolean))].map((m) => String(m).replace(/^[^/]+\//, "").replace(/^[a-z]+-(?=(?:opus|sonnet|haiku|3)-)/i, ""));
     const status = r.live ? "working" : r.state ?? null;
     out.push({ kind: "run", key: `r:${r.key}`, id: r.key, label, detail: models.join(", "), status, live: Boolean(r.live), at: r.live ? r.startedAt : r.endedAt ?? r.lastUpdate ?? r.startedAt, item: r,
       text: [label, models.join(" "), ...(r.steps ?? []).map((s) => s.task ?? "")].join(" ") });
   }
-  for (const c of sa.claude) {
-    const status = claudeState(c, now);
-    out.push({ kind: "claude", key: `c:${c.key}`, id: c.key, label: c.desc || c.type || c.id, detail: c.type ?? "", status, live: isLive(status), at: c.updatedAt ?? 0, item: c,
+  for (const c of sa.agents) {
+    const status = agentState(c, now);
+    out.push({ kind: "agent", key: `c:${c.key}`, id: c.key, label: c.desc || c.type || provider.of(c)?.noun || c.id, detail: c.type ?? "", status, live: isLive(status), at: c.updatedAt ?? 0, item: c,
       text: [c.desc, c.type, c.model].filter(Boolean).join(" ") });
   }
   for (const t of all ?? terminals()) {

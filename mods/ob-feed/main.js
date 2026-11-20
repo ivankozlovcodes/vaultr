@@ -1,14 +1,13 @@
-// ob-feed: the ONE poller of sub-agent data. Runs the assembled provider scanner on every reachable machine
-// (one exec per machine at a time: exec("python3", ["-c", script, opts], { on })), merges the results and publishes
-// shared "ob.subagents" only when its content changed. Lives in the always-shown status
+// ob-feed: the ONE poller of sub-agent data. Scans every reachable machine via provider.scan(), merges the results
+// and publishes shared "ob.subagents" only when its content changed. Lives in the always-shown status
 // row, so it is alive whenever the layout is. Draws the status-bar segment: live sub-agent count, a
 // warning per machine that couldn't be scanned (tooltip says why); click opens Outline.
 //
 // Commands (ob-feed.<cmd>):
-//   refresh                 scan every machine now
+//   refresh                 scan every machine now (after dropping provider cache)
 //   refresh:<machine|local> scan one machine now
-//   fixture:<dir>           TEST HOOK: also read pi-subagents runs from <dir> on this computer (a folder
-//                           laid out like <tmp>/pi-subagents-uid-N/async-subagent-runs). In memory only:
+//   fixture:<dir>           TEST HOOK: also read async runs from <dir> on this computer (a folder
+//                           laid out like async-subagent-runs). In memory only:
 //                           gone on reload. `fixture:` (empty) turns it off.
 //
 // Cadence: ticks every second; a machine is scanned the first time, on refresh, when any
@@ -19,17 +18,16 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { exec, machines, readTextFile, appHome, setShared, agents, nextCommand, settings, props, run, panes } from "herdr";
-import { S, tc, icon, statusMark, liveRecords, machineOf, addrOn, openView, subagentCounts, machineLabel, ago, feed, publishDue, tickerChips } from "./kit.js";
-import { loadProviders, assembleScanner } from "./provider.js";
+import { machines, setShared, agents, nextCommand, settings, props, run, panes } from "herdr";
+import { S, tc, icon, statusMark, liveRecords, machineOf, addrOn, openView, subagentCounts, machineLabel, ago, feed, provider, publishDue, tickerChips } from "./kit.js";
 import { mainAgentAt } from "./ticker_at.js";
 
-const FAST = 2000;      // a machine with live runs or live claude records
+const FAST = 2000;      // a machine with live runs or live records
 const SLOW = 15000;     // otherwise
 const RETRY = 60000;    // after a failed scan
 const MIN_PUBLISH = 1000; // never write shared.json more than once a second
 const KEEP_DETAIL = 6;  // finished runs that keep their tools/output lines in the payload
-const OPT = { maxAgeH: 48, limit: 40, claude: true };
+const OPT = { maxAgeH: 48, limit: 40 };
 
 const mkey = (m) => m ?? "local";
 const str = (v, n = 400) => (typeof v === "string" ? (v.length > n ? v.slice(0, n - 1) + "…" : v) : null);
@@ -39,8 +37,8 @@ const arr = (v) => (Array.isArray(v) ? v : []);
 const TOUCH_OPS = ["read", "edit", "write", "create", "publish"];
 const TOUCH_TOTAL = 400;
 
-// A scanner key to the graph's node key: term:<terminal> (a main agent's pane), a:<id> (a Claude sub-agent, c:<key>),
-// r:<id> (a pi run, r:<key>), with the machine as ob-feed keys them.
+// A scanner key to the graph's node key: term:<terminal> (a main agent's pane), a:<id> (a sub-agent, c:<key>),
+// r:<id> (a run, r:<key>), with the machine as ob-feed keys them.
 function touchKey(key, k, m) {
   const i = key.indexOf(":");
   const kind = key.slice(0, i), id = key.slice(i + 1);
@@ -84,16 +82,12 @@ export default class Feed extends View {
     this.beatAt = 0;
     this.pending = false;
     this.fixture = null;
-    this.script = null;
     this.providers = {};
+    this.ready = false;
     this.scriptError = null;
     this.w = 0;
     if (this.role === "draw") return;
-    cx.spawn(async (cx) => {
-      await this.loadScript();
-      this.tick(cx, true);
-      cx.notify();
-    });
+    this.tick(cx, true);
     cx.timer.every(1000, (cx) => this.tick(cx, false));
     cx.spawn(async (cx) => {
       for (;;) {
@@ -104,33 +98,10 @@ export default class Feed extends View {
     });
   }
 
-  async loadScript() {
-    try {
-      const providersDir = `${appHome()}/mods/ob-feed/providers`;
-      const [scanCore, providers] = await Promise.all([
-        readTextFile(`${providersDir}/scan_core.py`).catch(() => null),
-        loadProviders({ readTextFile, providersDir, needScan: true, needManifest: true }),
-      ]);
-      if (!scanCore) { this.script = null; this.scriptError = "scan_core.py is missing"; return null; }
-      if (!providers.length) { this.script = null; this.scriptError = "no agent providers found"; return null; }
-      this.providers = Object.fromEntries(providers.map((p) => [p.id, p.manifest]));
-      this.script = assembleScanner(scanCore, providers);
-      this.scriptError = null;
-      return this.script;
-    } catch (e) {
-      this.script = null;
-      this.scriptError = `providers: ${e?.message ?? e}`;
-      return null;
-    }
-  }
-
   command(c, cx) {
     if (c === "refresh") {
-      cx.spawn(async (cx) => {
-        await this.loadScript();
-        this.tick(cx, true);
-        cx.notify();
-      });
+      provider.dropCache();
+      this.tick(cx, true);
     } else if (c.startsWith("refresh:")) { const m = c.slice(8); this.scan(m === "local" || m === "" ? null : m, cx); }
     else if (c.startsWith("fixture:")) {
       const dir = c.slice(8).trim();
@@ -151,12 +122,11 @@ export default class Feed extends View {
     const r = this.res[mkey(m)];
     if (!r || r.stale) return true;
     if (!r.ok) return now - r.at > RETRY;
-    const live = (r.data?.runs ?? []).some((x) => x.live) || [...liveRecords().keys()].some((a) => machineOf(a) === m);
+    const live = Boolean(r.hasLive) || [...liveRecords().keys()].some((a) => machineOf(a) === m);
     return now - r.at > (live ? FAST : SLOW);
   }
 
   tick(cx, all) {
-    if (!this.script) return;
     // Agent status changes (a turn ended, a sub-agent started) are a reason to look now.
     const sig = agents().map((a) => `${a.address}:${a.status}`).join(",") + "|" + [...liveRecords().entries()].map(([a, r]) => a + Object.keys(r).join("+")).join(",");
     const kick = sig !== this.sig;
@@ -176,25 +146,31 @@ export default class Feed extends View {
       }
       if (all || kick || this.due(m.name, now)) this.scan(m.name, cx);
     }
-    if (changed || this.pending || publishDue({ same: true, now, beatAt: this.beatAt })) this.publish(cx);
+    if (this.ready && (changed || this.pending || publishDue({ same: true, now, beatAt: this.beatAt }))) this.publish(cx);
   }
 
   scan(m, cx) {
     const k = mkey(m);
-    if (this.busy.has(k) || !this.script) return;
+    if (this.busy.has(k)) return;
     this.busy.add(k);
-    const opts = JSON.stringify(m === null && this.fixture ? { ...OPT, extraRoots: [this.fixture] } : OPT);
+    const opts = m === null && this.fixture ? { ...OPT, extraRoots: [this.fixture] } : OPT;
     cx.spawn(async (cx) => {
-      const t0 = Date.now();
-      try {
-        const r = await exec("python3", ["-c", this.script, opts], { ...(m ? { on: m } : {}), timeout: 20000 });
-        const line = String(r.stdout ?? "").trim().split("\n").filter(Boolean).pop() ?? "";
-        if (r.code !== 0 || !line.startsWith("{")) throw new Error((r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop() || `exit ${r.code}`);
-        const data = JSON.parse(line);
-        if (!data || typeof data !== "object") throw new Error("scanner printed no object");
-        this.res[k] = { ok: true, at: Date.now(), ms: Date.now() - t0, error: data.errors?.length ? str(String(data.errors[0]), 200) : null, data, stale: false };
-      } catch (e) {
-        this.res[k] = { ok: false, at: Date.now(), ms: Date.now() - t0, error: str(String(e?.message ?? e), 200), data: this.res[k]?.data ?? null, stale: false };
+      const r = await provider.scan(m, opts);
+      if (!r.ok && r.reason === "missing") {
+        this.scriptError = r.error ?? "scanner is missing";
+        this.busy.delete(k);
+        cx.notify();
+        return;
+      }
+      this.ready = true;
+      if (r.ok) {
+        this.scriptError = null;
+        if (r.providers) this.providers = r.providers;
+        const data = r.data;
+        const hasLive = (data?.runs ?? []).some((x) => x?.live);
+        this.res[k] = { ok: true, at: Date.now(), ms: r.ms ?? 0, error: data.errors?.length ? str(String(data.errors[0]), 200) : null, data, hasLive, stale: false };
+      } else {
+        this.res[k] = { ok: false, at: Date.now(), ms: r.ms ?? 0, error: str(String(r.error ?? "scan failed"), 200), data: this.res[k]?.data ?? null, hasLive: false, stale: false };
       }
       this.busy.delete(k);
       try { this.publish(cx); } catch (e) { console.log(`ob-feed: publish failed: ${e}`); }
@@ -211,7 +187,7 @@ export default class Feed extends View {
       return;
     }
     this.pending = false;
-    const runs = [], claude = [], ms = {}, terms = {}, touches = {};
+    const runs = [], subagents = [], ms = {}, terms = {}, touches = {};
     for (const [k, r] of Object.entries(this.res)) {
       const m = k === "local" ? null : k;
       ms[k] = { ok: r.ok, at: r.at, ms: r.ms, error: r.error ?? null, ...(r.stale ? { stale: true } : {}) };
@@ -222,7 +198,7 @@ export default class Feed extends View {
         // A stale machine's runs can't be live as far as we know.
         const live = Boolean(x.live) && !r.stale;
         runs.push({
-          key: `${k}:${x.id}`, machine: m, id: x.id, short: x.id.slice(0, 8), mode: str(x.mode, 20), state: live || !x.live ? str(x.state, 20) ?? "unknown" : "unknown", live,
+          key: `${k}:${x.id}`, provider: str(x.provider, 20), machine: m, id: x.id, short: x.id.slice(0, 8), mode: str(x.mode, 20), state: live || !x.live ? str(x.state, 20) ?? "unknown" : "unknown", live,
           startedAt: num(x.startedAt), endedAt: num(x.endedAt), lastUpdate: num(x.lastUpdate), cwd: str(x.cwd, 600),
           parent: typeof x.term === "string" ? addrOn(m, x.term) : null, parentGuess: Boolean(x.termGuess), parentSession: str(x.parentSession, 600),
           tokens: num(x.tokens), cost: num(x.cost), turns: num(x.turns), toolCount: num(x.toolCount), error: str(x.error, 240), log: str(x.log, 600), dir: str(x.dir, 600),
@@ -238,11 +214,12 @@ export default class Feed extends View {
       for (const [term, info] of Object.entries(d.terms && typeof d.terms === "object" ? d.terms : {})) {
         if (!info || typeof info !== "object") continue;
         const addr = addrOn(m, term);
-        terms[addr] = { kind: str(info.kind, 20), pid: num(info.pid), cwd: str(info.cwd, 600), session: str(info.session, 600), sessionGuess: Boolean(info.guess), name: str(info.name, 120), transcript: str(info.transcript, 600), updatedAt: num(info.updatedAt),
+        const prov = str(info.provider, 20);
+        terms[addr] = { provider: prov, pid: num(info.pid), cwd: str(info.cwd, 600), session: str(info.session, 600), sessionGuess: Boolean(info.guess), name: str(info.name, 120), transcript: str(info.transcript, 600), updatedAt: num(info.updatedAt),
           lastTool: info.lastTool && typeof info.lastTool === "object" ? { tool: str(info.lastTool.tool, 40), args: str(info.lastTool.args, 40) } : null };
         for (const a of arr(info.agents)) {
           if (!a || typeof a.id !== "string") continue;
-          claude.push({ key: `${k}:${a.id}`, machine: m, parent: addr, id: a.id, type: str(a.type, 60), desc: str(a.desc, 160), model: str(a.model, 60),
+          subagents.push({ key: `${k}:${a.id}`, provider: str(a.provider, 20) ?? prov, machine: m, parent: addr, id: a.id, type: str(a.type, 60), desc: str(a.desc, 160), model: str(a.model, 60),
             updatedAt: num(a.updatedAt), lastTool: a.lastTool && typeof a.lastTool === "object" ? { tool: str(a.lastTool.tool, 40), args: str(a.lastTool.args, 120) } : null,
             outTokens: num(a.outTokens), toolCount: num(a.toolCount), turns: num(a.turns),
             live: Boolean(a.live) && !r.stale, ended: Boolean(a.ended), transcript: str(a.transcript, 600) });
@@ -251,7 +228,7 @@ export default class Feed extends View {
     }
     runs.sort((a, b) => (b.live - a.live) || ((b.lastUpdate ?? 0) - (a.lastUpdate ?? 0)));
     runs.forEach((r, i) => { if (!r.live && i >= KEEP_DETAIL) r.steps = r.steps.map((s) => ({ ...s, tools: s.tools.slice(-1), out: [] })); });
-    claude.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    subagents.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     // A run whose owner process is gone still belongs to the terminal now writing its parent session.
     for (const r of runs) {
       if (r.parent || !r.parentSession) continue;
@@ -263,10 +240,10 @@ export default class Feed extends View {
     all.sort((a, b) => (b.t.at ?? 0) - (a.t.at ?? 0));
     const kept = {};
     for (const { gk, t } of all.slice(0, TOUCH_TOTAL)) (kept[gk] ??= []).push(t);
-    const body = { v: 1, machines: ms, runs, claude: claude.slice(0, 60), terms, touches: kept, scriptError: this.scriptError };
+    const body = { v: 2, providers: this.providers ?? {}, machines: ms, runs, subagents: subagents.slice(0, 60), terms, touches: kept, scriptError: this.scriptError };
     // Compare without the timestamps that change on every scan. An unchanged payload is still published once a
     // beat (kit/feed_age.js), so `at` says the scanner is alive: consumers call the feed paused when it goes stale.
-    const sig = JSON.stringify({ runs, claude: body.claude, terms, touches: kept, scriptError: body.scriptError, ok: Object.fromEntries(Object.entries(ms).map(([k, v]) => [k, [v.ok, v.error, Boolean(v.stale)]])) });
+    const sig = JSON.stringify({ providers: body.providers, runs, subagents: body.subagents, terms, touches: kept, scriptError: body.scriptError, ok: Object.fromEntries(Object.entries(ms).map(([k, v]) => [k, [v.ok, v.error, Boolean(v.stale)]])) });
     const same = sig === this.last;
     if (!publishDue({ same, now, beatAt: this.beatAt })) return;
     this.last = sig;
@@ -275,26 +252,37 @@ export default class Feed extends View {
     setShared("ob.subagents", { ...body, at: now });
   }
 
-  // What the ticker can say: each running agent on this computer, with its latest action (kit/ticker.js). Pi runs
-  // and Claude subagents come from the feed; a main Claude agent is a working agent in a pane of its terminal.
+  // What the ticker can say: each running agent on this computer, with its latest action (kit/ticker.js).
+  // Reads only through provider.subagents() and provider.sessions().
   tickerItems() {
     const f = feed();
     const working = new Map(agents().filter((a) => a.status === "working").map((a) => [a.address, a]));
     const items = [];
-    for (const r of f?.runs ?? []) {
-      if (r.machine || !r.live) continue;
-      const step = (r.steps ?? []).at(-1);
-      items.push({ key: r.key, title: step?.label || step?.agent || "pi", live: true, at: r.lastUpdate ?? 0, turns: r.turns,
-        tool: step?.tools?.at(-1) ?? null, target: { kind: "outline", key: r.key } });
+    for (const sub of provider.subagents({ machine: null })) {
+      if (!sub.live) continue;
+      const p = provider.of(sub);
+      items.push({
+        key: sub.key,
+        title: sub.title || p?.noun || "Agent",
+        live: true,
+        at: sub.at ?? 0,
+        turns: sub.turns,
+        tool: sub.lastTool ?? null,
+        target: { kind: "outline", key: sub.key },
+      });
     }
-    for (const c of f?.claude ?? []) {
-      if (c.machine || !c.live) continue;
-      items.push({ key: c.key, title: c.desc || c.type || "Claude Code", live: true, at: c.updatedAt ?? 0, turns: c.turns,
-        tool: c.lastTool ?? null, target: { kind: "outline", key: c.key } });
-    }
-    for (const [addr, info] of Object.entries(f?.terms ?? {})) {
-      if (info?.kind !== "claude" || machineOf(addr) || !working.has(addr)) continue;
-      items.push({ key: `main:${addr}`, title: "Claude Code", live: true, at: mainAgentAt(info, f?.touches?.[`term:${addr}`], Date.now()), tool: info.lastTool ?? null, target: { kind: "pane", terminal: addr } });
+    for (const s of provider.sessions()) {
+      if (s.machine || !working.has(s.address)) continue;
+      const p = provider.of(s);
+      if (p ? !p.can("title") : !s.title) continue;
+      items.push({
+        key: `main:${s.address}`,
+        title: p?.name ?? "Agent",
+        live: true,
+        at: mainAgentAt(s, f?.touches?.[`term:${s.address}`], Date.now()),
+        tool: s.lastTool ?? null,
+        target: { kind: "pane", terminal: s.address },
+      });
     }
     return items;
   }

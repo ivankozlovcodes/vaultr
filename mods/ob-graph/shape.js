@@ -6,7 +6,7 @@
 // tab holds, so adding or closing a pane does not move the pane that stays.
 //
 // paneShape(tabId, panes): panes = [{ pane, label }] in order. Returns { nodes: [{ key, kind: "p", label, pane }],
-// edges: [[a, b, "sibling"]] }. Two panes with the same label get a number each ("Claude Code 1", "Claude Code 2").
+// edges: [[a, b, "sibling"]] }. Two panes with the same label get a number each ("Code agent 1", "Code agent 2").
 
 export function paneLabels(labels) {
   const base = labels.map((l) => (typeof l === "string" && l.trim() ? l.trim() : "Terminal"));

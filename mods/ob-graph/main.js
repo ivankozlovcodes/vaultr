@@ -1,5 +1,5 @@
 // ob-graph: the Graph panel of the Herdr world, drawn on Quartz's graph model (jackyzha0/quartz v4, MIT).
-// Nodes: machines, spaces, panes (terminals and mod panes) and sub-agents (runs, Claude agents, hc children). There is no
+// Nodes: machines, spaces, panes (terminals and mod panes) and sub-agents (runs, sub-agents, hc children). There is no
 // tab node: a pane links straight to its space, and the panes of one tab are joined by sibling links (shape.js), an
 // invisible spring that makes a tab read as a small cluster, like a folder in Obsidian's graph. Pane names: paneLabel
 // (kit/names.js). Edges: containment and sub-agent -> parent session links, both 1 px solid (Obsidian's one style).
@@ -23,7 +23,7 @@
 // Commands (ob-graph.<cmd>): fit, zoom-in, zoom-out, select:<key>, open:<key>, menu:<key>,
 //   mode:<local|global>, depth:<1|2|3>, labels:<on|off>, active:<on|off>, notes:<on|off>, artifacts:<on|off>,
 //   focus-on:<address>, bookmark:<key>, focus.
-// Node keys: m:<machine|local>, s:<spaceId>, p:<paneId>, r:<runKey>, c:<claudeKey>, h:<address>.
+// Node keys: m:<machine|local>, s:<spaceId>, p:<paneId>, r:<runKey>, c:<agentKey>, h:<address>.
 
 import { View, div, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -37,7 +37,7 @@ import { touchShape } from "./touch_shape.js";
 import { expandPath } from "./touches.js";
 import { activityOf, activeStatus } from "./agents.js";
 import { paneShape, placeSubs, editorArgv, toolbarRows, toolbarBottom, framePaint, dotTone, placeLabels, nextDepth } from "./shape.js";
-import { splitCmd, inspected, inspect, runTitle, claudeAll, recordRuns, hcChildren } from "./obc.js";
+import { splitCmd, inspected, inspect, runTitle, allSubagents, hcChildren } from "./obc.js";
 import {
   QUARTZ, createSim, sync, tick, wantsFrames, frameIntervalMs, anyPulsing, haloDrawAlpha, linkRestAlpha, drag, release,
   boundsOf, fitNow, autoFit as autoFitView, linkBatches,
@@ -178,9 +178,9 @@ export default class Graph extends View {
     const sub = (key, kind, label, status, live, parentAddr, machine, extra) =>
       subs.push({ key, parentAddr, machine, node: { key, kind, label, status, live, ...extra } });
     const f = feed();
-    for (const r of recordRuns()) sub(`r:${r.key}`, "r", `${runTitle(r)} · ${r.short}`, r.state, r.live, r.parent, r.machine, { run: r });
-    for (const r of f?.runs ?? []) sub(`r:${r.key}`, "r", `${runTitle(r)} · ${r.short}`, r.state, r.live, r.parent, r.machine, { run: r, feedAt: f.at });
-    for (const c of claudeAll()) sub(`c:${c.key}`, "c", c.desc || c.type || c.id, c.live ? (c.state === "blocked" ? "blocked" : "working") : "ok", c.live, c.parent, c.machine, { claude: c, feedAt: c.updatedAt != null ? f?.at : undefined });
+    const { runs, agents: subAgents } = allSubagents();
+    for (const r of runs) sub(`r:${r.key}`, "r", `${runTitle(r)} · ${r.short}`, r.state, r.live, r.parent, r.machine, r.pending ? { run: r } : { run: r, feedAt: f?.at });
+    for (const c of subAgents) sub(`c:${c.key}`, "c", c.desc || c.type || c.id, c.live ? (c.state === "blocked" ? "blocked" : "working") : "ok", c.live, c.parent, c.machine, { subagent: c, feedAt: c.updatedAt != null ? f?.at : undefined });
     for (const k of hcChildren(null)) {
       // An hc child is active by the status hc reports (working, blocked); no status, or an idle or done one, is not.
       const st = typeof k.status === "string" ? k.status : k.status?.state ?? null;
@@ -327,7 +327,7 @@ export default class Graph extends View {
     else if (n.kind === "s") run("space.select", { id: n.space.id });
     else if (n.kind === "p") reveal({ space: n.space.id, tab: n.tab.id, pane: n.pane.pane });
     else if (n.kind === "r") openView("ob-outline", `run:${n.run.key}`);
-    else if (n.kind === "c") openView("ob-outline", `run:${n.claude.key}`);
+    else if (n.kind === "c") openView("ob-outline", `run:${n.subagent.key}`);
     else if (n.kind === "h") run("terminal.peek", { terminal: n.address });
     else if (n.kind === "n") this.openNote(n);
     else if (n.kind === "a") this.openArtifact(n);
@@ -372,7 +372,7 @@ export default class Graph extends View {
   menu(key) {
     const n = this.g?.nodes.get(key);
     if (!n) return;
-    const addr = n.address ?? n.run?.parent ?? n.claude?.parent ?? null;
+    const addr = n.address ?? n.run?.parent ?? n.subagent?.parent ?? null;
     const bm = n.kind === "s" ? ["space", n.space.id] : n.kind === "p" && n.address ? ["terminal", n.address] : n.kind === "r" ? ["run", n.run.key] : null;
     openMenu([
       { label: n.kind === "r" || n.kind === "c" ? "Open in Outline" : n.kind === "h" ? "Peek" : n.kind === "n" ? "Open note" : n.kind === "a" ? "Open" : "Reveal", icon: "locate", command: `ob-graph.open:${key}` },

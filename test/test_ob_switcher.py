@@ -371,7 +371,7 @@ class SessionTitles(unittest.TestCase):
         r = run_titles('const tabOf = new Map([["t-1", "tab-1"], ["t-2", "tab-1"]]);'
                        'return T.sessionTitles(tabOf, { agents: [{ address: "t-1", title: "herdr-trials" }],'
                        ' terminals: [{ address: "t-2", title: "herdr-trials", name: "pi notes" }],'
-                       ' terms: { "t-1": { name: "herdr-trials" } } }).get("tab-1");')
+                       ' sessions: [{ address: "t-1", title: "herdr-trials" }] }).get("tab-1");')
         self.assertEqual(sorted(r), ["herdr-trials", "pi notes"])
 
     def test_blank_titles_and_unplaced_terminals_are_left_out(self):
@@ -497,6 +497,7 @@ class OverlayKeyContext(unittest.TestCase):
                 + "export const bookmarks = () => [];\n"
                 + "export const current = () => ({});\n"
                 + "export const chordParts = () => ['Ctrl'];\n"
+                + "export const provider = { sessions: () => [], subagents: () => [], of: () => null, session: () => null };\n"
                 + "".join(f"export const {n} = () => null;\n" for n in kit_fns if n not in ("tc", "bookmarks", "current", "chordParts")),
                 encoding="utf-8",
             )

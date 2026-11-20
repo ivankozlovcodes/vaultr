@@ -126,7 +126,7 @@ def run_main(body, titles=None):
                      "statusMark", "needsYou", "normStatus", "takeFocus", "machineOf", "isBookmarked", "toggleBookmark",
                      "mainAgents", "placedTerminals", "normHidden", "isMachineHidden", "isSpaceHidden", "isTabHidden",
                      "getHidden", "isHidden", "hideItem", "unhideItem", "hiddenSummary",
-                     "agentAttention", "attentionRank", "attentionCounts", "isNeedsYou", "isDismissed", "dismissStamp",
+                     "agentAttention", "effectiveStatus", "attentionRank", "attentionCounts", "isNeedsYou", "isDismissed", "dismissStamp",
                      "getDismissed", "setDismissed", "pruneDismissedNow", "terminalsByAddress", "hasMod",
                      "dismissedSet", "needsYouShown", "dismissNeedsYou", "restoreNeedsYou", "pruneDismissed"]
         Path(folder, "kit.js").write_text(

@@ -2,7 +2,7 @@
 // it). No Herdr or gpui imports, so test/test_ticker.py runs it under node.
 //
 // An item is a live agent: { key, title, live, at, tool: { tool, args } | null, turns, target }. The chip says
-// the title and the latest action: "Claude Code · Edit main.js", "Fix hotkeys · Bash: python3 …", "pi · turn 12".
+// the title and the latest action: "Code agent · Edit main.js", "Fix hotkeys · Run: script …", "Agent · turn 12".
 // Arguments come from the scanner already brief; they are cut to ARG_MAX again here. Output is never an input.
 
 export const TICKER_MAX = 3;   // chips at most

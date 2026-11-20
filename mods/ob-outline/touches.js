@@ -4,7 +4,7 @@
 // each one is:
 //   note      a .md file inside the vault: title = its file name without .md, rel = its vault-relative path
 //   artifact  a herdr-artifact publication, or a file written or created outside the vault (not the agents' own state,
-//             which includes Claude's /tmp/claude-<uid>/ scratch folders)
+//             which includes per-user scratch folders in /tmp)
 //   null      nothing to show: reads and edits outside the vault, attachments in the vault, a vault path in a danger
 //             or hidden folder (the vault's rule: danger/ holds credentials; .obsidian, .git, .trash are the app's),
 //             and any note of a remote machine (its paths are not this vault's)
@@ -13,10 +13,10 @@
 const ABSOLUTE = /^([A-Za-z]:[\\/]|\/|\\\\)/;
 export const OP_LIST = ["read", "edit", "write", "create", "publish"];
 const WRITES = new Set(["write", "create"]);
-// The agents' and Herdr's own state under home: a write there is never an artifact the person made.
-const OWN_STATE = [".claude", ".pi", ".herdr", ".config/herdr-app", ".local/share/shepherdr"];
-// Claude Code's per-user scratch folders (/tmp/claude-<uid>/, /private/tmp on macOS): agent state too.
-const OWN_TMP = /^(\/private)?\/tmp\/claude-\d+\//;
+// The agents' and Herdr's own state under home: dot-directories (~/.<dir>/...) and Herdr paths are never project artifacts.
+const OWN_STATE = [".herdr", ".config/herdr-app", ".local/share/shepherdr"];
+// Agent per-user scratch folders (/tmp/<name>-<uid>/, /private/tmp on macOS): agent state too.
+const OWN_TMP = /^(\/private)?\/tmp\/[a-z0-9_-]+-\d+\//i;
 
 // A full path with ~ expanded and trailing slashes dropped; null for a relative or empty one (obsidian/config.js's rule).
 export function expandPath(p, home) {
@@ -45,6 +45,7 @@ export function hiddenOrDanger(rel) {
 function ownState(path, home) {
   if (OWN_TMP.test(path)) return true;
   if (!home) return false;
+  if (path.startsWith(`${home}/.`)) return true;
   return OWN_STATE.some((d) => path === `${home}/${d}` || path.startsWith(`${home}/${d}/`));
 }
 

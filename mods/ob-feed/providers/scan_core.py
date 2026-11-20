@@ -410,12 +410,16 @@ def run_scanner_main():
     procs = discover_procs()
     all_runs = []
     for p in PROVIDERS:
+        pid_id = p["id"]
         fn = p.get("runs")
         if fn:
             try:
                 res = fn(procs)
                 if isinstance(res, list):
-                    all_runs.extend(res)
+                    for r in res:
+                        if isinstance(r, dict):
+                            r.setdefault("provider", pid_id)
+                            all_runs.append(r)
             except Exception as e:
                 ERRORS.append(f"runs: {e}")
 
@@ -434,6 +438,12 @@ def run_scanner_main():
                     for entry in res.values():
                         if isinstance(entry, dict) and entry.get("session") and not entry.get("agents"):
                             entry["agents"] = sub_fn(entry)
+                for entry in res.values():
+                    if isinstance(entry, dict):
+                        entry.setdefault("provider", pid_id)
+                        for a in entry.get("agents") or []:
+                            if isinstance(a, dict):
+                                a.setdefault("provider", pid_id)
                 terms.update(res)
         except Exception as e:
             ERRORS.append(f"{pid_id}: {e}")

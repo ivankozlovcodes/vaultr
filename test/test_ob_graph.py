@@ -1608,6 +1608,8 @@ def run_obc(body):
     with tempfile.TemporaryDirectory(prefix="ob-graph-obc-") as folder:
         src = OBC.read_text(encoding="utf-8").replace('from "herdr"', 'from "./herdr.js"')
         Path(folder, "obc.js").write_text(src, encoding="utf-8")
+        for kname in ("provider.js", "fuzzy.js"):
+            shutil.copy(Path(ROOT, "kit", kname), Path(folder, kname))
         Path(folder, "herdr.js").write_text(
             "const st = { terminals: [], agents: [], panes: [], spaces: [], focused: null, shared: {} };\n"
             "export const __set = (patch) => Object.assign(st, patch);\n"
@@ -1627,12 +1629,14 @@ def run_obc(body):
                "parentAddrOf", "isChildTerminalOf", "getHidden", "updateHidden", "patchHidden", "normHidden", "isSpaceHidden", "isTabHidden"]
         Path(folder, "kit.js").write_text(
             f"export {{ followTarget }} from {json.dumps(FOLLOW.as_uri())};\n"
+            'import { makeProvider } from "./provider.js";\n'
             'export const MOD = "ob-graph";\n'
             "const st = { feed: null, records: {} };\n"
             "export const __setKit = (patch) => Object.assign(st, patch);\n"
             + "".join(f"export const {n} = () => null;\n" for n in kit)
             + "export const feed = () => st.feed;\n"
-            + "export const liveRecords = () => new Map(Object.entries(st.records));\n",
+            + "export const liveRecords = () => new Map(Object.entries(st.records));\n"
+            + 'export const provider = makeProvider({ feed, exec: async () => ({ code: 1 }), readTextFile: async () => null, appHome: () => "/tmp" });\n',
             encoding="utf-8",
         )
         code = (
@@ -1674,10 +1678,14 @@ class GraphObc(unittest.TestCase):
     def test_claude_all_keeps_live_scan_entry_when_record_is_not_working(self):
         r = run_obc("""
             K.__setKit({
-              feed: { claude: [{ key: "local:a1", machine: null, parent: "t2", id: "a1", type: "Explore", desc: "look", live: true }] },
+              feed: {
+                v: 2,
+                providers: { claude: { id: "claude", name: "Claude Code", noun: "Claude agent", caps: ["title", "subagents"] } },
+                subagents: [{ key: "local:a1", machine: null, parent: "t2", provider: "claude", id: "a1", type: "Explore", desc: "look", live: true }],
+              },
               records: { t2: { a1: { state: "done" } } },
             });
-            return O.claudeAll().map((c) => ({ id: c.id, live: c.live, state: c.state }));
+            return O.allSubagents().agents.map((c) => ({ id: c.id, live: c.live, state: c.state }));
         """)
         self.assertEqual(r, [{"id": "a1", "live": True, "state": "done"}])
 

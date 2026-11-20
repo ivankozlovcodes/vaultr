@@ -78,3 +78,46 @@ export function pruneDismissed(raw, current) {
   for (const [k, v] of Object.entries(norm)) if (now.get(k) === v) out[k] = v;
   return out;
 }
+
+const matchSubagent = (sub, address, id) => {
+  if (!sub || (address && sub.parent !== address) || sub.id == null) return false;
+  const sid = String(id), cid = String(sub.id);
+  if (cid === sid || sid.endsWith("/" + cid) || cid.endsWith("/" + sid)) return true;
+  const m = /^subagents\/([0-9a-f]{12})(?:\.|$)/i.exec(sid);
+  return Boolean(m && cid.replace(/-/g, "").toLowerCase().startsWith(m[1].toLowerCase()));
+};
+
+// True while a terminal sub-agent record is active: false when the terminal exited, the record is not working/blocked,
+// or the feed already marks that sub-agent ended.
+export function isRecordLive(address, id, rec, subagents = null, normFn = attentionWord, termLive = true) {
+  if (!termLive || !rec || typeof rec !== "object") return false;
+  const st = normFn(rec.state);
+  if (st !== "working" && st !== "blocked") return false;
+  if (Array.isArray(subagents) && id != null && String(id) !== "") {
+    const match = subagents.find((x) => matchSubagent(x, address, id));
+    if (match && match.ended === true) return false;
+  }
+  return true;
+}
+
+const EFF_RANK = { blocked: 4, failed: 3, working: 2, done: 1, idle: 0, ok: 0, stopped: -1 };
+
+// Effective status of a terminal/agent when its sub-agent records are still live: raises an idle/done/ok/null parent
+// to "working" or "blocked" while keeping "blocked"/"failed" on top.
+export function effectiveTermStatus(rawStatus, term, subagents = null, normFn = attentionWord) {
+  const recs = term?.records;
+  if (!recs || typeof recs !== "object") return rawStatus ?? null;
+  const termLive = !term.state || term.state === "live";
+  if (!termLive) return rawStatus ?? null;
+  const base = rawStatus ?? null;
+  const baseWord = base == null ? null : normFn(base);
+  let best = base;
+  let bestRank = baseWord == null ? -2 : (EFF_RANK[baseWord] ?? 0);
+  for (const [id, rec] of Object.entries(recs)) {
+    if (!isRecordLive(term.address, id, rec, subagents, normFn, termLive)) continue;
+    const st = normFn(rec.state);
+    const r = EFF_RANK[st] ?? -2;
+    if (r > bestRank) { bestRank = r; best = st; }
+  }
+  return best;
+}
