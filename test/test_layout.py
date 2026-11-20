@@ -169,15 +169,28 @@ class Layout(unittest.TestCase):
                 active = next(c for c in stack["children"] if c["id"] == stack["active"])
                 self.assertEqual(active["content"]["mod"], opens, stack["id"])
 
-    def test_feed_scanner_sits_where_no_toggle_hides(self):
-        # ob-feed polls the sub-agents. Its scanner copy (props role "scan") must stay mounted through Zen and the
-        # side toggles, so its block and every ancestor must be outside the hideable set.
-        scanners = [n for n in walk(self.layout) if (n.get("content") or {}).get("mod") == "ob-feed"
-                    and (n.get("content") or {}).get("props", {}).get("role") == "scan"]
-        self.assertEqual(len(scanners), 1, "exactly one scanner copy of ob-feed")
-        chain = ancestors(self.layout, scanners[0])
-        self.assertIsNotNone(chain)
-        self.assertEqual(sorted(set(chain + [scanners[0]["id"]]) & hideable_ids()), [])
+    def test_always_running_blocks_stay_visible_and_are_explicit(self):
+        # Every 0 px block keeps a script instance and its timers alive for the whole session:
+        #   ob-feed-scan: polls agent sessions, runs, subagents, and touches on a 1s tick (2s live, 15s idle, 60s retry).
+        expected_ids = {"ob-feed-scan"}
+        zero_px_blocks = [
+            n for n in walk(self.layout)
+            if n.get("type") == "block"
+            and isinstance((n.get("size") or {}).get("px"), (int, float))
+            and not isinstance((n.get("size") or {}).get("px"), bool)
+            and (n.get("size") or {}).get("px") == 0
+        ]
+        hideable = hideable_ids()
+        for b in zero_px_blocks:
+            chain = ancestors(self.layout, b)
+            self.assertIsNotNone(chain, b.get("id"))
+            self.assertEqual(sorted(set(chain + [b["id"]]) & hideable), [], b.get("id"))
+        self.assertEqual(
+            {b["id"] for b in zero_px_blocks},
+            expected_ids,
+            "Each 0 px block keeps a script instance and its timers alive for the whole session, "
+            "so each one must be added to this set on purpose with what it polls and how often.",
+        )
 
     def test_status_row_only_mounts_status_and_feed_only_scans(self):
         self.assertEqual([c["id"] for c in find(self.layout, "ob-statusrow")["children"]], ["ob-status"])
