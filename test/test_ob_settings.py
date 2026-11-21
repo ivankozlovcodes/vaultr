@@ -541,6 +541,10 @@ class SettingsOverlayKeys(unittest.TestCase):
                 el_stub + "export const render = () => proxyEl();\n",
                 encoding="utf-8",
             )
+            Path(folder, "feedback.js").write_text(
+                el_stub + "export const render = () => proxyEl();\n",
+                encoding="utf-8",
+            )
             Path(folder, "hotkeys.js").write_text(
                 el_stub
                 + "export const presses = [];\n"
@@ -608,3 +612,206 @@ class SettingsOverlayKeys(unittest.TestCase):
             self.assertIsNone(got["pendingAfterSecond"])
             self.assertEqual(got["closedFinal"], ["st-ov"])
             self.assertGreaterEqual(got["notifies"], 2)
+
+
+FEEDBACK_RULES = os.path.join(ROOT, "mods", "ob-settings", "feedback_rules.js")
+FEEDBACK_TAB = os.path.join(ROOT, "mods", "ob-settings", "feedback.js")
+SETTINGS_MAIN = os.path.join(ROOT, "mods", "ob-settings", "main.js")
+
+
+def fb_rules(fn, *args):
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node is not installed")
+    code = (f"import * as m from {json.dumps(FEEDBACK_RULES)};"
+            "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{"
+            "const a=JSON.parse(s);const r=m[a.fn](...a.args);process.stdout.write(JSON.stringify(r===undefined?null:r));});")
+    res = subprocess.run([node, "--input-type=module", "-e", code], input=json.dumps({"fn": fn, "args": list(args)}),
+                         capture_output=True, text=True, timeout=60)
+    if res.returncode != 0:
+        raise AssertionError(f"node failed:\n{res.stderr}")
+    return json.loads(res.stdout)
+
+
+class FeedbackRules(unittest.TestCase):
+    def test_expand_feedback_path_handles_tilde_unix_windows_and_relative(self):
+        self.assertIsNone(fb_rules("expandFeedbackPath", "", "/srv/u"))
+        self.assertIsNone(fb_rules("expandFeedbackPath", "   ", "/srv/u"))
+        self.assertIsNone(fb_rules("expandFeedbackPath", "relative/dir", "/srv/u"))
+        self.assertIsNone(fb_rules("expandFeedbackPath", "./local", "/srv/u"))
+        self.assertEqual(fb_rules("expandFeedbackPath", "~", "/srv/u"), "/srv/u")
+        self.assertEqual(fb_rules("expandFeedbackPath", "~/", "/srv/u"), "/srv/u")
+        self.assertEqual(fb_rules("expandFeedbackPath", "~/Feedback/vaultr/", "/srv/u"), "/srv/u/Feedback/vaultr")
+        self.assertEqual(fb_rules("expandFeedbackPath", "/", "/srv/u"), "/")
+        self.assertEqual(fb_rules("expandFeedbackPath", "/var/tmp/fb///", "/srv/u"), "/var/tmp/fb")
+        self.assertEqual(fb_rules("expandFeedbackPath", "C:\\", "/srv/u"), "C:\\")
+        self.assertEqual(fb_rules("expandFeedbackPath", "C:\\Feedback\\vaultr\\\\", "/srv/u"), "C:\\Feedback\\vaultr")
+        self.assertEqual(fb_rules("expandFeedbackPath", "\\\\server\\share\\", "/srv/u"), "\\\\server\\share")
+
+    def test_parse_feedback_folder_accepts_full_or_empty_and_rejects_relative(self):
+        self.assertEqual(fb_rules("parseFeedbackFolder", "   "), {"value": None})
+        self.assertEqual(fb_rules("parseFeedbackFolder", "~/Feedback/vaultr"), {"value": "~/Feedback/vaultr"})
+        self.assertEqual(fb_rules("parseFeedbackFolder", "/var/tmp/feedback"), {"value": "/var/tmp/feedback"})
+        err = fb_rules("parseFeedbackFolder", "feedback/rel")
+        self.assertIn("error", err)
+        self.assertIn("full path", err["error"])
+
+    def test_merge_feedback_own_preserves_other_keys_and_deletes_on_null(self):
+        own = {"folder": "~/Feedback/vaultr", "other": 42}
+        self.assertEqual(fb_rules("mergeFeedbackOwn", own, "/tmp/fb"), {"folder": "/tmp/fb", "other": 42})
+        self.assertEqual(fb_rules("mergeFeedbackOwn", own, None), {"other": 42})
+        self.assertEqual(fb_rules("mergeFeedbackOwn", "bad", "/tmp/fb"), {"folder": "/tmp/fb"})
+        self.assertEqual(own, {"folder": "~/Feedback/vaultr", "other": 42})
+
+
+class FeedbackTabWiring(unittest.TestCase):
+    def test_feedback_tab_uses_portable_fs_and_feedback_json(self):
+        src = Path(FEEDBACK_TAB).read_text(encoding="utf-8")
+        for needle in ("feedback.json", "pickFolder(", "ensureDir(", "fs.unlink(", "writeTextFile(", "checking()"):
+            self.assertIn(needle, src)
+        for forbidden in ("fs.mkdir", "fs.writeFile", "fs.readdir", "fs.readFile", "fs.stat", "fs.access", "fs.copyFile", "fs.rm", "fs.exists"):
+            self.assertNotIn(forbidden, src)
+
+    def test_settings_tabs_place_feedback_between_vault_and_hotkeys(self):
+        src = Path(SETTINGS_MAIN).read_text(encoding="utf-8")
+        self.assertIn('import * as feedback from "./feedback.js";', src)
+        vault_at = src.index('id: "vault"')
+        fb_at = src.index('id: "feedback"')
+        hk_at = src.index('id: "hotkeys"')
+        self.assertLess(vault_at, fb_at)
+        self.assertLess(fb_at, hk_at)
+        self.assertIn('icon: "square-pen"', src)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_feedback_tab_browse_save_and_clear_lifecycle(self):
+        node = shutil.which("node")
+        with tempfile.TemporaryDirectory(prefix="ob-fb-tab-") as tmp:
+            home_dir = Path(tmp, "userdir")
+            app_dir = Path(tmp, "app")
+            chosen_dir = Path(home_dir, "Feedback", "picked")
+            outside_dir = Path(tmp, "outside-feedback")
+            home_dir.mkdir()
+            app_dir.mkdir()
+            Path(app_dir, "feedback.json").write_text('{"keep": 1}\n', encoding="utf-8")
+            mod_dir = Path(tmp, "mod")
+            mod_dir.mkdir()
+            shutil.copy(FEEDBACK_RULES, mod_dir / "feedback_rules.js")
+            src = Path(FEEDBACK_TAB).read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "fs/promises"', 'from "./fs-sandbox.js"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            (mod_dir / "feedback.js").write_text(src, encoding="utf-8")
+            (mod_dir / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            # Enforce Herdr's real gpui-kit fs/promises sandbox: synchronous throws outside roots.
+            (mod_dir / "fs-sandbox.js").write_text(
+                'import * as nodeFs from "node:fs/promises";\n'
+                'import * as nodePath from "node:path";\n'
+                f"const READ_ROOTS = [{json.dumps(str(home_dir))}];\n"
+                f"const WRITE_ROOTS = [{json.dumps(str(app_dir))}];\n"
+                "function assertUnder(roots, p, op) {\n"
+                "  const norm = nodePath.resolve(String(p));\n"
+                "  for (const r of roots) {\n"
+                "    const base = nodePath.resolve(String(r));\n"
+                "    if (norm === base || norm.startsWith(base + nodePath.sep)) return;\n"
+                "  }\n"
+                "  throw new Error(`OutsideRoots (${op}): ${norm}`);\n"
+                "}\n"
+                "export function mkdir(p, opts) { assertUnder(WRITE_ROOTS, p, 'mkdir'); return nodeFs.mkdir(p, opts); }\n"
+                "export function readFile(p, opts) { assertUnder(READ_ROOTS, p, 'readFile'); return nodeFs.readFile(p, opts); }\n"
+                "export function writeFile(p, data, opts) { assertUnder(WRITE_ROOTS, p, 'writeFile'); return nodeFs.writeFile(p, data, opts); }\n"
+                "export function readdir(p, opts) { assertUnder(READ_ROOTS, p, 'readdir'); return nodeFs.readdir(p, opts); }\n"
+                "export function unlink(p) { assertUnder(WRITE_ROOTS, p, 'unlink'); return nodeFs.unlink(p); }\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "gpui-kit.js").write_text(
+                "const el = () => new Proxy(() => el(), { get: () => el }); export const div = el;\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "gpui-base.js").write_text(
+                "const el = () => new Proxy(() => el(), { get: () => el });\n"
+                "export const h_flex = el, v_flex = el, Input = { new: () => el() };\n"
+                "export const InputState = { new: (o = {}) => { let val = o.value || ''; const h = {}; return { on: (e, fn) => { h[e] = fn; }, value: () => val, set_value: (v) => { val = v; }, focus: () => {}, triggerSubmit: (cx) => h.submit?.({}, cx) }; } };\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "kit.js").write_text(
+                "export const S = { text: 13, textSm: 12, textXs: 11, radius: 4, radiusLg: 6 };\n"
+                "export const alpha = () => '#000';\n"
+                f"export const tilde = (p) => p.startsWith({json.dumps(str(home_dir))} + '/') ? '~' + p.slice({len(str(home_dir))}) : p;\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "herdr.js").write_text(
+                'import * as fs from "node:fs/promises";\n'
+                'import * as fsSync from "node:fs";\n'
+                'import * as nodePath from "node:path";\n'
+                "export const execLog = [];\n"
+                f"export const home = () => {json.dumps(str(home_dir))};\n"
+                f"export const appHome = () => {json.dumps(str(app_dir))};\n"
+                "export const checking = () => false;\n"
+                "export const window = () => ({ platform: 'linux' });\n"
+                f"export const pickFolder = async () => {json.dumps(str(chosen_dir))};\n"
+                "export async function exec(cmd, args = []) {\n"
+                "  execLog.push([cmd, args]);\n"
+                "  if (cmd === 'mkdir' && args[0] === '-p' && args[1]) { fsSync.mkdirSync(args[1], { recursive: true }); return { code: 0, stdout: '', stderr: '' }; }\n"
+                "  return { code: 1, stdout: '', stderr: `unexpected cmd ${cmd}` };\n"
+                "}\n"
+                "export const readTextFile = async (p) => { try { return await fs.readFile(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };\n"
+                "export const writeTextFile = async (p, text, expected) => { await fs.mkdir(nodePath.dirname(p), { recursive: true }); const cur = await readTextFile(p); if (cur !== expected) throw new Error('stale'); await fs.writeFile(p, text, 'utf8'); return null; };\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import * as fb from "{(mod_dir / "feedback.js").as_uri()}";\n'
+                f'import {{ execLog }} from "{(mod_dir / "herdr.js").as_uri()}";\n'
+                "const tasks = [];\n"
+                "let notifies = 0;\n"
+                "const cx = { spawn: (fn) => { const p = fn(cx); tasks.push(p); return p; }, notify: () => { notifies++; } };\n"
+                "const host = { state: {} };\n"
+                "fb.init(host, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "fb.command(host, 'feedback-browse', '', cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "const afterBrowse = { val: host.state.feedback.input.value(), root: host.state.feedback.root, notice: host.state.feedback.notice };\n"
+                f"host.state.feedback.input.set_value({json.dumps(str(outside_dir))});\n"
+                "host.state.feedback.input.triggerSubmit(cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "const afterOutside = { root: host.state.feedback.root, notice: host.state.feedback.notice };\n"
+                "host.state.feedback.input.set_value('~/Feedback/typed');\n"
+                "host.state.feedback.input.triggerSubmit(cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "const afterSave = { root: host.state.feedback.root, notice: host.state.feedback.notice };\n"
+                "fb.command(host, 'feedback-clear', '', cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "console.log(JSON.stringify({ afterBrowse, afterOutside, afterSave, noticeAfterClear: host.state.feedback.notice, notifies, execLog }));\n"
+            )
+            res = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            got = json.loads(res.stdout)
+            self.assertEqual(got["afterBrowse"]["val"], "~/Feedback/picked")
+            self.assertEqual(got["afterBrowse"]["root"], str(chosen_dir))
+            self.assertEqual(got["afterBrowse"]["notice"]["level"], "ok")
+            self.assertTrue(chosen_dir.is_dir())
+            self.assertEqual(got["afterOutside"]["root"], str(outside_dir))
+            self.assertEqual(got["afterOutside"]["notice"]["level"], "ok")
+            self.assertTrue(outside_dir.is_dir())
+            self.assertEqual(got["afterSave"]["root"], str(home_dir / "Feedback" / "typed"))
+            self.assertTrue((home_dir / "Feedback" / "typed").is_dir())
+            self.assertEqual(got["noticeAfterClear"]["level"], "ok")
+            self.assertEqual(json.loads(Path(app_dir, "feedback.json").read_text(encoding="utf-8")), {"keep": 1})
+            # Also prove clearing the last key unlinks feedback.json inside app_dir cleanly under sandbox.
+            Path(app_dir, "feedback.json").write_text('{"folder": "~/Feedback/typed"}\n', encoding="utf-8")
+            code_unlink = (
+                f'import * as fb from "{(mod_dir / "feedback.js").as_uri()}";\n'
+                "const tasks = [];\n"
+                "const cx = { spawn: (fn) => { const p = fn(cx); tasks.push(p); return p; }, notify: () => {} };\n"
+                "const host = { state: {} };\n"
+                "fb.init(host, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "fb.command(host, 'feedback-clear', '', cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "console.log(JSON.stringify(host.state.feedback.notice));\n"
+            )
+            res2 = subprocess.run([node, "--input-type=module", "-e", code_unlink], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res2.returncode, 0, res2.stderr)
+            self.assertEqual(json.loads(res2.stdout)["level"], "ok")
+            self.assertFalse(Path(app_dir, "feedback.json").exists())

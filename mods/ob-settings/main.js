@@ -11,12 +11,13 @@
 // then add one entry to TABS below. `fill: true` lets the tab take the whole height and scroll itself.
 // host.state[<tab id>] is that tab's own state.
 //
-// Commands (ob-settings.<cmd>): tab:<id>  close  herdr, and the tabs' own (see hotkeys.js).
+// Commands (ob-settings.<cmd>): tab:<id>  close  herdr, and the tabs' own (hotkeys.js, feedback.js).
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { props, closeOverlay, nextCommand, run, shared, setShared, keys } from "herdr";
 import { S, tc, icon, iconButton } from "./kit.js";
 import * as vault from "./vault.js";
+import * as feedback from "./feedback.js";
 import * as hotkeys from "./hotkeys.js";
 
 const REQUEST = "ob-settings.tab";
@@ -29,6 +30,8 @@ const LAST_KEY = "tab";
 const TABS = [
   { id: "vault", title: "Vault", icon: "folder", mod: vault,
     about: "The Obsidian vault the notes panels use. Saved to obsidian.json in the Herdr app folder; the Notes panels pick it up within a few seconds." },
+  { id: "feedback", title: "Feedback", icon: "square-pen", mod: feedback,
+    about: "Where feedback bundles (Markdown note, window screenshot, UI tree, and diagnostic logs) are saved. Saved to feedback.json in the Herdr app folder." },
   { id: "hotkeys", title: "Hotkeys", icon: "keyboard", mod: hotkeys, fill: true,
     about: "Every command with its keys. Add a key with +, remove one with x. Changes are saved to keys.json at once." },
 ];
