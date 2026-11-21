@@ -1,7 +1,7 @@
 // ob-footer: the left sidebar's bottom row, Obsidian's vault switcher (40 px).
 // Left: the focused space's machine ("This computer") with a chevron; click opens the machine
 // menu: each machine with its connection dot (click: go to its first space) and "New space there",
-// then Add machine and Machines settings. Right: help, and the settings gear (opens ob-settings).
+// then Add machine and Machines settings. Right: feedback, help, and the settings gear (opens ob-settings).
 // Connection states come from `hc machine ls --json` (every 15 s) and machines() (live).
 // Commands (ob-footer.<cmd>): machines
 
@@ -98,6 +98,7 @@ export default class Footer extends View {
         .child(icon(m ? "server" : "monitor", S.iconSm, t.muted))
         .when(!rail, (e) => e.child(div().min_w(0).truncate().text_size(S.text).font_medium().text_color(t.foreground).child(machineLabel(m))))
         .when(state && state !== "ok", (e) => e.child(div().size(6).flex_none().rounded_full().bg(state === "login" ? t.blocked : state === "connecting" ? t.working : t.dim))))
+      .child(iconButton({ id: "feedback", icon: "square-pen", tip: tip("Submit feedback", "ob-tabs.feedback"), onClick: () => run("ob-tabs.feedback") }))
       .child(iconButton({ id: "help", icon: "help", tip: tip("Help", "app.help"), onClick: () => run("app.help") }))
       .child(iconButton({ id: "settings", icon: "settings", tip: tip("Settings", "mod.open:ob-settings"), onClick: () => run("mod.open", { name: "ob-settings" }) }));
   }

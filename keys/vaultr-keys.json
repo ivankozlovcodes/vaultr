@@ -27,7 +27,8 @@
     "ctrl-,": "mod.open:ob-settings",
     "ctrl-alt-t": "ob-tabs.tab-list",
     "ctrl-shift-z": "ob-tabs.zen",
-    "ctrl-alt-z": "ob-tabs.zen"
+    "ctrl-alt-z": "ob-tabs.zen",
+    "ctrl-alt-shift-f": "ob-tabs.feedback"
   },
   "mod:ob-sessions": {
     "f2": "ob-sessions.rename",

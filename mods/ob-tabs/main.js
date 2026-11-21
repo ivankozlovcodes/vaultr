@@ -11,7 +11,7 @@
 // Commands (ob-tabs.<cmd>):
 //   router (5.3): open:<child>[@intent]  toggle:<child>[@intent]  back  forward  last
 //                 switcher[:go|move|views|commands]  copy-path  copy-address  daily  bookmark[:<tabId>]
-//                 tab-list  new  settings[:<tab>] (ob-settings, on that tab if given)
+//                 tab-list  new  settings[:<tab>] (ob-settings, on that tab if given)  feedback
 //   tab bar:      menu:<tabId>  move-to:<tabId>  scroll:<-n|+n>
 //
 // History (shared "ob.history" = { entries: [{space, tab, pane, terminal, at}], index }): every
@@ -29,6 +29,7 @@ import { zenPlan } from "./zen.js";
 import { openPlan } from "./open.js";
 import { isSettingsOpen } from "./settings_open.js";
 import { detachItem } from "./detach.js";
+import { captureFeedbackState } from "./feedback_capture.js";
 import {
   S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
@@ -208,6 +209,7 @@ export default class Tabs extends View {
     if (verb === "tab-list") return this.tabList();
     if (verb === "new") return openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 });
     if (verb === "settings") return this.settings(arg);
+    if (verb === "feedback") return this.feedback();
     if (verb === "menu") { const t = this.findTab(arg); if (t) this.tabMenu(t.space, t.tab); return; }
     if (verb === "move-to") {
       const t = this.findTab(arg);
@@ -226,6 +228,15 @@ export default class Tabs extends View {
     if (tab) setShared("ob-settings.tab", tab);
     if (isSettingsOpen(shared("ob-settings.open"))) return;
     run("mod.open", { name: "ob-settings" });
+  }
+
+  async feedback() {
+    try {
+      const capture = await captureFeedbackState();
+      openOverlay({ mod: "ob-feedback", kind: "dialog", width: 680, height: 580, props: { capturedAt: capture.capturedAt } });
+    } catch (e) {
+      notify({ title: "Could not capture feedback", body: String(e?.message ?? e), level: "error", timeout: 4000 });
+    }
   }
 
   zen(mode) {

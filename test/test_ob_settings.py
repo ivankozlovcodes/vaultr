@@ -696,6 +696,12 @@ class FeedbackTabWiring(unittest.TestCase):
             mod_dir = Path(tmp, "mod")
             mod_dir.mkdir()
             shutil.copy(FEEDBACK_RULES, mod_dir / "feedback_rules.js")
+            bundle_copy = Path(FEEDBACK_RULES).parent / "feedback_bundle.js"
+            if bundle_copy.exists():
+                shutil.copy(bundle_copy, mod_dir / "feedback_bundle.js")
+            bundle_copy = Path(FEEDBACK_RULES).parent / "feedback_bundle.js"
+            if bundle_copy.exists():
+                shutil.copy(bundle_copy, mod_dir / "feedback_bundle.js")
             src = Path(FEEDBACK_TAB).read_text(encoding="utf-8")
             src = (src
                    .replace('from "gpui-kit"', 'from "./gpui-kit.js"')

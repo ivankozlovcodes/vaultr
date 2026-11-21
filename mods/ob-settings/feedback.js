@@ -8,6 +8,7 @@ import * as fs from "fs/promises";
 import { appHome, checking, exec, home, pickFolder, readTextFile, window as appWindow, writeTextFile } from "herdr";
 import { S, alpha, tilde } from "./kit.js";
 import { expandFeedbackPath, parseFeedbackFolder, mergeFeedbackOwn } from "./feedback_rules.js";
+import { ensureDir } from "./feedback_bundle.js";
 
 const FILE = () => `${appHome()}/feedback.json`;
 const KEY = "folder";
@@ -25,17 +26,6 @@ const shortPath = (p) => {
   const h = home();
   return h ? tilde(p) : p;
 };
-
-async function ensureDir(dir) {
-  if (platformOf() === "windows") {
-    const winDir = String(dir).replace(/\//g, "\\");
-    const r = await exec("cmd", ["/d", "/c", "if", "not", "exist", winDir, "mkdir", winDir], { timeout: 5000 });
-    if (r?.code !== 0) throw new Error(String(r?.stderr || r?.stdout || `mkdir exited ${r?.code ?? "?"}`).trim());
-    return;
-  }
-  const r = await exec("mkdir", ["-p", dir], { timeout: 5000 });
-  if (r?.code !== 0) throw new Error(String(r?.stderr || r?.stdout || `mkdir exited ${r?.code ?? "?"}`).trim());
-}
 
 // Reads feedback.json into st.own and st.root without overwriting what the user is typing.
 async function readOwn(host) {
@@ -79,7 +69,7 @@ async function write(host, value) {
       return;
     }
     try {
-      await ensureDir(abs);
+      await ensureDir(abs, exec, platformOf());
     } catch (e) {
       st.notice = { level: "error", text: `Could not create ${shortPath(abs)}: ${e?.message ?? e}` };
       return;

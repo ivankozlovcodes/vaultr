@@ -34,6 +34,8 @@ export const VAULTR_COMMANDS = [
   { route: "ob-tabs.toggle:ob-quotas", label: "Toggle Quotas", context: "Quotas: Toggle panel", words: "toggle quotas panel", icon: "coins" },
   { route: "ob-tabs.settings:hotkeys", label: "Open hotkeys", context: "Settings: Hotkeys", words: "hotkeys keyboard shortcuts keybindings", icon: "keyboard" },
   { route: "mod.open:ob-settings", label: "Open settings", context: "Settings: Vaultr settings", words: "settings preferences options", icon: "settings" },
+  { route: "ob-tabs.settings:feedback", label: "Open feedback settings", context: "Settings: Feedback folder", words: "feedback folder path settings", icon: "folder" },
+  { route: "ob-tabs.feedback", label: "Submit feedback", context: "Feedback: Save note, screenshot and logs", words: "feedback bug report screenshot logs diagnostics", icon: "square-pen" },
   { route: "ob-sessions.collapse-all", label: "Collapse all sessions", context: "Sessions: Collapse folders", words: "collapse all sessions folders", icon: "collapse-all" },
   { route: "ob-sessions.expand-all", label: "Expand all sessions", context: "Sessions: Expand folders", words: "expand all sessions folders", icon: "expand-all" },
   { route: "ob-feed.refresh", label: "Rescan sub-agents", context: "Sub-agents: Rescan sessions", words: "rescan refresh subagents feed", icon: "refresh" },
