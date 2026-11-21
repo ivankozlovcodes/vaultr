@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -131,7 +132,23 @@ class PaneLightsLeftPad(unittest.TestCase):
 class LightsWiring(unittest.TestCase):
     def test_kit_reexports_and_syncs_lights_module(self):
         self.assertIn('export { lightsLeftPad, paneLightsLeftPad } from "./lights.js";', read("kit", "kit.js"))
-        self.assertIn('"$KIT/lights.js"', read("kit", "sync.sh"))
+        want = read("kit", "lights.js")
+        mods_root = Path(ROOT, "mods")
+        targets = [d for d in sorted(mods_root.iterdir()) if d.is_dir() and d.name.startswith("ob-") and d.name != "ob-probe"]
+        self.assertTrue(targets)
+        for mod_dir in targets:
+            self.assertEqual((mod_dir / "lights.js").read_text(encoding="utf-8"), want, mod_dir.name)
+        with tempfile.TemporaryDirectory(prefix="lights-sync-") as home:
+            shutil.copytree(Path(ROOT, "kit"), Path(home, "kit"))
+            Path(home, "mods", "ob-sample").mkdir(parents=True)
+            Path(home, "mods", "ob-stale").mkdir(parents=True)
+            Path(home, "mods", "ob-stale", "lights.js").write_text("stale", encoding="utf-8")
+            Path(home, "mods", "ob-probe").mkdir(parents=True)
+            res = subprocess.run(["sh", Path(home, "kit", "sync.sh"), home], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            for name in ("ob-sample", "ob-stale"):
+                self.assertEqual(Path(home, "mods", name, "lights.js").read_text(encoding="utf-8"), want, name)
+            self.assertFalse(Path(home, "mods", "ob-probe", "lights.js").exists())
 
     def test_ob_strip_insets_top_left_bar(self):
         src = read("mods", "ob-strip", "main.js")

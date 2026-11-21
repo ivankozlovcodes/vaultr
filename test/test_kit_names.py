@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 ROOT = home_guard.ROOT
@@ -154,9 +155,33 @@ class Exports(unittest.TestCase):
         self.assertIn("cleanTitle", text)
 
     def test_sync_copies_names_js_into_every_mod(self):
-        with open(os.path.join(ROOT, "kit", "sync.sh"), encoding="utf-8") as f:
-            text = f.read()
-        self.assertIn("names.js", text)
+        with open(os.path.join(ROOT, "kit", "names.js"), encoding="utf-8") as f:
+            want = f.read()
+        mods_root = os.path.join(ROOT, "mods")
+        targets = [
+            name for name in sorted(os.listdir(mods_root))
+            if os.path.isdir(os.path.join(mods_root, name)) and name.startswith("ob-") and name != "ob-probe"
+        ]
+        self.assertTrue(targets)
+        for name in targets:
+            with open(os.path.join(mods_root, name, "names.js"), encoding="utf-8") as f:
+                self.assertEqual(f.read(), want, name)
+        with tempfile.TemporaryDirectory(prefix="names-sync-") as home:
+            shutil.copytree(os.path.join(ROOT, "kit"), os.path.join(home, "kit"))
+            os.makedirs(os.path.join(home, "mods", "ob-sample"))
+            os.makedirs(os.path.join(home, "mods", "ob-stale"))
+            with open(os.path.join(home, "mods", "ob-stale", "names.js"), "w", encoding="utf-8") as f:
+                f.write("stale")
+            os.makedirs(os.path.join(home, "mods", "ob-probe"))
+            res = subprocess.run(
+                ["sh", os.path.join(home, "kit", "sync.sh"), home],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            for name in ("ob-sample", "ob-stale"):
+                with open(os.path.join(home, "mods", name, "names.js"), encoding="utf-8") as f:
+                    self.assertEqual(f.read(), want, name)
+            self.assertFalse(os.path.exists(os.path.join(home, "mods", "ob-probe", "names.js")))
 
 
 @unittest.skipUnless(NODE, "node is not installed")

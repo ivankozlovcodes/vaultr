@@ -177,7 +177,23 @@ class KitWiring(unittest.TestCase):
         self.assertIn("export function updateDismissed(", self.kit)
 
     def test_sync_copies_the_module(self):
-        self.assertIn('"$KIT/attention.js"', read("kit", "sync.sh"))
+        want = read("kit", "attention.js")
+        mods_root = Path(ROOT, "mods")
+        targets = [d for d in sorted(mods_root.iterdir()) if d.is_dir() and d.name.startswith("ob-") and d.name != "ob-probe"]
+        self.assertTrue(targets)
+        for mod_dir in targets:
+            self.assertEqual((mod_dir / "attention.js").read_text(encoding="utf-8"), want, mod_dir.name)
+        with tempfile.TemporaryDirectory(prefix="att-sync-") as home:
+            shutil.copytree(KIT_DIR, Path(home, "kit"))
+            Path(home, "mods", "ob-sample").mkdir(parents=True)
+            Path(home, "mods", "ob-stale").mkdir(parents=True)
+            Path(home, "mods", "ob-stale", "attention.js").write_text("stale", encoding="utf-8")
+            Path(home, "mods", "ob-probe").mkdir(parents=True)
+            res = subprocess.run(["sh", Path(home, "kit", "sync.sh"), home], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(Path(home, "mods", "ob-sample", "attention.js").read_text(encoding="utf-8"), want)
+            self.assertEqual(Path(home, "mods", "ob-stale", "attention.js").read_text(encoding="utf-8"), want)
+            self.assertFalse(Path(home, "mods", "ob-probe", "attention.js").exists())
 
     def test_tab_and_space_attention_take_the_dismissals(self):
         self.assertIn("export function tabAttention(tab, ps, tmap = null, dis = null)", self.kit)

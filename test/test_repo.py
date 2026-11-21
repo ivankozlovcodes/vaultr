@@ -90,58 +90,106 @@ class Repo(unittest.TestCase):
                 for icon in re.findall(r'"(mods/[^"]+\.svg)"', json.dumps(data)):
                     self.assertTrue(os.path.isfile(os.path.join(ROOT, icon)), f"missing icon {icon}")
 
+    @staticmethod
+    def _tree_bytes(top):
+        out = {}
+        for d, dirs, files in os.walk(top):
+            dirs.sort()
+            for f in sorted(files):
+                p = os.path.join(d, f)
+                with open(p, "rb") as fh:
+                    out[os.path.relpath(p, top)] = fh.read()
+        return out
+
+    @staticmethod
+    def _mod_imports_obc(mod_dir, kit_names):
+        for d, dirs, files in os.walk(mod_dir):
+            dirs[:] = [x for x in dirs if x != "vendor"]
+            for f in files:
+                if not f.endswith((".js", ".mjs")):
+                    continue
+                if d == mod_dir and f in kit_names:
+                    continue
+                with open(os.path.join(d, f), encoding="utf-8") as fh:
+                    for line in fh:
+                        code = line.split("//", 1)[0]
+                        if re.search(r'(?:^|[^A-Za-z0-9_$])(?:from\s*|import\s+)["\']\./obc\.js["\']', code):
+                            return True
+        return False
+
     def test_kit_copies_match_kit(self):
-        # kit/sync.sh writes kit.js with its MOD name filled in, provider.js, agents.js, follow_target.js, fuzzy.js, and the icons: all byte-exact
-        kit = read("kit/kit.js")
-        icons = os.listdir(os.path.join(ROOT, "kit", "icons"))
+        # Running kit/sync.sh in a copy leaves nothing changed, and every ob-* mod holds the kit files the rule gives it.
+        kit_files = sorted(f for f in os.listdir(os.path.join(ROOT, "kit")) if f.endswith(".js"))
+        kit_names = set(kit_files)
+        icons = sorted(os.listdir(os.path.join(ROOT, "kit", "icons")))
+        self.assertTrue(kit_files)
         self.assertTrue(icons)
+        with tempfile.TemporaryDirectory(dir=home_guard.TMP) as tmp:
+            shutil.copytree(os.path.join(ROOT, "kit"), os.path.join(tmp, "kit"))
+            shutil.copytree(MODS, os.path.join(tmp, "mods"))
+            before = self._tree_bytes(os.path.join(tmp, "mods"))
+            res = subprocess.run(["sh", os.path.join(tmp, "kit", "sync.sh")], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, res.stderr or res.stdout)
+            after = self._tree_bytes(os.path.join(tmp, "mods"))
+            self.assertEqual(set(after), set(before), "run kit/sync.sh; never edit a mod's copy")
+            changed = [k for k in sorted(before) if after[k] != before[k]]
+            self.assertEqual(changed, [], f"run kit/sync.sh; never edit a mod's copy: {changed}")
+
+        kit = read("kit/kit.js")
         for m in OB_MODS:
+            if m == "ob-probe":
+                continue
+            mod_dir = os.path.join(MODS, m)
             with self.subTest(mod=m):
-                want = re.sub(r'(?m)^export const MOD = "__MOD__";',
-                              f'export const MOD = "{m}";', kit).encode("utf-8")
-                with open(os.path.join(MODS, m, "kit.js"), "rb") as f:
-                    self.assertEqual(f.read(), want, "run kit/sync.sh; never edit a mod's kit.js")
-                with open(os.path.join(ROOT, "kit", "agents.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "agents.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "agents.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "names.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "names.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "names.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "hidden.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "hidden.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "hidden.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "attention.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "attention.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "attention.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "follow_target.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "follow_target.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "follow_target.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "feed_age.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "feed_age.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "feed_age.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "ticker.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "ticker.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "ticker.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "fuzzy.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "fuzzy.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "fuzzy.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "touches.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "touches.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "touches.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "lights.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "lights.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "lights.js: run kit/sync.sh; never edit a mod's copy")
-                with open(os.path.join(ROOT, "kit", "provider.js"), "rb") as a, \
-                        open(os.path.join(MODS, m, "provider.js"), "rb") as b:
-                    self.assertEqual(a.read(), b.read(), "provider.js: run kit/sync.sh; never edit a mod's copy")
+                needs_obc = self._mod_imports_obc(mod_dir, kit_names)
+                for name in kit_files:
+                    copy_path = os.path.join(mod_dir, name)
+                    if name == "kit.js":
+                        want = re.sub(r'(?m)^export const MOD = "__MOD__";',
+                                      f'export const MOD = "{m}";', kit).encode("utf-8")
+                        with open(copy_path, "rb") as f:
+                            self.assertEqual(f.read(), want, "run kit/sync.sh; never edit a mod's kit.js")
+                    elif name == "obc.js":
+                        if needs_obc:
+                            with open(os.path.join(ROOT, "kit", name), "rb") as a, open(copy_path, "rb") as b:
+                                self.assertEqual(a.read(), b.read(), f"{m}/{name}: run kit/sync.sh; never edit a mod's copy")
+                        else:
+                            self.assertFalse(os.path.exists(copy_path), f"{m}/{name}: run kit/sync.sh; never edit a mod's copy")
+                    else:
+                        with open(os.path.join(ROOT, "kit", name), "rb") as a, open(copy_path, "rb") as b:
+                            self.assertEqual(a.read(), b.read(), f"{m}/{name}: run kit/sync.sh; never edit a mod's copy")
                 for name in icons:
                     with open(os.path.join(ROOT, "kit", "icons", name), "rb") as a, \
-                            open(os.path.join(MODS, m, "icons", name), "rb") as b:
-                        self.assertEqual(a.read(), b.read(), f"icons/{name}")
-        for m in ("ob-graph", "ob-outline", "ob-props"):
-            with open(os.path.join(ROOT, "kit", "obc.js"), "rb") as a, \
-                    open(os.path.join(MODS, m, "obc.js"), "rb") as b:
-                self.assertEqual(a.read(), b.read(), f"{m}/obc.js: run kit/sync.sh; never edit a mod's copy")
+                            open(os.path.join(mod_dir, "icons", name), "rb") as b:
+                        self.assertEqual(a.read(), b.read(), f"{m}/icons/{name}: run kit/sync.sh; never edit a mod's copy")
+
+    def test_sync_copies_new_modules_and_obc_by_rule(self):
+        with tempfile.TemporaryDirectory(dir=home_guard.TMP) as tmp:
+            kit_dir = Path(tmp, "kit")
+            icons_dir = kit_dir / "icons"
+            icons_dir.mkdir(parents=True)
+            shutil.copy(os.path.join(ROOT, "kit", "sync.sh"), kit_dir / "sync.sh")
+            (kit_dir / "kit.js").write_text('export const MOD = "__MOD__";\n', encoding="utf-8")
+            (kit_dir / "obc.js").write_text("export const x = 1;\n", encoding="utf-8")
+            (kit_dir / "extra.js").write_text("export const y = 2;\n", encoding="utf-8")
+            (icons_dir / "dot.svg").write_text("<svg/>\n", encoding="utf-8")
+
+            mods_dir = Path(tmp, "mods")
+            for name in ("ob-with-obc", "ob-plain", "ob-probe"):
+                (mods_dir / name).mkdir(parents=True)
+            (mods_dir / "ob-with-obc" / "main.js").write_text('import { x } from "./obc.js";\n', encoding="utf-8")
+            (mods_dir / "ob-plain" / "main.js").write_text('import { MOD } from "./kit.js";\n', encoding="utf-8")
+            (mods_dir / "ob-plain" / "obc.js").write_text("stale", encoding="utf-8")
+
+            res = subprocess.run(["sh", str(kit_dir / "sync.sh")], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, res.stderr or res.stdout)
+            self.assertEqual((mods_dir / "ob-with-obc" / "kit.js").read_text(encoding="utf-8"), 'export const MOD = "ob-with-obc";\n')
+            self.assertEqual((mods_dir / "ob-with-obc" / "obc.js").read_text(encoding="utf-8"), "export const x = 1;\n")
+            self.assertEqual((mods_dir / "ob-with-obc" / "extra.js").read_text(encoding="utf-8"), "export const y = 2;\n")
+            self.assertEqual((mods_dir / "ob-with-obc" / "icons" / "dot.svg").read_text(encoding="utf-8"), "<svg/>\n")
+            self.assertEqual((mods_dir / "ob-plain" / "extra.js").read_text(encoding="utf-8"), "export const y = 2;\n")
+            self.assertFalse((mods_dir / "ob-plain" / "obc.js").exists())
+            self.assertFalse((mods_dir / "ob-probe" / "kit.js").exists())
 
     def test_kit_imports_what_it_reexports_and_uses(self):
         # `export { x } from "./y.js"` does not bind x in kit.js: a kit function that calls x throws "x is not defined".
