@@ -150,5 +150,162 @@ class TabDetach(unittest.TestCase):
         self.assertTrue(Path(ROOT, "kit", "icons", "win-min.svg").is_file())
 
 
+OPEN = Path(ROOT, "mods", "ob-tabs", "open.js")
+
+
+def sample_layout(*, left_hidden=False, lt_hidden=False, lb_hidden=False, right_hidden=False,
+                  lt_active="ob-sessions", rb_active="ob-graph"):
+    return {
+        "id": "root",
+        "type": "row",
+        "children": [
+            {
+                "id": "ob-left",
+                "type": "column",
+                "hidden": left_hidden,
+                "children": [
+                    {
+                        "id": "ob-left-body",
+                        "type": "column",
+                        "children": [
+                            {
+                                "id": "ob-lt",
+                                "type": "column",
+                                "hidden": lt_hidden,
+                                "children": [
+                                    {
+                                        "id": "ob-lt-stack",
+                                        "type": "stack",
+                                        "active": lt_active,
+                                        "children": [
+                                            {"id": "ob-sessions", "type": "block"},
+                                            {"id": "ob-search", "type": "block"},
+                                        ],
+                                    },
+                                ],
+                            },
+                            {
+                                "id": "ob-lb-stack",
+                                "type": "stack",
+                                "hidden": lb_hidden,
+                                "active": "ob-agents",
+                                "children": [{"id": "ob-agents", "type": "block"}],
+                            },
+                        ],
+                    },
+                ],
+            },
+            {
+                "id": "ob-right",
+                "type": "column",
+                "hidden": right_hidden,
+                "children": [
+                    {
+                        "id": "ob-rb-stack",
+                        "type": "stack",
+                        "active": rb_active,
+                        "children": [
+                            {"id": "ob-graph", "type": "block"},
+                            {"id": "ob-outline", "type": "block"},
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class OpenPlan(unittest.TestCase):
+    def plan(self, **kw):
+        return run_node(f"return M.openPlan({json.dumps(kw)});", OPEN)
+
+    def test_missing_view_shows_warning_toast_and_changes_nothing_even_in_zen(self):
+        zen_on = {"active": True, "leftHidden": False, "rightHidden": False, "statusHidden": False}
+        for verb in ("open", "toggle"):
+            for child in ("ob-inbox", "", "ob-left"):
+                with self.subTest(verb=verb, child=child):
+                    r = self.plan(root=sample_layout(left_hidden=True, right_hidden=True),
+                                  verb=verb, child=child, intent="reveal", zen=zen_on, now=1234)
+                    self.assertEqual(r["notify"], {
+                        "title": f'No panel "{child}" in this layout',
+                        "body": "Run install.sh again to add the panels the repo has added.",
+                        "level": "warning",
+                    })
+                    self.assertIsNone(r["tabbar"])
+                    self.assertEqual(r["show"], [])
+                    self.assertEqual(r["hide"], [])
+                    self.assertIsNone(r["select"])
+                    self.assertEqual(r["shared"], [])
+
+    def test_open_existing_view_shows_side_and_hidden_group_and_sets_focus(self):
+        r = self.plan(root=sample_layout(left_hidden=True, lt_hidden=True),
+                      verb="open", child="ob-search", intent="reveal", now=2000)
+        self.assertIsNone(r["notify"])
+        self.assertEqual(r["show"], ["ob-left", "ob-lt"])
+        self.assertEqual(r["hide"], [])
+        self.assertEqual(r["select"], {"stack": "ob-lt-stack", "child": "ob-search"})
+        self.assertEqual(r["shared"], [["ob.focus", {"child": "ob-search", "intent": "reveal", "at": 2000}]])
+
+        rb = self.plan(root=sample_layout(lb_hidden=True), verb="open", child="ob-agents", now=2001)
+        self.assertEqual(rb["show"], ["ob-left", "ob-lb-stack"])
+
+    def test_open_works_when_view_moved_to_another_stack(self):
+        root = sample_layout(lt_hidden=True)
+        outline = root["children"][1]["children"][0]["children"].pop()
+        root["children"][0]["children"][0]["children"][0]["children"][0]["children"].append(outline)
+        r = self.plan(root=root, verb="open", child="ob-outline", now=3000)
+        self.assertEqual(r["show"], ["ob-left", "ob-lt"])
+        self.assertEqual(r["select"], {"stack": "ob-lt-stack", "child": "ob-outline"})
+
+    def test_open_in_zen_leaves_zen_before_opening_existing_view(self):
+        zen_on = {"active": True, "leftHidden": False, "rightHidden": False, "statusHidden": False}
+        r = self.plan(root=sample_layout(left_hidden=True, right_hidden=True),
+                      verb="open", child="ob-outline", zen=zen_on, now=4000)
+        self.assertEqual(r["tabbar"], 40)
+        self.assertEqual(r["show"], ["ob-statusrow", "ob-right"])
+        self.assertEqual(r["select"], {"stack": "ob-rb-stack", "child": "ob-outline"})
+        self.assertEqual(r["shared"], [
+            ["ob.zen", {"active": False, "at": 4000}],
+            ["ob.focus", {"child": "ob-outline", "intent": None, "at": 4000}],
+        ])
+
+        zen_status_hidden = {**zen_on, "statusHidden": True}
+        r2 = self.plan(root=sample_layout(left_hidden=True, right_hidden=True),
+                       verb="open", child="ob-outline", zen=zen_status_hidden, now=4001)
+        self.assertEqual(r2["show"], ["ob-right"])
+
+    def test_toggle_shown_view_hides_side_and_toggle_inactive_view_shows_it(self):
+        shown = self.plan(root=sample_layout(), verb="toggle", child="ob-sessions", now=5000)
+        self.assertEqual(shown["hide"], ["ob-left"])
+        self.assertEqual(shown["show"], [])
+        self.assertIsNone(shown["select"])
+        self.assertEqual(shown["shared"], [])
+
+        inactive = self.plan(root=sample_layout(), verb="toggle", child="ob-search", now=5001)
+        self.assertEqual(inactive["hide"], [])
+        self.assertEqual(inactive["show"], ["ob-left"])
+        self.assertEqual(inactive["select"], {"stack": "ob-lt-stack", "child": "ob-search"})
+
+    def test_term_intent_sets_ob_inspect(self):
+        r = self.plan(root=sample_layout(), verb="open", child="ob-props" if False else "ob-outline",
+                      intent="term:devbox/t7", now=6000)
+        self.assertEqual(r["shared"], [
+            ["ob.inspect", {"terminal": "devbox/t7", "at": 6000}],
+            ["ob.focus", {"child": "ob-outline", "intent": "term:devbox/t7", "at": 6000}],
+        ])
+
+    def test_open_method_carries_out_openPlan_before_changing_anything(self):
+        src = Path(ROOT, "mods", "ob-tabs", "main.js").read_text(encoding="utf-8")
+        body = src[src.index("  open(root, verb, child, intent) {"):]
+        body = body[:body.index("\n  }\n")]
+        self.assertIn("openPlan(", body)
+        self.assertLess(body.index("if (plan.notify)"), body.index("run("))
+        self.assertLess(body.index("if (plan.notify)"), body.index("setShared("))
+        pure = OPEN.read_text(encoding="utf-8")
+        self.assertNotIn('"herdr"', pure)
+        self.assertNotIn("kit.js", pure)
+
+
 if __name__ == "__main__":
     unittest.main()

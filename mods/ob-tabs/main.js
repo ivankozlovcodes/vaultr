@@ -26,10 +26,11 @@ import {
 } from "herdr";
 import { vaultFor } from "./vault_rules.js";
 import { zenPlan } from "./zen.js";
+import { openPlan } from "./open.js";
 import { isSettingsOpen } from "./settings_open.js";
 import { detachItem } from "./detach.js";
 import {
-  S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, stackOf, isShown, programIcon,
+  S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
   normHidden, isTabHidden, isSpaceHidden, patchHidden, updateHidden, lightsLeftPad,
 } from "./kit.js";
@@ -41,11 +42,6 @@ const HISTORY_MAX = 50;
 const TAB_MIN = 90;
 const TAB_MAX = 200;
 const NAV_GRACE = 2500; // ms a back/forward jump may take to land before recording resumes
-
-// Which sidebar column holds a view (its stack's side).
-const SIDE = (root, child) => (findNode(findNode(root, NODE.left), child) ? NODE.left : NODE.right);
-// The node to show so a stack's group is visible (top stacks live inside their group column).
-const GROUP = (stackId) => (stackId === NODE.leftTopStack ? NODE.leftTop : stackId === NODE.rightTopStack ? NODE.rightTop : stackId);
 
 // Window buttons: ob.settings.windowButtons "always" | "never" | "auto" (default: what Herdr wants).
 function windowButtonsOn() {
@@ -246,21 +242,13 @@ export default class Tabs extends View {
   }
 
   open(root, verb, child, intent) {
-    if (shared()?.["ob.zen"]?.active) {
-      run("layout.resize", { id: N.tabbar, px: 40 });
-      if (!shared()?.["ob.zen"]?.statusHidden) run("layout.show", { id: N.statusrow });
-      setShared("ob.zen", { active: false, at: Date.now() });
-    }
-    const st = stackOf(root, child);
-    if (!st) { console.log(`ob-tabs: no view "${child}" in this layout`); return; }
-    if (verb === "toggle" && isShown(root, child)) { run("layout.hide", { id: SIDE(root, child) }); return; }
-    run("layout.show", { id: SIDE(root, child) });
-    const group = findNode(root, GROUP(st.id));
-    if (group?.hidden) run("layout.show", { id: group.id });
-    run("layout.select", { stack: st.id, child });
-    // term:<address> means "inspect that terminal": the right sidebar views read ob.inspect.
-    if (intent && intent.startsWith("term:") && intent.length > 5) setShared("ob.inspect", { terminal: intent.slice(5), at: Date.now() });
-    setShared("ob.focus", { child, intent, at: Date.now() });
+    const plan = openPlan({ root, verb, child, intent, zen: shared()?.["ob.zen"], now: Date.now(), statusrow: N.statusrow });
+    if (plan.notify) { notify(plan.notify); return; }
+    if (plan.tabbar !== null) run("layout.resize", { id: N.tabbar, px: plan.tabbar });
+    for (const id of plan.show) run("layout.show", { id });
+    for (const id of plan.hide) run("layout.hide", { id });
+    if (plan.select) run("layout.select", plan.select);
+    for (const [k, v] of plan.shared) setShared(k, v);
   }
 
   // The quick switcher, at the top center of the window like Obsidian's.
