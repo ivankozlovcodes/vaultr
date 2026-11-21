@@ -129,7 +129,7 @@ Clone this repo and run the commands below from its folder. To sync kit assets, 
 
 *(To install without immediately switching layouts, run `./install.sh`)*
 
-The layout is copied, not linked, so the arrangement you make in the app (panel order, sizes, a hidden status row, your theme) stays in your copy and never lands in the repo. A re-install keeps a copy that differs from the repo. It also leaves alone the keys you changed in Hotkeys: a Vaultr key you removed stays removed (`vaultr-keys.owned.json` in the Herdr app folder records which; `--uninstall`, then a fresh install, brings every key back), and a chord you bound to your own action is not overwritten. To take the repo's layout again, run `./install.sh --reset-layout`: your copy is backed up next to it as `vaultr.json.bak-<date-time>` first. To develop the layout, `./install.sh --link` symlinks the repo file instead (a differing copy is backed up first).
+The layout is copied, not linked, so the arrangement you make in the app (panel order, sizes, a hidden status row, your theme) stays in your copy and never lands in the repo. `install.sh` records the installed `layouts/vaultr.json` in `vaultr-layout.installed.json` in the Herdr app folder (next to `vaultr-keys.owned.json`, outside `layouts/`). On re-install, an untouched copy (matching `vaultr-layout.installed.json`) is updated to the new repo layout without a backup; a changed copy keeps your arrangement (backed up before writing as `vaultr.json.bak-<date-time>`) and receives new repo nodes whose `id` is absent from both your copy and `vaultr-layout.installed.json` (deleted panels stay deleted, moved panels are not duplicated, and `vaultr.svg` updates whenever it differs). `install.sh` merges every section in `keys/vaultr-keys.json` and leaves alone the keys you changed in Hotkeys: a Vaultr key you removed stays removed (`vaultr-keys.owned.json` records which; `--uninstall`, then a fresh install, brings every key back), and a chord you bound to your own action is not overwritten. If a panel is missing from your layout, `ob-tabs.open` and `ob-tabs.toggle` show a warning toast without leaving Zen mode. To take the repo's layout again, run `./install.sh --reset-layout`: your copy is backed up next to it as `vaultr.json.bak-<date-time>` first. To develop the layout, `./install.sh --link` symlinks the repo file instead (a differing copy is backed up first, and `vaultr-layout.installed.json` is removed).
 
 ### 2. Kit Synchronization
 When modifying shared components in `kit/` (`kit.js`, helper modules, or icons), synchronize them to all mods:
@@ -139,14 +139,14 @@ When modifying shared components in `kit/` (`kit.js`, helper modules, or icons),
 ```
 
 ### 3. Uninstall
-To remove the Vaultr layout and mod links, revert its keybindings in `keys.json`, and switch Herdr to the fallback layout. That is Herdr's `main` layout unless `VAULTR_FALLBACK_LAYOUT` is set. A layout copy you changed is left in place and the script says so; `--reset-layout` removes it too, after a backup. A real folder named `insights` or `obsidian` in the Herdr app folder is left alone:
+To remove the Vaultr layout and mod links, revert its keybindings in `keys.json`, and switch Herdr to the fallback layout. That is Herdr's `main` layout unless `VAULTR_FALLBACK_LAYOUT` is set. `--uninstall` removes `layouts/vaultr.json` when it matches either the repo file or `vaultr-layout.installed.json` (leaving user-modified copies in place unless `--reset-layout` is passed, after a backup), removes `vaultr-layout.installed.json`, and reverts all key sections from `vaultr-keys.owned.json` or `keys/vaultr-keys.json`. A real folder named `insights` or `obsidian` in the Herdr app folder is left alone:
 
 ```bash
 ./install.sh --uninstall
 ```
 
 ### 4. Tests
-The suite needs no Herdr window and runs in about 95 seconds (`860+` tests): `python3 -m unittest discover -s test`. Rules for contributors are in [AGENTS.md](AGENTS.md).
+The suite needs no Herdr window and runs in about 115 seconds (`910+` tests): `python3 -m unittest discover -s test`. Rules for contributors are in [AGENTS.md](AGENTS.md).
 
 ---
 

@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Installed-layout record and node delivery (`install.sh`)**: Records the
+  installed `layouts/vaultr.json` in `vaultr-layout.installed.json` (next to
+  `vaultr-keys.owned.json`), updates untouched copies in place, and adds new
+  repo nodes to changed copies without restoring user-deleted panels or
+  duplicating moved views (`test/test_install.py`).
+- **Layout, reference, and shared-state tests (`test/test_layout.py`, `test/test_keys.py`, `test/test_references.py`, `test/test_repo.py`, `test/test_kit_shared.py`)**:
+  Verifies `VIEWS` and `NODE` alignment, view resolution by id across
+  rearranged stacks, explicit `0 px` always-running blocks, bidirectional
+  Hotkeys/keys default agreement, static import/re-export/icon/command
+  resolution, untracked non-ignored file scanning in `tracked()`, and
+  `shared`-only cross-panel state.
+- **Panel-authoring guide (`AGENTS.md`)**: Documents panel registrations and
+  guarding tests, draggable-view lookup, `0 px` always-running blocks and
+  polling rules, `shared` vs `localStorage` state, and host I/O boundaries.
 - **Check workflow (`.github/workflows/check.yml`)**: Validates
   `layouts/*.json`, `keys/*.json`, and `mods/*/mod.json`, runs the Python test
   suite with `ResourceWarning` treated as an error (which also compares kit
@@ -46,6 +60,16 @@
 
 ### Changed
 
+- **Shared-only cross-panel state (`kit/kit.js`, `mods/ob-sessions/`, `mods/ob-tabs/`)**:
+  Stores `ob.hidden`, `ob.dismissed`, and `ob.history` in `shared` only without
+  `localStorage` mirrors or getter `setShared` writes (keeping only the one-time
+  `machines.hidden` and settled-tab migration in `ob-sessions` `init`).
+- **Rule-based kit sync (`kit/sync.sh`, `test/test_repo.py`)**: Syncs every
+  `kit/*.js` module into `mods/ob-*` (except `ob-probe`) by rule—filling `MOD`
+  in `kit.js` and copying `obc.js` only where own files import `./obc.js`.
+- **Dynamic keys section handling (`install.sh`)**: Merges and uninstalls
+  every section in `keys/vaultr-keys.json` or `vaultr-keys.owned.json` rather
+  than listing sections by hand.
 - **Shared `obc.js` sync (`kit/obc.js`, `kit/sync.sh`)**: Manages `obc.js` from
   `kit/` across `ob-graph`, `ob-outline`, and `ob-props`, and replaces dangling
   external spec comments with repository references.
@@ -64,6 +88,17 @@
 
 ### Fixed
 
+- **Layout table cleanup (`kit/kit.js`)**: Drops unused `NODE.feed` and
+  `NODE.statusRow` entries.
+- **Settings default hotkey (`mods/ob-settings/registry.js`)**: Adds the `Open
+  settings` (`ctrl-,`) default entry to `OB`.
+- **Target checks for panel and layout commands (`test/test_repo.py`)**: Checks
+  `ob-tabs.open:` and `ob-tabs.toggle:` targets (before `@`) against layout
+  stack child ids and `layout.toggle:` targets against layout node ids across
+  `keys/vaultr-keys.json`, `OB`, and `VAULTR_COMMANDS`.
+- **Missing-panel warning toast (`mods/ob-tabs/main.js`, `mods/ob-tabs/open.js`, `test/test_ob_tabs.py`)**:
+  Decides via pure `openPlan` before mutating Zen or layout state and posts a
+  warning toast via `notify()` when a panel is missing from the layout.
 - **Open test files and `on_mouse_down` button argument (`test/`, `kit/kit.js`, `mods/ob-*`)**:
   Closes files opened in tests so the suite runs cleanly under
   `-W error::ResourceWarning`, and removes the `on_mouse_down` prototype patch by
