@@ -48,8 +48,12 @@ relationship graph, and a sub-agent outline.
     `ObSwitcher` `key_context`; modes: Everything, Views, Commands (`>` or
     `Ctrl+Shift+P`), Move.
   - Settings (`ob-settings`): `dialog`, `900px` x `86%`, centered; `ObSettings`
-    `key_context`; tabs: **Vault**, **Hotkeys** (with **Layout** sub-tab for
-    window buttons and plain-Ctrl give-back), and **Herdr settings…**.
+    `key_context`; tabs: **Vault**, **Feedback** (`feedback.json`),
+    **Hotkeys** (with **Layout** sub-tab for window buttons and plain-Ctrl
+    give-back), and **Herdr settings…**.
+  - Submit feedback (`ob-feedback`): `dialog`, `680px` x `580px`, centered;
+    `ObFeedback` `key_context`; `Textarea`/`TextareaState` Markdown input,
+    `image("data/ob-feedback/shot-<timestamp>.png")` preview, and bundle export.
   - Notes popup (`obsidian`): `popup`, `760px` x `560px`, `40px` from top (modes:
     name, `/text`, `#tag`, `+text`, `>title`, `Alt+Enter`).
   - Prompt history (`ob-pane`): `dialog`, `680px` x `480px`, `ObPanePrompts`
@@ -116,18 +120,19 @@ relationship graph, and a sub-agent outline.
 
 - **Kit (`kit/`, synced via `kit/sync.sh`)**: `kit.js`, `provider.js`, `obc.js`
   (`ob-graph`, `ob-outline`, `ob-props`), `agents.js`, `names.js`, `hidden.js`,
-  `attention.js`, `follow_target.js`, `feed_age.js`, `ticker.js`, `fuzzy.js`,
-  `touches.js`, `lights.js`, `icons/`.
+  `attention.js`, `follow_target.js`, `feed_age.js`, `feedback_bundle.js`,
+  `ticker.js`, `fuzzy.js`, `touches.js`, `lights.js`, `icons/`.
 - **Shipped Herdr mods used**: `files`, `changes`, and `new-menu`.
 - **Providers (`mods/ob-feed/providers/`)**: `index.json`, `scan_core.py`,
   `reader_main.py`, `claude/` (`manifest.json`, `scan.py`, `reader.py`,
   `quota.py`), `pi/` (`manifest.json`, `scan.py`, `reader.py`), `antigravity/`
   (`manifest.json`, `scan.py`, `reader.py`).
-- **`"herdr"` API imports**: `agents`, `appHome`, `closeOverlay`, `commands`,
-  `exec`, `focused`, `hc`, `home`, `keys`, `layout`, `layouts`, `machines`,
-  `nextCommand`, `notify`, `openOverlay`, `panes`, `pickFolder`, `props`,
-  `readTextFile`, `run`, `setAgentOrder`, `setShared`, `settings`, `shared`,
-  `spaces`, `terminals`, `theme`, `watchFolder`, `window`, `writeTextFile`.
+- **`"herdr"` API imports**: `agents`, `appHome`, `checking`, `closeOverlay`,
+  `commands`, `exec`, `focused`, `hc`, `home`, `keys`, `layout`, `layouts`,
+  `machines`, `nextCommand`, `notify`, `openOverlay`, `panes`, `pickFolder`,
+  `props`, `readTextFile`, `run`, `setAgentOrder`, `setShared`, `settings`,
+  `shared`, `spaces`, `terminals`, `theme`, `updates`, `watchFolder`, `window`,
+  `writeTextFile`.
 - **Shared state keys**: `ob.hidden`, `ob.dismissed`, `ob.bookmarks`,
   `ob.subagents` (`v: 2`), `ob.quotas`, `ob.focus`, `ob.follow`, `ob.inspect`,
   `ob.history`, `ob.zen`, `ob.settings`, `ob-settings.tab`, `ob-settings.open`,
@@ -137,17 +142,20 @@ relationship graph, and a sub-agent outline.
   `accent`, `accent_foreground`, `working`, `blocked`, `done`, `idle`, `ansi1`,
   `ansi2`, `ansi3`, `ansi4`, `ansi5`, `ansi6`.
 - **Key contexts & files**: `keys/vaultr-keys.json` (`layout:vaultr`,
-  `mod:ob-sessions`), `$HERDR_APP_HOME/keys.json`, plus `ObSwitcher`,
-  `ObSettings`, `ObPanePrompts`, `ObAttach`, and `ObMenu`.
+  `mod:ob-sessions`), `$HERDR_APP_HOME/keys.json`, plus `ObFeedback`,
+  `ObSwitcher`, `ObSettings`, `ObPanePrompts`, `ObAttach`, and `ObMenu`.
 - **External commands & filesystem paths**:
-  - `python3`, `hc` (`get`, `read`, `run`, `machine ls`, `machine rm`,
+  - `herdr-app` (`shot`, `status`, `ls`), `cp`, `rm`, `python3`, `hc` (`get`, `read`, `run`, `machine ls`, `machine rm`,
     `machine add`), `git`, `node`, `rg` (`find`/`grep` fallback), `tail`,
-    `mkdir`, `test` (`test -d`), `sh`, `open`/`xdg-open`/`cmd`,
+    `mkdir`, `test` (`test -d`, `test -s`), `sh`, `open`/`xdg-open`/`cmd`,
     `$VISUAL`/`$EDITOR`/`vi`/`notepad`, `herdr-artifact` (`open`), `ps`/`lsof` or
     `/proc`, `nice`, `bwrap` (Linux) / `sandbox-exec` + `security` + `touch`
     (macOS), `true`, `mise which claude`, `claude -p /usage`.
-  - Reads `obsidian.json`, `keys.json`, `keys.error`, and `mods/worktree/mod.json`
-    in the Herdr app folder, Obsidian `.obsidian/daily-notes.json` and
+  - Reads `obsidian.json`, `feedback.json`, `keys.json`, `keys.error`,
+    `*.error`, `layouts/.state/<layout>.json`, and `mods/worktree/mod.json` in
+    the Herdr app folder, stages `data/ob-feedback/` (`shot-<timestamp>.png` and `capture.json`), writes
+    `<feedback-folder>/<timestamp>-<slug>/{feedback.md,screenshot.png,ui-tree.json,diagnostics.log}`,
+    Obsidian `.obsidian/daily-notes.json` and
     `.obsidian/app.json`, `~/.claude` (or `CLAUDE_CONFIG_DIR`), `~/.claude.json`,
     `~/.claude/projects`, `~/.pi/agent/sessions`, temp
     `pi-subagents-uid-<uid>/async-subagent-runs`, `~/.codex/sessions`,
@@ -179,7 +187,7 @@ relationship graph, and a sub-agent outline.
 ## Done when
 
 - `python3 -W error::ResourceWarning -m unittest discover -s test` passes
-  completely (~95 s across 860+ tests, zero warnings).
+  completely (~145 s across 930+ tests, zero warnings).
 - `layouts/*.json`, `keys/*.json`, and `mods/*/mod.json` validate cleanly with
   `python3 -m json.tool` (matching
   [`.github/workflows/check.yml`](.github/workflows/check.yml)).

@@ -4,18 +4,18 @@ Vaultr is an Obsidian-inspired workspace layout and complete mod suite for the [
 
 ## Repository Layout
 
-- **`kit/`**: Shared mod foundation. Contains `kit.js` (reusable GPUI components, theme tokens, shell helpers, and SVG icons), `provider.js` (provider index loader, Python script assembly, and unified `provider.*` facade), `sync.sh` (tool to propagate `kit.js`, helper modules, and icons into each `mods/ob-*` folder), and pure rule modules (`agents.js`, `names.js`, `hidden.js`, `attention.js`, `follow_target.js`, `feed_age.js`, `ticker.js`, `fuzzy.js`, `touches.js`, `lights.js`, `obc.js`).
+- **`kit/`**: Shared mod foundation. Contains `kit.js` (reusable GPUI components, theme tokens, shell helpers, and SVG icons), `provider.js` (provider index loader, Python script assembly, and unified `provider.*` facade), `sync.sh` (tool to propagate `kit.js`, helper modules, and icons into each `mods/ob-*` folder), and pure rule modules (`agents.js`, `names.js`, `hidden.js`, `attention.js`, `follow_target.js`, `feed_age.js`, `feedback_bundle.js`, `ticker.js`, `fuzzy.js`, `touches.js`, `lights.js`, `obc.js`).
 - **`layouts/`**: Herdr workspace layout specifications:
   - `vaultr.json`: A center column between two sidebars, each split into two stacks of tabs. Left top: Sessions, Search, Bookmarks. Left bottom: Agents, Recent. Right top: Quotas, Properties, Files, Changes, Insights, Notes. Right bottom: Graph, Outline.
   - `vaultr.svg`: Layout preview icon.
-- **`mods/`**: The 20 mods: 18 Obsidian-style `ob-*` mods (including `mods/ob-feed/providers/` with `index.json`, `scan_core.py`, `reader_main.py`, and per-provider `<id>/` folders), plus `insights` and `obsidian` (origin in `mods/ORIGIN.md`).
+- **`mods/`**: The 21 mods: 19 Obsidian-style `ob-*` mods (including `mods/ob-feed/providers/` with `index.json`, `scan_core.py`, `reader_main.py`, and per-provider `<id>/` folders), plus `insights` and `obsidian` (origin in `mods/ORIGIN.md`).
 - **`keys/`**: Keybinding configurations:
   - `vaultr-keys.json`: Custom keybinding definitions for `layout:vaultr` and `mod:ob-sessions`.
 - **`install.sh`**: One-step installer, activator, and uninstaller.
 
 ---
 
-## The 20 Vaultr Mods
+## The 21 Vaultr Mods
 
 The layout also uses Herdr's shipped `files` and `changes` mods.
 
@@ -25,7 +25,7 @@ The layout also uses Herdr's shipped `files` and `changes` mods.
 - **`ob-tabs`**: Obsidian-style tab bar supporting drag reordering, pinned tabs, daily notes, and split shortcuts.
 - **`ob-pane`**: Two-row terminal and pane header with directory breadcrumbs, status indicators, pane split/close buttons, and a sticky latest-prompt row that opens a full prompt history popup.
 - **`ob-status`**: Bottom status bar displaying the visible agent attention overview, feed scanner alerts, and zoom level.
-- **`ob-footer`**: Bottom toolbar in the left sidebar: the machine switcher, then help and a settings gear that opens `ob-settings`.
+- **`ob-footer`**: Bottom toolbar in the left sidebar: the machine switcher, then feedback (`ob-tabs.feedback`), help, and a settings gear that opens `ob-settings`.
 
 ### Left Sidebar (Navigation & Sessions)
 - **`ob-sessions`**: File explorer tree representing spaces, tabs, panes, and terminals with git status and context menus.
@@ -52,7 +52,8 @@ The layout also uses Herdr's shipped `files` and `changes` mods.
 
 ### Overlays & Dialogs
 - **`ob-switcher`**: Quick switcher popup (`Ctrl+P`) for jumping between tabs/sessions. Three modes, shown in the header and cycled with Tab: Everything, Views (sidebar views only), and Commands (`Ctrl+Shift+P`, or `>` typed in any mode: Vaultr's commands and Herdr's app commands, one list).
-- **`ob-settings`**: Settings dialog, opened by the footer's gear or `Ctrl+,`, or `Ctrl+Alt+K` (which opens it on Hotkeys). Tabs down the left: **Vault** (the vault folder, saved to `obsidian.json` in the Herdr app folder; set it once. Unset means no vault: the Notes panel and daily notes are off, with no fallback to Obsidian's own vault. Daily notes follow Obsidian's own daily-notes settings in that vault, and the editor is `$VISUAL`, then `$EDITOR`, then vi), **Hotkeys**: every command with its keys, searchable, with a scope for each `keys.json` section, where you add, remove or restore keys. Its Layout sub-tab holds the window buttons setting and the plain-Ctrl keys the layout takes from terminal programs. **Herdr settings…** sits below the tabs and opens Herdr's own settings.
+- **`ob-feedback`**: Feedback dialog opened by `Ctrl+Alt+Shift+F`, the Command Palette (`Submit feedback`), or the footer feedback button. Before opening, `ob-tabs.feedback` captures a live window screenshot (`herdr-app shot`), annotated UI tree dump (`ui-tree.json`), and sanitized diagnostics (`diagnostics.log`) into `data/ob-feedback/`; editing and saving writes a timestamped `<timestamp>-<slug>/` bundle folder containing `feedback.md`, `screenshot.png`, `ui-tree.json`, and `diagnostics.log` inside the folder set in Settings (**Feedback** tab, `feedback.json`).
+- **`ob-settings`**: Settings dialog, opened by the footer's gear or `Ctrl+,`, or `Ctrl+Alt+K` (which opens it on Hotkeys). Tabs down the left: **Vault** (the vault folder, saved to `obsidian.json` in the Herdr app folder; set it once. Unset means no vault: the Notes panel and daily notes are off, with no fallback to Obsidian's own vault. Daily notes follow Obsidian's own daily-notes settings in that vault, and the editor is `$VISUAL`, then `$EDITOR`, then vi), **Feedback** (the folder where feedback bundles are saved, stored under `folder` in `feedback.json` in the Herdr app folder; can also be chosen inline in `ob-feedback`), **Hotkeys**: every command with its keys, searchable, with a scope for each `keys.json` section, where you add, remove or restore keys. Its Layout sub-tab holds the window buttons setting and the plain-Ctrl keys the layout takes from terminal programs. **Herdr settings…** sits below the tabs and opens Herdr's own settings.
 
 ---
 
@@ -87,9 +88,10 @@ The tables say `ctrl`. On macOS `install.sh` binds `cmd` in its place (`cmd-p`, 
 | `Ctrl+Alt+K` | `ob-tabs.settings:hotkeys` | Open Settings on Hotkeys |
 | `Ctrl+,` | `mod.open:ob-settings` | Open Vaultr Settings (Herdr's own settings: in the dialog) |
 | `Ctrl+Alt+T` | `ob-tabs.tab-list` | Open Tab List Menu |
+| `Ctrl+Alt+Shift+F` | `ob-tabs.feedback` | Submit Feedback Bundle |
 | `Ctrl+Shift+Z` / `Ctrl+Alt+Z` | `ob-tabs.zen` | Toggle Zen Mode |
 
-The settings dialog opens from the gear in the footer. `ob-tabs.settings:<tab>` opens it on a tab (`vault` or `hotkeys`); with no tab, it opens on the tab used last.
+The settings dialog opens from the gear in the footer. `ob-tabs.settings:<tab>` opens it on a tab (`vault`, `feedback`, or `hotkeys`); with no tab, it opens on the tab used last.
 
 ### `mod:ob-sessions`
 
@@ -117,6 +119,7 @@ The settings dialog opens from the gear in the footer. `ob-tabs.settings:<tab>` 
 - `ob-props` runs `python3` on this computer, or on the terminal's machine, with the usage reader assembled from `mods/ob-feed/providers/` (`index.json`, `reader_main.py`, and each provider's `manifest.json` and `reader.py`, read from the Herdr app folder) alongside `hc get <addr> --json`, for the followed agent's session file (the transcript path the sub-agent feed names: `~/.claude/projects` or `~/.pi/agent/sessions`). Every 10 seconds while the panel shows it checks the file's size and modification time, and reads its last 32 MiB only when they changed; it changes nothing. It reads no plan or account limits.
 - `ob-quotas` reads plan limits through `provider.quota()`, which runs `python3 -c <quota.py>` on this computer or the selected machine for each provider with the `"quota"` capability (`mods/ob-feed/providers/claude/quota.py`). Before running any CLI command, `providers/claude/quota.py` verifies that `$CLAUDE_CONFIG_DIR` (default `~/.claude`) exists and inspects the resolved `claude` executable (and any wrapper target path) for Claude Code package paths or binary markers; unrelated executables named `claude` are never run. It reads `$CLAUDE_CONFIG_DIR/.credentials.json`, `$CLAUDE_CONFIG_DIR/.claude.json`, and `~/.claude.json` (`subscriptionType`, OAuth expiration, `oauthAccount.emailAddress`). When verified and not due for token renewal, it runs `mise which claude` (only for a `mise` shim/wrapper), probes `/usr/bin/bwrap` with `true` on Linux to run `nice -n 19 claude -p /usage --output-format json --no-session-persistence --setting-sources "" --strict-mcp-config` read-only inside `bwrap` (or a throwaway `TMPDIR` if `bwrap` is unavailable), and on macOS reads Keychain entry `"Claude Code-credentials"` via `/usr/bin/security find-generic-password` and runs `claude` inside `/usr/bin/sandbox-exec` (verified with `/bin/sh`, `/usr/bin/touch`, and `/usr/bin/security list-keychains`) against a temp copy of `.credentials.json` stripped of `refreshToken`.
 - `ob-sessions` offers its worktree actions only when the `worktree` mod is installed; to know that, it looks for `mods/worktree/mod.json` (or `main.js`) in the Herdr app folder.
+- `ob-tabs` (`ob-tabs.feedback`), `ob-feedback`, and Settings (**Feedback** tab) run `herdr-app shot`, `herdr-app status`, and `herdr-app ls` (falling back to `~/.local/bin/herdr-app`, `/Applications/Herdr.app/Contents/MacOS/Herdr`, or `~/Applications/Herdr.app/Contents/MacOS/Herdr` when `herdr-app` is missing from `PATH`) plus `mkdir`, `test` (`-d`/`-s`), `cp`, and `rm` (`cmd` on Windows) for directories and binary screenshots outside `fs/promises` roots; read `feedback.json`, `layouts/.state/<layout>.json`, and `*.error` in the Herdr app folder; stage `data/ob-feedback/shot-<timestamp>.png` and `capture.json`; and write `<feedback-folder>/<timestamp>-<slug>/` bundles (`feedback.md`, `screenshot.png`, `ui-tree.json`, and `diagnostics.log`). `ui-tree.json` and `diagnostics.log` filter `shared` to safe keys, summarize feed counts via `provider.sessions()` and `provider.subagents()`, and omit terminal env/argv/labels.
 
 The Herdr app folder is `~/.config/herdr-app`; set `HERDR_APP_HOME` to use another.
 
@@ -146,7 +149,7 @@ To remove the Vaultr layout and mod links, revert its keybindings in `keys.json`
 ```
 
 ### 4. Tests
-The suite needs no Herdr window and runs in about 115 seconds (`910+` tests): `python3 -m unittest discover -s test`. Rules for contributors are in [AGENTS.md](AGENTS.md).
+The suite needs no Herdr window and runs in about 145 seconds (`930+` tests): `python3 -m unittest discover -s test`. Rules for contributors are in [AGENTS.md](AGENTS.md).
 
 ---
 

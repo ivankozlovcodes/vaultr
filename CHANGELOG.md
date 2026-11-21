@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Feedback bundles (`mods/ob-feedback/`, `kit/feedback_bundle.js`, `mods/ob-settings/feedback.js`, `ob-tabs`, `ob-footer`, `keys/vaultr-keys.json`)**:
+  Captures an unobstructed window screenshot (`herdr-app shot`), annotated UI
+  tree dump, and sanitized diagnostics (`data/ob-feedback/`) before opening
+  the Markdown feedback dialog (`Ctrl+Alt+Shift+F`, Command Palette, or
+  footer button), writes `<timestamp>-<slug>/` bundle folders (`feedback.md`,
+  `screenshot.png`, `ui-tree.json`, `diagnostics.log`) into the folder
+  configured in Settings' **Feedback** tab (`feedback.json`), and adds unit
+  and end-to-end tests (`test/test_ob_feedback.py`, `test/test_ob_settings.py`).
 - **Installed-layout record and node delivery (`install.sh`)**: Records the
   installed `layouts/vaultr.json` in `vaultr-layout.installed.json` (next to
   `vaultr-keys.owned.json`), updates untouched copies in place, and adds new
