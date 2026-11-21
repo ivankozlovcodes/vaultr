@@ -887,6 +887,63 @@ class KeyOwnership(unittest.TestCase):
         self.assertNotIn("layout:vaultr", after)
         self.assertNotIn("mod:ob-sessions", after)
 
+    def test_a_third_section_is_installed_recorded_and_removed_on_uninstall(self):
+        self.write_repo_keys({
+            "layout:vaultr": {"ctrl-shift-f": "ob-tabs.open:ob-search"},
+            "mod:ob-sessions": {"f2": "ob-sessions.rename"},
+            "mod:ob-extra": {"ctrl-alt-x": "ob-extra.ping"},
+        })
+        self.install()
+        keys = self.installed()
+        self.assertEqual(keys["mod:ob-extra"], {"ctrl-alt-x": "ob-extra.ping"})
+        owned = load(os.path.join(self.app, "vaultr-keys.owned.json"))
+        self.assertEqual(owned["mod:ob-extra"], ["ctrl-alt-x"])
+        keys["mod:ob-extra"]["ctrl-m"] = "mine.extra"
+        with open(os.path.join(self.app, "keys.json"), "w") as f:
+            json.dump(keys, f)
+        self.install()
+        self.assertEqual(self.installed()["mod:ob-extra"], {"ctrl-m": "mine.extra", "ctrl-alt-x": "ob-extra.ping"})
+        self.install("--uninstall")
+        after = self.installed()
+        self.assertEqual(after["mod:ob-extra"], {"ctrl-m": "mine.extra"})
+        self.assertNotIn("layout:vaultr", after)
+        self.assertNotIn("mod:ob-sessions", after)
+        self.assertFalse(os.path.exists(os.path.join(self.app, "vaultr-keys.owned.json")))
+
+    def test_uninstall_without_owned_record_removes_every_repo_keys_section(self):
+        self.write_repo_keys({
+            "layout:vaultr": {"ctrl-shift-f": "ob-tabs.open:ob-search"},
+            "mod:ob-sessions": {"f2": "ob-sessions.rename"},
+            "mod:ob-extra": {"ctrl-alt-x": "ob-extra.ping"},
+        })
+        self.install()
+        os.remove(os.path.join(self.app, "vaultr-keys.owned.json"))
+        self.install("--uninstall")
+        after = self.installed()
+        self.assertNotIn("layout:vaultr", after)
+        self.assertNotIn("mod:ob-sessions", after)
+        self.assertNotIn("mod:ob-extra", after)
+        self.assertEqual(after["global"], {"ctrl-k": "mine.open"})
+
+    def test_a_section_dropped_from_repo_keys_is_cleaned_from_keys_and_owned(self):
+        self.write_repo_keys({
+            "layout:vaultr": {"ctrl-shift-f": "ob-tabs.open:ob-search"},
+            "mod:ob-sessions": {"f2": "ob-sessions.rename"},
+            "mod:ob-extra": {"ctrl-alt-x": "ob-extra.ping"},
+        })
+        self.install()
+        keys = self.installed()
+        keys["mod:ob-extra"]["ctrl-m"] = "mine.extra"
+        with open(os.path.join(self.app, "keys.json"), "w") as f:
+            json.dump(keys, f)
+        self.write_repo_keys({
+            "layout:vaultr": {"ctrl-shift-f": "ob-tabs.open:ob-search"},
+            "mod:ob-sessions": {"f2": "ob-sessions.rename"},
+        })
+        self.install()
+        self.assertEqual(self.installed()["mod:ob-extra"], {"ctrl-m": "mine.extra"})
+        self.assertNotIn("mod:ob-extra", load(os.path.join(self.app, "vaultr-keys.owned.json")))
+
 
 if __name__ == "__main__":
     unittest.main()

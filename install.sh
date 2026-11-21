@@ -412,16 +412,16 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   done
 
   # 2. Remove the keys Vaultr installed (recorded in vaultr-keys.owned.json) and the legacy obsidian section;
-  #    a key the person added to a Vaultr section stays. Without a record, the Vaultr sections go as before.
+  #    a key the person added to a Vaultr section stays. Without a record, the repo's keys sections go as before.
   if [[ -f "$HERDR_APP_DIR/keys.json" ]]; then
-    python3 - "$HERDR_APP_DIR/keys.json" "$HERDR_APP_DIR/vaultr-keys.owned.json" <<-'PY'
+    python3 - "$HERDR_APP_DIR/keys.json" "$HERDR_APP_DIR/vaultr-keys.owned.json" "$REPO_DIR/keys/vaultr-keys.json" <<-'PY'
 import json, os, sys
 
-keys_file, owned_file = sys.argv[1], sys.argv[2]
+keys_file, owned_file, src_file = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     with open(keys_file, "r") as f:
         keys = json.load(f)
-except Exception as e:
+except Exception:
     sys.exit(0)
 owned = {}
 if os.path.exists(owned_file):
@@ -430,17 +430,30 @@ if os.path.exists(owned_file):
             owned = json.load(f)
     except Exception:
         owned = {}
+repo_keys = {}
+if os.path.exists(src_file):
+    try:
+        with open(src_file, "r") as f:
+            repo_keys = json.load(f)
+    except Exception:
+        repo_keys = {}
+
+sections = [k for k in owned if k != "_removed" and isinstance(owned[k], list)]
+for k in repo_keys:
+    if k != "_removed" and k not in owned and isinstance(repo_keys[k], dict):
+        sections.append(k)
 
 modified = False
 if "layout:obsidian" in keys:
     del keys["layout:obsidian"]
     modified = True
-for k in ("layout:vaultr", "mod:ob-sessions"):
+for k in sections:
     if k not in keys:
         continue
     if k in owned:
-        for key in owned[k]:
-            keys[k].pop(key, None)
+        if isinstance(keys[k], dict):
+            for key in owned[k]:
+                keys[k].pop(key, None)
         if not keys[k]:
             del keys[k]
     else:
@@ -455,6 +468,8 @@ if os.path.exists(owned_file):
     os.remove(owned_file)
 PY
     echo "removed vaultr keybindings from $HERDR_APP_DIR/keys.json"
+  else
+    rm -f -- "$HERDR_APP_DIR/vaultr-keys.owned.json"
   fi
 
   # 3. Switch layout back to the fallback layout
@@ -572,7 +587,11 @@ with open(src_file, "r") as f:
 # brings every key back (also what to do after restoring an old keys.json).
 removed = dict(owned.get("_removed", {}))
 new_owned = dict(owned)
-for k in ("layout:vaultr", "mod:ob-sessions"):
+sections = [k for k in vaultr_keys if k != "_removed" and isinstance(vaultr_keys[k], dict)]
+for k in owned:
+    if k != "_removed" and k not in vaultr_keys and isinstance(owned[k], list):
+        sections.append(k)
+for k in sections:
     if k in vaultr_keys:
         repo = {for_platform(key): val for key, val in vaultr_keys[k].items()}
         if k in owned:
@@ -604,6 +623,15 @@ for k in ("layout:vaultr", "mod:ob-sessions"):
             removed[k] = sorted(gone)
         else:
             removed.pop(k, None)
+    else:
+        if isinstance(keys.get(k), dict):
+            cur = {key: val for key, val in keys[k].items() if key not in owned[k]}
+            if cur:
+                keys[k] = cur
+            else:
+                keys.pop(k, None)
+        new_owned.pop(k, None)
+        removed.pop(k, None)
 if removed:
     new_owned["_removed"] = removed
 else:

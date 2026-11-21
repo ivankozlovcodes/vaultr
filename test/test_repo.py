@@ -216,12 +216,43 @@ class Repo(unittest.TestCase):
                         self.assertIn(arg.split("@")[0], ALL_MODS)
 
     def test_install_merges_every_keys_section(self):
-        # install.sh copies only the sections it names: a section it doesn't name would never reach keys.json
-        install = read("install.sh")
-        merged = re.search(r'for k in \(([^)]*)\):\n\s*if k in vaultr_keys', install)
-        self.assertIsNotNone(merged, "install.sh's keys merge loop was not found")
-        names = re.findall(r'"([^"]+)"', merged.group(1))
-        self.assertEqual(sorted(names), sorted(KEYS))
+        with tempfile.TemporaryDirectory(dir=home_guard.TMP) as base:
+            repo = os.path.join(base, "repo")
+            app = os.path.join(base, "herdr-app")
+            os.makedirs(os.path.join(repo, "keys"))
+            os.makedirs(app)
+            shutil.copy(os.path.join(ROOT, "install.sh"), os.path.join(repo, "install.sh"))
+            keys_data = json.loads(json.dumps(KEYS))
+            keys_data["mod:ob-extra"] = {"ctrl-alt-x": "ob-extra.ping"}
+            with open(os.path.join(repo, "keys", "vaultr-keys.json"), "w", encoding="utf-8") as f:
+                json.dump(keys_data, f)
+            with open(os.path.join(app, "keys.json"), "w", encoding="utf-8") as f:
+                json.dump({"global": {"ctrl-k": "mine.open"}}, f)
+            env = dict(os.environ, HERDR_APP_HOME=app, VAULTR_OS="Linux")
+            p1 = subprocess.run(["bash", os.path.join(repo, "install.sh")], capture_output=True, text=True,
+                                env=env, cwd=repo, stdin=subprocess.DEVNULL)
+            self.assertEqual(p1.returncode, 0, p1.stdout + p1.stderr)
+            with open(os.path.join(app, "keys.json"), encoding="utf-8") as f:
+                installed = json.load(f)
+            with open(os.path.join(app, "vaultr-keys.owned.json"), encoding="utf-8") as f:
+                owned = json.load(f)
+            self.assertEqual(installed["layout:vaultr"], keys_data["layout:vaultr"])
+            self.assertEqual(installed["mod:ob-sessions"], keys_data["mod:ob-sessions"])
+            self.assertEqual(installed["mod:ob-extra"], {"ctrl-alt-x": "ob-extra.ping"})
+            self.assertEqual(owned["mod:ob-extra"], ["ctrl-alt-x"])
+            installed["mod:ob-extra"]["ctrl-m"] = "mine.extra"
+            with open(os.path.join(app, "keys.json"), "w", encoding="utf-8") as f:
+                json.dump(installed, f)
+            p2 = subprocess.run(["bash", os.path.join(repo, "install.sh"), "--uninstall"], capture_output=True,
+                                text=True, env=env, cwd=repo, stdin=subprocess.DEVNULL)
+            self.assertEqual(p2.returncode, 0, p2.stdout + p2.stderr)
+            with open(os.path.join(app, "keys.json"), encoding="utf-8") as f:
+                after = json.load(f)
+            self.assertNotIn("layout:vaultr", after)
+            self.assertNotIn("mod:ob-sessions", after)
+            self.assertEqual(after["mod:ob-extra"], {"ctrl-m": "mine.extra"})
+            self.assertEqual(after["global"], {"ctrl-k": "mine.open"})
+            self.assertFalse(os.path.exists(os.path.join(app, "vaultr-keys.owned.json")))
 
     def test_install_names_mods_that_exist(self):
         install = read("install.sh")
