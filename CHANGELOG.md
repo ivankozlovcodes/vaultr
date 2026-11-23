@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+
+- **Graph hidden filtering and Active only (`mods/ob-graph/main.js`, `mods/ob-graph/filter.js`)**:
+  Filters hidden machines, spaces, and tabs (`ob.hidden`) out of the Graph
+  model, and drops empty spaces and machines with no active agents when
+  **Active only** is enabled.
+
 ## 0.1.0
 
 ### Added

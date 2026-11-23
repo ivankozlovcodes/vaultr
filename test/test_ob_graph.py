@@ -471,9 +471,9 @@ class ActiveOnly(unittest.TestCase):
         r = run('console.log(JSON.stringify(S.filterGraph(P.g, P.on)));', {"g": self.graph(), "on": on}, FILTER)
         return r
 
-    def test_on_keeps_every_machine_and_space_the_foreground_agent_and_its_live_subagents(self):
+    def test_on_keeps_active_foreground_agents_their_live_subagents_and_ancestor_spaces_and_machines(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}
-        self.assertEqual(keys, {"m:laptop", "m:pi", "m:spare", "s:A", "s:B", "p:A1a", "r:sub", "c:sub", "h:bg"})
+        self.assertEqual(keys, {"m:laptop", "s:A", "p:A1a", "r:sub", "c:sub", "h:bg"})
 
     def test_finished_subagents_are_hidden_and_live_ones_kept(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}
@@ -485,19 +485,27 @@ class ActiveOnly(unittest.TestCase):
         self.assertNotIn("p:A2a", keys)
         self.assertNotIn("p:A1b", keys)
 
-    def test_machines_and_spaces_are_always_kept_even_with_nothing_active_under_them(self):
+    def test_empty_machines_and_spaces_with_no_active_agents_are_dropped(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}
-        self.assertIn("m:spare", keys, "no agent under it")
-        self.assertIn("m:pi", keys)
-        self.assertIn("s:B", keys, "a space with only idle panes")
+        self.assertNotIn("m:spare", keys, "machine with no active agent is dropped")
+        self.assertNotIn("m:pi", keys, "machine with only idle panes is dropped")
+        self.assertNotIn("s:B", keys, "space with only idle panes is dropped")
         self.assertNotIn("h:orphan", keys, "its only live subagent hangs off no agent, so it is still dropped")
 
-    def test_with_no_agent_active_the_frame_is_still_drawn(self):
+    def test_with_no_agent_active_active_only_returns_empty(self):
         r = run('console.log(JSON.stringify(S.filterGraph(P.g, true, null, 0).nodes.map((n) => n.key).sort()));',
                 {"g": {"nodes": [{"key": "m:a", "kind": "m"}, {"key": "s:1", "kind": "s", "parent": "m:a"},
                                  {"key": "p:x", "kind": "p", "parent": "s:1", "status": "idle", "foreground": True}],
                        "edges": [["m:a", "s:1", "contain"], ["s:1", "p:x", "contain"]]}}, FILTER)
-        self.assertEqual(r, ["m:a", "s:1"])
+        self.assertEqual(r, [])
+
+    def test_main_filters_hidden_machines_spaces_and_tabs_in_model(self):
+        src = MAIN.read_text(encoding="utf-8")
+        body = re.search(r"\n  model\(\) \{([\s\S]*?)\n  \}", src).group(1)
+        self.assertIn("normHidden(", body)
+        self.assertIn("isMachineHidden(", body)
+        self.assertIn("isSpaceHidden(", body)
+        self.assertIn("isTabHidden(", body)
 
     def test_a_live_subagent_of_a_plain_terminal_is_hidden(self):
         keys = {n["key"] for n in self.filtered(True)["nodes"]}

@@ -31,6 +31,7 @@ import { props, run, nextCommand, settings, machines, spaces, panes, agents, sha
 import {
   S, tc, alpha, icon, iconButton, feed, machineLabel, machineOf, tabLabel, paneLabelOf,
   takeFocus, openMenu, openView, reveal, isBookmarked, toggleBookmark, emptyState, placedTerminals, mainAgents,
+  normHidden, isMachineHidden, isSpaceHidden, isTabHidden, getHidden,
 } from "./kit.js";
 import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, touchOn, setTouch } from "./filter.js";
 import { touchShape } from "./touch_shape.js";
@@ -137,21 +138,26 @@ export default class Graph extends View {
     const nodes = new Map(), edges = [];
     const add = (n) => { nodes.set(n.key, n); return n; };
     const ps = panes(), sp = spaces();
+    const h = normHidden(shared("ob.hidden") ?? getHidden());
     for (const m of machines()) {
+      if (isMachineHidden(h, m.name ?? null)) continue;
       const k = `m:${m.name ?? "local"}`;
       add({ key: k, kind: "m", label: machineLabel(m.name ?? null), machine: m.name ?? null, down: m.layout === "unavailable" });
     }
-    if (!nodes.has("m:local")) add({ key: "m:local", kind: "m", label: machineLabel(null), machine: null });
+    if (!nodes.has("m:local") && !isMachineHidden(h, null)) add({ key: "m:local", kind: "m", label: machineLabel(null), machine: null });
     const paneOf = new Map();
     // Foreground: a main agent (its terminal is in a pane of a tab), kit/agents.js.
     const main = new Map(mainAgents(agents(), placedTerminals(ps)).map((a) => [a.address, a]));
     for (const s of sp) {
+      if (isMachineHidden(h, s.machine ?? null) || isSpaceHidden(h, s)) continue;
+      const visibleTabs = (s.tabs ?? []).filter((tab) => !isTabHidden(h, tab, s));
+      if ((s.tabs ?? []).length > 0 && visibleTabs.length === 0) continue;
       const mk = `m:${s.machine ?? "local"}`;
       if (!nodes.has(mk)) add({ key: mk, kind: "m", label: machineLabel(s.machine), machine: s.machine });
       const sk = `s:${s.id}`;
       add({ key: sk, kind: "s", label: s.name, parent: mk, status: s.status, space: s });
       edges.push([mk, sk, "contain"]);
-      for (const tab of s.tabs) {
+      for (const tab of visibleTabs) {
         // No tab node: each pane is a node under its space, and the panes of one tab are joined by sibling links (shape.js).
         const mine = ps.filter((x) => x.tab === tab.id);
         const tabName = tabLabel(tab, ps);

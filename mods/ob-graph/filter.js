@@ -16,7 +16,9 @@
 // reshuffles Global.
 //
 // Active only (filterGraph, one switch per view, see activeState): on keeps each active foreground agent pane, every active
-// subagent that hangs (directly or through another kept subagent) off a kept agent, and every machine and space (the frame, kept even with nothing active under them). An anchor (the focus) and its ancestors are always kept. Off keeps everything, finished subagents too.
+// subagent that hangs (directly or through another kept subagent) off a kept agent, and their ancestor spaces and machines
+// (empty spaces/machines with no active agents are dropped). An anchor (the focus) and its ancestors are always kept. Off
+// keeps everything, finished subagents too.
 
 import { activityOf } from "./agents.js";
 
@@ -97,10 +99,7 @@ export function activeOnly(graph, anchor = null, now = Date.now()) {
   for (const n of graph.nodes) {
     if (TOUCHED.has(n.kind) && (adj.get(n.key) ?? []).some((o) => keep.has(o))) keep.add(n.key);
   }
-  // Machines and spaces are the graph's frame: always kept, with or without an active agent under them. Added only now, so
-  // a machine never anchors a subagent (an agent that hangs off no agent stays hidden).
-  for (const n of graph.nodes) if (n.kind === "m" || n.kind === "s") keep.add(n.key);
-  // The machine and space of every kept node (and of the anchor).
+  // The space and machine of every kept node (and of the anchor); empty spaces/machines without active agents are dropped.
   for (const k of [...keep]) {
     for (let p = byKey.get(k)?.parent; p && byKey.has(p) && !keep.has(p); p = byKey.get(p).parent) keep.add(p);
   }
