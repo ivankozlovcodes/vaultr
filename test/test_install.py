@@ -18,7 +18,7 @@ EXTRA = ["insights", "obsidian"]
 
 
 def run(app, *args, env=None):
-    e = dict(os.environ, HERDR_APP_HOME=app, **(env or {}))
+    e = dict(os.environ, HERDR_APP_HOME=app, VAULTR_OS="Linux", **(env or {}))
     p = subprocess.run(["bash", INSTALL, *args], capture_output=True, text=True, env=e, cwd=ROOT,
                        stdin=subprocess.DEVNULL)
     if p.returncode != 0:
@@ -296,7 +296,7 @@ class LayoutCopy(unittest.TestCase):
         self.write(self.target(), '{"name": "mine"}\n')
         self.install("--link")
         self.assertTrue(os.path.islink(self.target()))
-        self.assertEqual(os.path.realpath(self.target()), os.path.join(self.repo, "layouts", "vaultr.json"))
+        self.assertEqual(os.path.realpath(self.target()), os.path.realpath(os.path.join(self.repo, "layouts", "vaultr.json")))
         self.assertEqual(len(self.backups()), 1)
         self.assertEqual(self.read(self.backups()[0]), '{"name": "mine"}\n')
 
@@ -313,7 +313,7 @@ class LayoutCopy(unittest.TestCase):
         os.makedirs(os.path.join(self.app, "layouts"))
         os.symlink(os.path.join(self.base, "moved-away", "layouts", "vaultr.json"), self.target())
         self.install("--link")
-        self.assertEqual(os.path.realpath(self.target()), os.path.join(self.repo, "layouts", "vaultr.json"))
+        self.assertEqual(os.path.realpath(self.target()), os.path.realpath(os.path.join(self.repo, "layouts", "vaultr.json")))
 
     def other_checkout_link(self, text):
         other = os.path.join(self.base, "other", "layouts", "vaultr.json")
@@ -341,7 +341,7 @@ class LayoutCopy(unittest.TestCase):
     def test_a_link_to_another_checkouts_layout_is_relinked_in_link_mode(self):
         other = self.other_checkout_link('{"name": "mine"}\n')
         self.install("--link")
-        self.assertEqual(os.path.realpath(self.target()), os.path.join(self.repo, "layouts", "vaultr.json"))
+        self.assertEqual(os.path.realpath(self.target()), os.path.realpath(os.path.join(self.repo, "layouts", "vaultr.json")))
         self.assertEqual([self.read(b) for b in self.backups()], ['{"name": "mine"}\n'])
         self.assertEqual(self.read(other), '{"name": "mine"}\n', "the other checkout is not touched")
 
