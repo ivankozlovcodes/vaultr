@@ -2,6 +2,7 @@
 
 Vaultr is a Herdr layout (`layouts/vaultr.json`) plus the mods it shows (`mods/`), for the [Herdr](https://github.com/herdrdev/herdr-app) desktop app (requires Herdr `0.1.16` or newer).
 The mods share one kit (`kit/`), keys are in `keys/`, and `install.sh` links everything into the Herdr app folder.
+Quick-reference architecture, data paths, checks, and release workflow: [docs/develop.md](docs/develop.md).
 
 The four side stacks: left top is Sessions, Search, Bookmarks (opens on Sessions). Left bottom is Agents, Recent
 (opens on Agents). Right top is Quotas, Properties, Files, Changes, Insights, Notes (opens on Quotas). Right bottom is

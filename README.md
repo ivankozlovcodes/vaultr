@@ -149,7 +149,7 @@ To remove the Vaultr layout and mod links, revert its keybindings in `keys.json`
 ```
 
 ### 4. Tests
-The suite needs no Herdr window and runs in about 145 seconds (`930+` tests): `python3 -m unittest discover -s test`. Rules for contributors are in [AGENTS.md](AGENTS.md).
+The suite needs no Herdr window and runs in about 145 seconds (`940+` tests): `python3 -m unittest discover -s test`. Developer setup, checks, and release workflow are in [docs/develop.md](docs/develop.md); contributor rules are in [AGENTS.md](AGENTS.md).
 
 ---
 

@@ -1,9 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
 ### Added
 
+- **Antigravity plan-quota collector (`mods/ob-feed/providers/antigravity/quota.py`, `manifest.json`)**:
+  Adds `"quota"` capability to the Antigravity provider, verifying the state
+  directory and binary markers before running `<binary> -p /usage --output-format json`,
+  supporting `$ANTIGRAVITY_CLI_DIR` / `$ANTIGRAVITY_BIN` and optional
+  `antigravity.json` overrides in the Herdr app folder, with unit tests in
+  `test/test_provider_antigravity.py`.
+- **Developer guide (`docs/develop.md`)**: Documents repository layout,
+  architectural rules, data paths, check commands, live testing, and release
+  tagging.
 - **Feedback bundles (`mods/ob-feedback/`, `kit/feedback_bundle.js`, `mods/ob-settings/feedback.js`, `ob-tabs`, `ob-footer`, `keys/vaultr-keys.json`)**:
   Captures an unobstructed window screenshot (`herdr-app shot`), annotated UI
   tree dump, and sanitized diagnostics (`data/ob-feedback/`) before opening
@@ -96,6 +105,9 @@
 
 ### Fixed
 
+- **macOS installer tests (`test/test_install.py`)**: Default `VAULTR_OS=Linux`
+  in `run()` and canonicalize symlink targets with `os.path.realpath()` so the
+  full test suite passes natively on macOS as well as Linux.
 - **Layout table cleanup (`kit/kit.js`)**: Drops unused `NODE.feed` and
   `NODE.statusRow` entries.
 - **Settings default hotkey (`mods/ob-settings/registry.js`)**: Adds the `Open
