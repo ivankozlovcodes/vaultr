@@ -2,5 +2,5 @@
   "id": "antigravity",
   "name": "Antigravity",
   "noun": "Antigravity agent",
-  "caps": ["title", "transcript"]
+  "caps": ["title", "transcript", "quota"]
 }

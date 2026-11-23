@@ -2,6 +2,7 @@
 import home_guard  # noqa: F401  (first: every test on a throwaway home)
 import ast
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(home_guard.ROOT)
 PROVIDERS_DIR = ROOT / "mods" / "ob-feed" / "providers"
@@ -128,7 +130,7 @@ class AntigravityBoundaries(unittest.TestCase):
             "id": "antigravity",
             "name": "Antigravity",
             "noun": "Antigravity agent",
-            "caps": ["title", "transcript"],
+            "caps": ["title", "transcript", "quota"],
         })
 
         allowed_dots = {".gemini", ".system_generated"}
@@ -136,7 +138,7 @@ class AntigravityBoundaries(unittest.TestCase):
         quoted_dot = re.compile(r"""(["'])(\.[A-Za-z0-9_-]+)\1""")
         str_dot = re.compile(r"(?:^|/)(\.[A-Za-z0-9_-]+)")
         for p in sorted(AGY_DIR.iterdir()):
-            if not p.is_file():
+            if not p.is_file() or p.name == "quota.py":
                 continue
             src = _read_text(p)
             with self.subTest(file=p.name):
@@ -546,6 +548,7 @@ class AntigravityTranscriptAndFacade(unittest.TestCase):
                 '  caps: cap.caps,\n'
                 '  canTitle: cap.can("title"),\n'
                 '  canTx: cap.can("transcript"),\n'
+                '  canQuota: cap.can("quota"),\n'
                 '  canUsage: cap.can("usage"),\n'
                 '  tx,\n'
                 '  usg,\n'
@@ -558,12 +561,14 @@ class AntigravityTranscriptAndFacade(unittest.TestCase):
 
             self.assertEqual(got["title"], "Port check")
             self.assertEqual(got["prompts"], [])
-            self.assertEqual(got["caps"], ["title", "transcript"])
+            self.assertEqual(got["caps"], ["title", "transcript", "quota"])
             self.assertTrue(got["canTitle"])
             self.assertTrue(got["canTx"])
+            self.assertTrue(got["canQuota"])
             self.assertFalse(got["canUsage"])
             self.assertEqual(got["usg"]["reason"], "unsupported")
-            self.assertEqual(got["qt"]["reason"], "unsupported")
+            self.assertTrue(got["qt"]["ok"])
+            self.assertEqual(got["qt"]["providers"], [])
 
             tx = got["tx"]
             self.assertTrue(tx["ok"])
@@ -604,6 +609,172 @@ class AntigravityTranscriptAndFacade(unittest.TestCase):
                         recs.append(json.loads(line))
             with self.subTest(fixture=path.name):
                 self.assertIsNone(ns["sniff"](recs))
+
+
+def _load_quota():
+    spec = importlib.util.spec_from_file_location("antigravity_quota_py", AGY_DIR / "quota.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class AntigravityQuota(unittest.TestCase):
+    def setUp(self):
+        self.qpy = _load_quota()
+
+    def _make_exec(self, path, body):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+        return str(path)
+
+    def test_parse_structured_groups_and_models(self):
+        payload = {
+            "status": "SUCCESS",
+            "command": {
+                "name": "usage",
+                "data": {
+                    "plan": "Pro",
+                    "groups": [
+                        {
+                            "name": "Gemini Pro",
+                            "description": "Models within this group: Gemini 2.5 Pro, Gemini 2.5 Pro Preview (High)",
+                            "buckets": [
+                                {
+                                    "id": "gemini-pro-5h",
+                                    "name": "Five Hour Limit",
+                                    "window": "5h",
+                                    "remaining_fraction": 0.725,
+                                    "reset_time": "2026-11-24T16:40:48Z",
+                                },
+                            ],
+                        },
+                        {
+                            "name": "Gemini Flash",
+                            "description": "Models within this group: Gemini 2.5 Flash",
+                            "buckets": [
+                                {
+                                    "id": "flash-5h",
+                                    "name": "Five Hour Limit",
+                                    "window": "5h",
+                                    "remaining_fraction": 0.95,
+                                    "reset_time": "2026-11-24T18:00:00Z",
+                                },
+                                {
+                                    "id": "flash-weekly",
+                                    "name": "Weekly Limit",
+                                    "remaining_fraction": 0.80,
+                                    "reset_time": "soon",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+        }
+        got = self.qpy.parse_antigravity(json.dumps(payload))
+        self.assertEqual(got["state"], "ok")
+        self.assertEqual(got["plan"], "Pro")
+        wins = got["windows"]
+        self.assertEqual(len(wins), 3)
+        self.assertEqual(wins[0]["id"], "gemini-pro-5h")
+        self.assertEqual(wins[0]["label"], "Gemini Pro (5h)")
+        self.assertEqual(wins[0]["remainingPct"], 72.5)
+        self.assertEqual(wins[0]["usedPct"], 27.5)
+        self.assertIsInstance(wins[0]["resetAt"], int)
+        self.assertIn("gemini-2.5-pro", wins[0]["models"])
+        self.assertEqual(wins[2]["label"], "Gemini Flash · Weekly Limit")
+        self.assertEqual(wins[2]["resets"], "soon")
+        self.assertNotIn("resetAt", wins[2])
+
+    def test_parse_tsv_fallback_and_error_states(self):
+        tsv_payload = {
+            "status": "SUCCESS",
+            "response": "Gemini Pro\tTwenty Hour Limit\t88%\t2026-11-24T16:40:48Z\nGemini Flash\tTwenty Hour Limit\t100%\t2026-11-24T17:40:13Z\n",
+        }
+        got = self.qpy.parse_antigravity(json.dumps(tsv_payload))
+        self.assertEqual(got["state"], "ok")
+        self.assertEqual(len(got["windows"]), 2)
+        self.assertEqual(got["windows"][0]["remainingPct"], 88.0)
+        self.assertEqual(got["windows"][0]["usedPct"], 12.0)
+        self.assertEqual(self.qpy.parse_antigravity('{"error":"Not logged in. Run /login"}'), {"state": "signed-out"})
+        self.assertEqual(self.qpy.parse_antigravity('{"response":"No plan found (API key billing)"}'), {"state": "no-plan"})
+        self.assertEqual(self.qpy.parse_antigravity("not json")["state"], "unknown")
+
+    def test_missing_state_dir_never_opens_or_runs_binary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            bin_dir = tmp / "bin"
+            sentinel = tmp / "ran"
+            self._make_exec(bin_dir / "agy", f"#!/bin/sh\n# antigravity-cli\ntouch {sentinel}\n")
+            env = {"PATH": str(bin_dir), "HOME": str(tmp), "HERDR_APP_HOME": str(tmp / "app")}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(self.qpy, "HOME", str(tmp)), \
+                 mock.patch.object(self.qpy, "PATHS", []):
+                out = self.qpy.collect_quota({})
+                self.assertFalse(out["installed"])
+                self.assertEqual(out["state"], "absent")
+            self.assertFalse(sentinel.exists())
+
+    def test_fake_binary_without_evidence_is_never_executed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / ".gemini" / "antigravity-cli").mkdir(parents=True)
+            bin_dir = tmp / "bin"
+            sentinel = tmp / "ran"
+            self._make_exec(bin_dir / "agy", f"#!/bin/sh\ntouch {sentinel}\necho hi\n")
+            env = {"PATH": str(bin_dir), "HOME": str(tmp), "HERDR_APP_HOME": str(tmp / "app")}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(self.qpy, "HOME", str(tmp)), \
+                 mock.patch.object(self.qpy, "PATHS", []):
+                out = self.qpy.collect_quota({})
+                self.assertFalse(out["installed"])
+                self.assertEqual(out["state"], "absent")
+            self.assertFalse(sentinel.exists())
+
+    def test_verified_binary_runs_and_config_file_overrides_work(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "custom-state"
+            state_dir.mkdir(parents=True)
+            app_home = tmp / "app"
+            app_home.mkdir(parents=True)
+            bin_path = tmp / "bin" / "custom-cli"
+            sample = json.dumps({
+                "status": "SUCCESS",
+                "command": {
+                    "name": "usage",
+                    "data": {
+                        "groups": [{
+                            "name": "Gemini Pro",
+                            "description": "Models within this group: Gemini 2.5 Pro",
+                            "buckets": [{
+                                "id": "pro-5h",
+                                "window": "5h",
+                                "remaining_fraction": 0.6,
+                                "reset_time": "2026-11-24T12:00:00Z",
+                            }],
+                        }],
+                    },
+                },
+            })
+            self._make_exec(bin_path, f"#!/bin/sh\n# remaining_fraction cloud_code_endpoint\nprintf '%s\\n' {json.dumps(sample)}\n")
+            (app_home / "antigravity.json").write_text(json.dumps({
+                "dir": str(state_dir),
+                "bin": str(bin_path),
+                "name": "Custom CLI",
+            }), encoding="utf-8")
+            env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp), "HERDR_APP_HOME": str(app_home)}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(self.qpy, "HOME", str(tmp)), \
+                 mock.patch.object(self.qpy, "PATHS", []):
+                out = self.qpy.collect_quota({})
+                self.assertTrue(out["installed"])
+                self.assertEqual(out["state"], "ok")
+                self.assertEqual(out["name"], "Custom CLI")
+                self.assertEqual(len(out["windows"]), 1)
+                self.assertEqual(out["windows"][0]["remainingPct"], 60.0)
+                self.assertIn("custom-cli", out["match"]["bins"])
 
 
 if __name__ == "__main__":
