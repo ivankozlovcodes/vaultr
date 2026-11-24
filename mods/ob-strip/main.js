@@ -5,17 +5,18 @@
 // its strip too, so the bottom strip of that side then draws the top strip's window buttons or sidebar toggle.
 // props: { stack, side: "left"|"right", place: "top"|"bottom", windowButtons?: bool }
 // Commands (ob-strip.<cmd>, every shown copy gets them; each acts only on its own stack):
-//   select:<child>   move:<child>@<targetStack>   hide-group:<stack>   show-group:<stack>   overflow:<stack>
+//   select:<child>   move:<child>@<targetStack>   reorder:<from>@<to>   hide-group:<stack>   show-group:<stack>   overflow:<stack>
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { layout, props, run, nextCommand, settings, agents, terminals, shared, window as appWindow } from "herdr";
+import { layout, props, run, nextCommand, settings, agents, terminals, shared, setShared, window as appWindow } from "herdr";
 import {
-  S, NODE, icon, iconButton, stripTab, viewInfo, findNode, findParent, openMenu, subagentCounts, alpha, stop, tc,
+  S, NODE, icon, iconButton, stripTab, viewInfo, findNode, openMenu, subagentCounts, alpha, stop, tc,
   agentAttention, attentionCounts, getDismissed, terminalsByAddress, chordLabel, bindingFor, lightsLeftPad,
 } from "./kit.js";
 import { HALVES, halfAction, standInFor } from "./halves.js";
 import { stripView } from "./strip_view.js";
+import { reorderStack, moveBetweenStacks, activeStripDrag } from "./reorder.js";
 
 // Append the live chord from keys.json (e.g. "(Ctrl+B)" or "(⌘B)" on macOS) to a tooltip title.
 const tip = (title, action) => { const k = bindingFor(action); return k ? `${title} (${chordLabel(k)})` : title; };
@@ -34,6 +35,12 @@ const siblingGroup = (stack) => ({ [NODE.leftTopStack]: NODE.leftBottomStack, [N
 export default class Strip extends View {
   init(_p, cx) {
     this.width = 0;
+    this.pressed = null;
+    this.pressPos = null;
+    this.over = null;
+    this.hoverStrip = false;
+    this.dragPublished = false;
+    this.dragToken = 0;
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -41,6 +48,30 @@ export default class Strip extends View {
         try { cx.notify(); } catch { return; }
       }
     });
+  }
+
+  activeDrag() {
+    const ext = activeStripDrag(shared("ob.stripDrag"));
+    if (ext) return ext;
+    return this.pressed ? { fromStack: this.mine(), childId: this.pressed } : null;
+  }
+
+  publishDrag(stackId, childId) {
+    if (this.dragPublished || !stackId || !childId) return;
+    this.dragPublished = true;
+    setShared("ob.stripDrag", { fromStack: stackId, childId, at: Date.now() });
+  }
+
+  clearDrag(clearShared = true) {
+    this.pressed = null;
+    this.pressPos = null;
+    this.over = null;
+    this.hoverStrip = false;
+    const wasPublished = this.dragPublished;
+    this.dragPublished = false;
+    if (clearShared && (wasPublished || shared("ob.stripDrag"))) {
+      setShared("ob.stripDrag", null);
+    }
   }
 
   mine() { return props()?.stack; }
@@ -53,8 +84,11 @@ export default class Strip extends View {
     if (verb === "select") {
       if (stack.children?.some((ch) => ch.id === arg)) run("layout.select", { stack: stack.id, child: arg });
     } else if (verb === "move") {
-      const [child, target] = arg.split("@");
-      if (stack.children?.some((ch) => ch.id === child)) await moveView(child, target);
+      const [child, target, before = null] = arg.split("@");
+      if (stack.children?.some((ch) => ch.id === child)) moveView(child, target, before || null);
+    } else if (verb === "reorder") {
+      const [fromId, toId] = arg.split("@");
+      if (fromId && toId) reorderInStack(stack.id, fromId, toId);
     } else if (verb === "hide-group" && arg === stack.id) {
       run("layout.hide", { id: groupNode(stack.id) });
     } else if (verb === "show-group" && arg === siblingGroup(stack.id)) {
@@ -134,20 +168,127 @@ export default class Strip extends View {
     // The view decides the label, tooltips and the half control (strip_view.js); this draws them as a bar.
     const named = (list) => list.map((c) => ({ id: c.id, ...viewInfo(c) }));
     const view = stripView({ kids: named(kids), shown: named(shown), active, half });
-    return h_flex().id("strip").size_full().pl(leftPad).pr(S.pad).gap(3).items_center().bg(t.raised)
-      .border_b(1).border_color(t.border)
+    const drag = this.activeDrag();
+    const isCrossTarget = Boolean(drag && stack && drag.fromStack !== stack.id && this.hoverStrip);
+    const pressedIdx = view.tabs.findIndex((x) => x.id === (drag?.fromStack === stack?.id ? drag.childId : null));
+    return h_flex().id("strip").size_full().pl(leftPad).pr(S.pad).gap(3).items_center()
+      .bg(isCrossTarget ? alpha(t.accent, 0.10) : t.raised)
+      .border_b(isCrossTarget ? 2 : 1).border_color(isCrossTarget ? t.accent : t.border)
       .on_size_change((size, cx) => { if (Math.abs(size.width - this.width) > 1) { this.width = size.width; cx.notify(); } })
+      .on_mouse_move((_e, cx) => {
+        const d = this.activeDrag();
+        if (d && stack && d.fromStack !== stack.id && !this.hoverStrip) {
+          this.hoverStrip = true;
+          cx.notify();
+        }
+      })
+      .on_window_mouse_move((e, cx) => {
+        if (!this.pressed || this.dragPublished || !stack) return;
+        const pos = e?.position;
+        if (!this.pressPos || !pos || Math.hypot(pos.x - this.pressPos.x, pos.y - this.pressPos.y) >= 4) {
+          this.publishDrag(stack.id, this.pressed);
+          cx.notify();
+        }
+      })
+      .on_mouse_up("left", (_e, cx) => {
+        const d = this.activeDrag();
+        if (d && stack && d.fromStack !== stack.id && this.hoverStrip) {
+          moveView(d.childId, stack.id, null);
+          this.clearDrag(true);
+          cx.notify();
+          return;
+        }
+        if (this.pressed || this.hoverStrip || this.over) {
+          this.clearDrag(true);
+          cx.notify();
+        }
+      })
+      .on_window_mouse_up("left", (_e, cx) => {
+        if (!this.pressed && !this.hoverStrip && !this.over && !this.dragPublished) return;
+        const token = this.dragToken;
+        // Defer cleanup one tick so a target strip's on_mouse_up always reads ob.stripDrag first.
+        const finish = (cx2) => {
+          if (this.dragToken !== token) return;
+          const ownShared = activeStripDrag(shared("ob.stripDrag"))?.fromStack === stack?.id;
+          this.clearDrag(this.dragPublished || ownShared);
+          cx2?.notify?.();
+        };
+        if (typeof cx?.timer?.after === "function") cx.timer.after(0, finish);
+        else finish(cx);
+      })
+      .on_hover((h, cx) => {
+        if (!h) {
+          const had = Boolean(this.over || this.hoverStrip);
+          this.over = null;
+          this.hoverStrip = false;
+          if (this.pressed && stack) this.publishDrag(stack.id, this.pressed);
+          if (had) cx.notify();
+          return;
+        }
+        const d = this.activeDrag();
+        if (d && stack && d.fromStack !== stack.id && !this.hoverStrip) {
+          this.hoverStrip = true;
+          cx.notify();
+        }
+      })
       .when(!stack, (e) => e.child(div().text_size(S.textXs).text_color(t.dim).child(`ob-strip: no stack "${p.stack}"`)))
-      .children(view.tabs.map((tab) => {
+      .children(view.tabs.map((tab, i) => {
         const c = kids.find((k) => k.id === tab.id);
         const b = this.badge(c.id);
+        const dragging = Boolean(drag && drag.childId === c.id && (drag.fromStack !== stack.id || this.dragPublished || (this.over && this.over !== c.id)));
+        const dropHere = Boolean(drag && drag.childId !== c.id && this.over === c.id);
+        const crossDropHere = Boolean(dropHere && drag.fromStack !== stack.id);
         return stripTab({
           id: `tab-${c.id}`, icon: tab.icon, title: tab.tip, active: tab.active,
           badge: b?.n, badgeColor: b?.color,
-          onClick: () => run("layout.select", { stack: stack.id, child: c.id }),
           onRight: () => this.menu(stack, c),
-        }).when(tab.active, (e) => e.child(div().absolute().left(6).right(6).bottom(0).h(2).rounded(S.radius).bg(t.accent)));
+        })
+          .when(dragging, (e) => e.opacity(0.45))
+          .on_hover((h, cx) => {
+            if (!h) {
+              if (this.pressed === c.id && stack) this.publishDrag(stack.id, c.id);
+              if (this.over === c.id) { this.over = null; cx.notify(); }
+            }
+          })
+          .on_mouse_down("left", (e, cx) => {
+            cx.stop_propagation();
+            this.dragToken += 1;
+            this.pressed = c.id;
+            this.pressPos = e?.position ? { x: e.position.x, y: e.position.y } : null;
+            this.over = c.id;
+            this.dragPublished = false;
+          })
+          .on_mouse_move((_e, cx) => {
+            const d = this.activeDrag();
+            if (!d) return;
+            if (this.pressed && this.pressed !== c.id && stack) this.publishDrag(stack.id, this.pressed);
+            let changed = false;
+            if (d.fromStack !== stack.id && !this.hoverStrip) { this.hoverStrip = true; changed = true; }
+            if (this.over !== c.id) { this.over = c.id; changed = true; }
+            if (changed) cx.notify();
+          })
+          .on_mouse_up("left", (_e, cx) => {
+            cx.stop_propagation();
+            const d = this.activeDrag();
+            const fromPressed = this.pressed;
+            const over = this.over;
+            if (d && d.fromStack !== stack.id) {
+              moveView(d.childId, stack.id, c.id);
+              this.clearDrag(true);
+              cx.notify();
+              return;
+            }
+            this.clearDrag(true);
+            if (fromPressed && fromPressed !== c.id && over === c.id) reorderInStack(stack.id, fromPressed, c.id);
+            else if (fromPressed === c.id && over === c.id) run("layout.select", { stack: stack.id, child: c.id });
+            cx.notify();
+          })
+          .when(tab.active, (e) => e.child(div().absolute().left(6).right(6).bottom(0).h(2).rounded(S.radius).bg(t.accent)))
+          .when(dropHere, (e) => e.child(div().absolute().top(4).bottom(4).w(2).rounded(1).bg(t.accent)
+            .when(crossDropHere || pressedIdx > i, (l) => l.left(0))
+            .when(!crossDropHere && pressedIdx >= 0 && pressedIdx < i, (l) => l.right(0))));
       }))
+      .when(isCrossTarget && !this.over, (e) => e.child(div().id("strip-drop-end").w(2).h(20).rounded(1).flex_none().bg(t.accent)))
       .when(kids.length > shown.length, (e) => e.child(iconButton({ id: "overflow", icon: "chevron-down", size: S.tab, tip: "More views", onClick: () => this.overflowMenu(stack, fit) })))
       // Empty strip: drags the window (top strips are window_drag blocks); right-click: group menu.
       .child(h_flex().id("strip-fill").flex_1().min_w(0).h_full().items_center().px(4)
@@ -169,19 +310,14 @@ function splitCmd(c) {
   return i < 0 ? [String(c), ""] : [c.slice(0, i), c.slice(i + 1)];
 }
 
-// Move a view (stack child) to another stack by rewriting the personal layout file through
-// layout.set (verified: replaces the tree of a personal layout and rewrites its file).
-// The live tree (layout(): the file merged with clicks: sizes, hidden, active) is the base, so the
-// rewrite keeps what the person sees; a tree read from the file would reset every stack's active child.
-async function moveView(childId, targetStack) {
-  const tree = JSON.parse(JSON.stringify(layout()));
-  const from = findParent(tree, childId);
-  const to = findNode(tree, targetStack);
-  if (!from || from.type !== "stack" || !to || to.type !== "stack" || from === to) return;
-  const node = from.children.find((c) => c.id === childId);
-  from.children = from.children.filter((c) => c.id !== childId);
-  if (from.active === childId) from.active = from.children[0]?.id;
-  to.children = [...(to.children ?? []), node];
-  to.active = childId;
-  run("layout.set", { layout: tree });
+// Move a view (stack child) to another stack (optionally before `beforeChildId`) by rewriting the personal layout
+// through layout.set. The live tree (layout()) is the base so every stack's active child and sizes are preserved.
+function moveView(childId, targetStack, beforeChildId = null) {
+  const tree = moveBetweenStacks(layout(), childId, targetStack, beforeChildId);
+  if (tree) run("layout.set", { layout: tree });
+}
+
+function reorderInStack(stackId, fromId, toId) {
+  const tree = reorderStack(layout(), stackId, fromId, toId);
+  if (tree) run("layout.set", { layout: tree });
 }
