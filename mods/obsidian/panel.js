@@ -4,6 +4,7 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { nextCommand, notify, run, theme, watchFolder } from "herdr";
 import * as vault from "./vault.js";
+import { vaultAbsPath } from "./config.js";
 
 const ICON = (name) => `mods/obsidian/${name}.svg`;
 const RECENT = 8;
@@ -194,10 +195,12 @@ export class Panel {
       .child(header)
       .child(v_flex().id("panel-scroll").flex_1().min_h(0).overflow_y_scrollbar().py(6).px(6)
         .children(rows.map((row, i) => {
+          const absPath = row.kind === "folder" || row.kind === "note" ? vaultAbsPath(this.root, row.path) : null;
           const base = h_flex().id(row.id).h(ROW).flex_none().gap(6).items_center().rounded(6).cursor_pointer()
             .pl(8 + row.depth * 14 || 8).pr(8)
             .when(i === this.at && this.handle.is_focused?.(), (el) => el.bg(t.selected))
             .hover((s) => s.bg(t.hover))
+            .when(Boolean(absPath), (el) => el.drag_paths([absPath], { on: null }))
             .on_click((e, cx) => { this.at = i; this.activate(row, e.modifiers.platform || e.modifiers.control ? "obsidian" : e.modifiers.shift ? "editor" : "viewer"); cx.notify(); });
           if (row.kind === "section") {
             return base.mt(i ? 8 : 0)

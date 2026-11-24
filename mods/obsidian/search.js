@@ -6,6 +6,7 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { closeOverlay, nextCommand, notify, props, readTextFile, theme } from "herdr";
 import * as vault from "./vault.js";
 import * as agent from "./agent.js";
+import { vaultAbsPath } from "./config.js";
 
 const ICON = (name) => `mods/obsidian/${name}.svg`;
 const WINDOW = 10;
@@ -36,8 +37,12 @@ export class Search {
     this.input.focus();
     cx.timer.after(400, () => this.input.focus());
     cx.spawn(async (cx) => {
-      try { this.all = await vault.notes(true); this.name = (await vault.config()).name; }
-      catch (e) { this.error = String(e?.message ?? e); }
+      try {
+        this.all = await vault.notes(true);
+        const cfg = await vault.config();
+        this.name = cfg.name;
+        this.root = cfg.root;
+      } catch (e) { this.error = String(e?.message ?? e); }
       this.update(cx);
     });
     cx.spawn(async (cx) => {
@@ -236,9 +241,11 @@ export class Search {
         .when(Boolean(status), (el) => el.child(div().p(8).text_color(this.error || (mode === "reply" && this.replyError) ? t.blocked : t.muted).child(status ?? "")))
         .children(shown.map((row, i) => {
           const index = first + i, two = Boolean(row.snippet);
+          const absPath = row.path ? vaultAbsPath(this.root, row.path) : null;
           return h_flex().id(`row-${row.key}`).h(two ? 46 : 34).flex_none().px(10).gap(10).items_center().rounded(7).cursor_pointer()
             .when(index === this.at, (el) => el.bg(t.selected))
             .hover((s) => s.bg(t.hover))
+            .when(Boolean(absPath), (el) => el.drag_paths([absPath], { on: null }))
             .on_click((e, cx) => { this.at = index; this.submit(e.modifiers.alt ? "agent" : e.modifiers.platform || e.modifiers.control ? "obsidian" : e.modifiers.shift ? "editor" : "viewer", cx); })
             .child(svg(ICON(row.icon)).size(14).flex_none().text_color(row.create || row.capture || row.today || row.toReply || row.saveReply ? t.accent : t.muted))
             .child(v_flex().flex_1().min_w(0).gap(2)

@@ -168,3 +168,112 @@ class WiringNoVault(unittest.TestCase):
         self.assertIn("No vault set.", src)
         self.assertIn("Set vault…", src)
         self.assertIn('run("ob-tabs.settings:vault")', src)
+
+class VaultAbsPath(unittest.TestCase):
+    def test_joins_unix_and_windows_roots_with_notes_and_folders(self):
+        self.assertEqual(call("vaultAbsPath", "/srv/vault", "Projects/Plan.md"), "/srv/vault/Projects/Plan.md")
+        self.assertEqual(call("vaultAbsPath", "/srv/vault/", "/Projects/Sub"), "/srv/vault/Projects/Sub")
+        self.assertEqual(call("vaultAbsPath", "/", "Note.md"), "/Note.md")
+        self.assertEqual(call("vaultAbsPath", "C:\\Vault\\", "Projects/Plan.md"), "C:\\Vault\\Projects\\Plan.md")
+
+    def test_rejects_relative_root_empty_rel_or_control_chars(self):
+        self.assertIsNone(call("vaultAbsPath", "Vault", "Note.md"))
+        self.assertIsNone(call("vaultAbsPath", "/srv/vault", ""))
+        self.assertIsNone(call("vaultAbsPath", None, "Note.md"))
+        self.assertIsNone(call("vaultAbsPath", "/srv/vault", "bad\n.md"))
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class PanelDragPaths(unittest.TestCase):
+    """Notes panel renders local drag_paths({ on: null }) on note and folder rows, not section headers."""
+
+    def test_panel_renders_drag_paths_for_notes_and_folders_only(self):
+        import tempfile
+        from pathlib import Path
+        node = shutil.which("node")
+        with tempfile.TemporaryDirectory(prefix="obsidian-drag-") as folder:
+            mod_dir = Path(folder)
+            shutil.copy(CONFIG, mod_dir / "config.js")
+            panel_src = Path(PANEL).read_text(encoding="utf-8")
+            panel_src = (panel_src
+                         .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                         .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                         .replace('from "herdr"', 'from "./herdr.js"'))
+            (mod_dir / "panel.js").write_text(panel_src, encoding="utf-8")
+            (mod_dir / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            (mod_dir / "gpui-kit.js").write_text(
+                "export const elements = new Map();\n"
+                "export function makeEl() {\n"
+                "  const rec = { id: null, drag: null, click: null };\n"
+                "  const p = new Proxy(() => p, {\n"
+                "    get(_t, prop) {\n"
+                "      if (prop === '__rec') return rec;\n"
+                "      if (prop === 'id') return (v) => { rec.id = v; elements.set(v, rec); return p; };\n"
+                "      if (prop === 'when') return (c, fn) => { if (c) fn(p); return p; };\n"
+                "      if (prop === 'drag_paths') return (paths, opts) => { rec.drag = { paths, opts }; return p; };\n"
+                "      if (prop === 'on_click') return (fn) => { rec.click = fn; return p; };\n"
+                "      return () => p;\n"
+                "    },\n"
+                "  });\n"
+                "  return p;\n"
+                "}\n"
+                "export const div = () => makeEl();\n"
+                "export const svg = () => makeEl();\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "gpui-base.js").write_text(
+                'import { makeEl } from "./gpui-kit.js";\nexport const h_flex = () => makeEl(), v_flex = () => makeEl();\n',
+                encoding="utf-8",
+            )
+            (mod_dir / "herdr.js").write_text(
+                "export const nextCommand = () => new Promise(() => {});\n"
+                "export const notify = () => {};\n"
+                "export const run = () => {};\n"
+                "export const theme = () => ({ chrome: '#111', border: '#222', hover: '#333', selected: '#444', foreground: '#fff', muted: '#aaa', dim: '#777', input: '#555', blocked: '#f00' });\n"
+                "export const watchFolder = () => new Promise(() => {});\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "vault.js").write_text(
+                "export const opened = [];\n"
+                "export const config = async () => ({ root: '/srv/vault', name: 'Vault' });\n"
+                "export const notes = async () => ['Projects/Plan.md', 'Inbox.md'];\n"
+                "export const stamp = async () => 's1';\n"
+                "export const title = (p) => p.split('/').pop().replace(/\\.md$/i, '');\n"
+                "export const folderOf = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');\n"
+                "export const open = (p, how) => opened.push([p, how]);\n"
+                "export const today = async () => 'Today.md';\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import {{ Panel }} from "{(mod_dir / "panel.js").as_uri()}";\n'
+                f'import {{ elements }} from "{(mod_dir / "gpui-kit.js").as_uri()}";\n'
+                f'import {{ opened }} from "{(mod_dir / "vault.js").as_uri()}";\n'
+                "globalThis.localStorage = { getItem: () => null, setItem() {} };\n"
+                "const tasks = [];\n"
+                "const cx = { focus_handle: () => ({ focus() {}, is_focused: () => false }), spawn: (fn) => { tasks.push(fn(cx)); }, timer: { every: () => {}, after: () => {} }, notify: () => {} };\n"
+                "const p = new Panel();\n"
+                "p.init(cx);\n"
+                "await tasks[0];\n"
+                "p.open.add('Projects');\n"
+                "p.render();\n"
+                "elements.get('n:Projects/Plan.md').click({ modifiers: {} }, cx);\n"
+                "console.log(JSON.stringify({\n"
+                "  secRecent: elements.get('recent')?.drag ?? null,\n"
+                "  secFiles: elements.get('files')?.drag ?? null,\n"
+                "  recentNote: elements.get('r:Projects/Plan.md')?.drag ?? null,\n"
+                "  folder: elements.get('f:Projects')?.drag ?? null,\n"
+                "  treeNote: elements.get('n:Projects/Plan.md')?.drag ?? null,\n"
+                "  rootNote: elements.get('n:Inbox.md')?.drag ?? null,\n"
+                "  opened,\n"
+                "}));\n"
+            )
+            res = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            got = json.loads(res.stdout)
+            self.assertIsNone(got["secRecent"])
+            self.assertIsNone(got["secFiles"])
+            self.assertEqual(got["recentNote"], {"paths": ["/srv/vault/Projects/Plan.md"], "opts": {"on": None}})
+            self.assertEqual(got["folder"], {"paths": ["/srv/vault/Projects"], "opts": {"on": None}})
+            self.assertEqual(got["treeNote"], {"paths": ["/srv/vault/Projects/Plan.md"], "opts": {"on": None}})
+            self.assertEqual(got["rootNote"], {"paths": ["/srv/vault/Inbox.md"], "opts": {"on": None}})
+            self.assertEqual(got["opened"], [["Projects/Plan.md", "viewer"]])

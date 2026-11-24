@@ -52,3 +52,14 @@ export function noVault() {
 export function settingsStamp(ownText, dailyText) {
   return JSON.stringify([ownText ?? null, dailyText ?? null]);
 }
+
+// Absolute path for a vault-relative note or folder path; null when root is not absolute or rel is empty.
+export function vaultAbsPath(root, rel) {
+  const base = typeof root === "string" ? root.trim() : "";
+  const sub = typeof rel === "string" ? rel.trim().replace(/^[/\\]+/, "") : "";
+  if (!base || !sub || !ABSOLUTE.test(base) || /[\x00-\x1f\x7f]/.test(base) || /[\x00-\x1f\x7f]/.test(sub)) return null;
+  const sep = base.includes("\\") && !base.includes("/") ? "\\" : "/";
+  const cleanBase = base.replace(/(.)[\\/]+$/, "$1");
+  const cleanSub = sep === "\\" ? sub.replace(/\//g, "\\") : sub.replace(/\\/g, "/");
+  return cleanBase.endsWith(sep) ? `${cleanBase}${cleanSub}` : `${cleanBase}${sep}${cleanSub}`;
+}
