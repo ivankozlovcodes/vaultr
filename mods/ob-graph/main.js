@@ -243,6 +243,8 @@ export default class Graph extends View {
     this.looping = true;
     this.cx.spawn(async (cx) => {
       try {
+        // Yield out of the synchronous render call before notifying GPUI.
+        await cx.sleep(0);
         while (this.wantsFrames()) {
           tick(this.sim);
           this.autoFit(this.g);
@@ -519,8 +521,8 @@ export default class Graph extends View {
         .child(modeGroup).child(touchGroup).child(div().flex_1()).child(zoomGroup);
     }
     return v_flex().id("gtb").absolute().top(6).left(6).right(6).gap(4)
-      .child(h_flex().h(26).gap(4).items_center().child(modeGroup).child(touchGroup))
-      .child(h_flex().h(26).items_center().child(div().flex_1()).child(zoomGroup));
+      .child(h_flex().h(26).gap(4).items_center().child(modeGroup))
+      .child(h_flex().h(26).gap(4).items_center().child(touchGroup).child(div().flex_1()).child(zoomGroup));
   }
 
   hitNode(mx, my) {

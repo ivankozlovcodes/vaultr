@@ -1968,6 +1968,15 @@ class LabelPlacementAndDepth(unittest.TestCase):
         self.assertIn('"g-foot-depth"', src)
         self.assertIn('nodes.delete("m:local")', src)
 
+    def test_startLoop_yields_before_notify_and_narrow_toolbar_separates_touchGroup(self):
+        src = MAIN.read_text(encoding="utf-8")
+        loop = src[src.index("  startLoop() {"):]
+        loop = loop[:loop.index("\n  }\n")]
+        self.assertIn("await cx.sleep(0);", loop)
+        self.assertLess(loop.index("await cx.sleep(0);"), loop.index("cx.notify()"))
+        self.assertIn(".child(h_flex().h(26).gap(4).items_center().child(modeGroup))", src)
+        self.assertIn(".child(h_flex().h(26).gap(4).items_center().child(touchGroup).child(div().flex_1()).child(zoomGroup))", src)
+
 
 if __name__ == "__main__":
     unittest.main()
