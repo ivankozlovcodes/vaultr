@@ -21,7 +21,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import {
-  spaces, panes, run, layout, nextCommand, setShared, shared as _shared, focused, settings, openOverlay, notify,
+  spaces, panes, run, layout, nextCommand, setShared, shared as _shared, focused, settings, openOverlay, closeOverlay, notify,
   readTextFile, writeTextFile, exec, home, appHome, window as appWindow,
 } from "herdr";
 import { vaultFor } from "./vault_rules.js";
@@ -263,10 +263,11 @@ export default class Tabs extends View {
   }
 
   // The quick switcher, at the top center of the window like Obsidian's.
-  // An already-open switcher keeps its state and ignores new props, so the mode is also sent to it as a command.
+  // Close any prior switcher overlay we opened before opening a new one so switching modes never stacks duplicates.
   switcher(mode) {
     const m = ["go", "move", "views", "commands"].includes(mode) ? mode : "go";
-    openOverlay({ mod: "ob-switcher", kind: "popup", at: "top", offset: 48, width: 660, height: 0.72, props: { mode: m } });
+    if (this.switcherOverlayId) closeOverlay(this.switcherOverlayId);
+    this.switcherOverlayId = openOverlay({ mod: "ob-switcher", kind: "popup", at: "top", offset: 48, width: 660, height: 0.72, props: { mode: m } });
     run(`ob-switcher.mode:${m}`);
   }
 

@@ -306,6 +306,13 @@ class OpenPlan(unittest.TestCase):
         self.assertNotIn('"herdr"', pure)
         self.assertNotIn("kit.js", pure)
 
+    def test_switcher_closes_previous_overlay_before_opening_new_one(self):
+        src = Path(ROOT, "mods", "ob-tabs", "main.js").read_text(encoding="utf-8")
+        body = src[src.index("  switcher(mode) {"):]
+        body = body[:body.index("\n  }\n")]
+        self.assertIn("closeOverlay(this.switcherOverlayId)", body)
+        self.assertIn("this.switcherOverlayId = openOverlay(", body)
+
 
 if __name__ == "__main__":
     unittest.main()

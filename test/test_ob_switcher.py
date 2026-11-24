@@ -408,14 +408,14 @@ class TitleWiring(unittest.TestCase):
 
 
 class AgentNames(unittest.TestCase):
-    """An agent row in the switcher is named by its session title (kit sessionTitleOf), else its program, not its raw
-    terminal title, which is a task line that changes."""
+    """An agent row in the switcher uses the kit's shared paneLabelOf rule (manual pane.name -> sessionTitle -> telling
+    live title -> program), matching Sessions, Graph, Outline, and Agents."""
 
     def setUp(self):
         self.src = Path(ROOT, "mods", "ob-switcher", "main.js").read_text(encoding="utf-8")
 
-    def test_an_agent_row_is_labelled_by_its_session_title_then_its_program(self):
-        self.assertIn('label: sessionTitleOf(a.address) || a.program?.name || a.app || "agent"', self.src)
+    def test_an_agent_row_is_labelled_by_the_kit_paneLabelOf_rule(self):
+        self.assertIn("const agentLabel = paneLabelOf(w?.pane ?? a);", self.src)
 
 
 def el_stub_js():
@@ -485,7 +485,7 @@ class OverlayKeyContext(unittest.TestCase):
             )
             kit_fns = [
                 "tc", "alpha", "icon", "programIcon", "avatar", "statusMark", "fuzzy", "highlight",
-                "machineLabel", "tabLabel", "feed", "bookmarks", "findNode", "current", "chordParts",
+                "machineLabel", "tabLabel", "paneLabelOf", "feed", "bookmarks", "findNode", "current", "chordParts",
                 "kbd", "sessionTitleOf", "normHidden", "isSpaceHidden", "isTabHidden", "patchHidden",
                 "updateHidden", "getHidden", "parentAddrOf",
             ]
@@ -639,6 +639,14 @@ class OverlayKeyContext(unittest.TestCase):
             self.assertEqual(got["atAfterEnd"], 1)
             self.assertEqual(got["ran"], [["cmd.two", {}]])
             self.assertEqual(got["closed"], ["menu-ov", "menu-ov"])
+
+
+class SwitcherDedupeAndNaming(unittest.TestCase):
+    def test_dedupe_command_closes_stale_overlay_and_agent_rows_use_paneLabelOf(self):
+        src = Path(ROOT, "mods", "ob-switcher", "main.js").read_text(encoding="utf-8")
+        self.assertIn('if (verb === "dedupe") { if (arg && arg !== props()?.overlay) this.close(); return; }', src)
+        self.assertIn("run(`ob-switcher.dedupe:${myOverlay}`)", src)
+        self.assertIn("const agentLabel = paneLabelOf(w?.pane ?? a);", src)
 
 
 if __name__ == "__main__":

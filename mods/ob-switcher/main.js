@@ -19,8 +19,8 @@ import {
   window as appWindow,
 } from "herdr";
 import {
-  S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel,
-  provider, bookmarks, VIEWS, findNode, current, chordParts, kbd, sessionTitleOf,
+  S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel, paneLabelOf,
+  provider, bookmarks, VIEWS, findNode, current, chordParts, kbd,
   normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden, parentAddrOf,
 } from "./kit.js";
 import { commandRows, VAULTR_COMMANDS } from "./commands.js";
@@ -67,6 +67,9 @@ export default class Switcher extends View {
     }
     this.input = this.inputs[this.mode];
     if (m === "commands") { this.query = ">"; this.input.set_value(">"); }
+    // If another ob-switcher overlay is already open (e.g. opened via mod.open:ob-switcher), ask it to close.
+    const myOverlay = props()?.overlay;
+    if (myOverlay) run(`ob-switcher.dedupe:${myOverlay}`);
     this.input.focus();
     cx.timer.after(60, () => this.input.focus());
     cx.spawn(async (cx) => {
@@ -105,6 +108,7 @@ export default class Switcher extends View {
     const verb = i < 0 ? s : s.slice(0, i);
     const arg = i < 0 ? "" : s.slice(i + 1);
     if (verb === "close") return this.close();
+    if (verb === "dedupe") { if (arg && arg !== props()?.overlay) this.close(); return; }
     if (verb === "focus") return this.input.focus();
     if (verb === "mode") {
       if (arg === "move") this.setMode("move");
@@ -223,8 +227,9 @@ export default class Switcher extends View {
     for (const a of ag) {
       const w = where.get(a.address);
       const tl = w ? tabText(w.tab) : a.tab_name ?? "";
+      const agentLabel = paneLabelOf(w?.pane ?? a);
       items.push({
-        key: `agent:${a.address}`, kind: "agent", label: sessionTitleOf(a.address) || a.program?.name || a.app || "agent",
+        key: `agent:${a.address}`, kind: "agent", label: agentLabel !== "Terminal" ? agentLabel : (a.program?.name || a.app || "agent"),
         context: `${a.program?.name ?? "agent"} · ${w ? ctxOf(w.space) : a.space_name ?? ""} / ${tl}`, words: `agent ${a.app ?? ""} ${tl}`,
         status: a.status, bookmarked: isBm("terminal", a.address), terminal: a.address,
         lead: () => programIcon(a.program, S.icon), go: () => run("agent.focus", { terminal: a.address }),
