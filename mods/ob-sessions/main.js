@@ -21,7 +21,7 @@ import {
 import {
   S, alpha, icon, programIcon, normStatus, RANK, statusMark, needsYou, iconButton, badge, treeRow,
   avatar, emptyState, inputFrame, openMenu, ago, dur, tilde, highlight, takeFocus, bindingFor,
-  chordLabel, isBookmarked, toggleBookmark, machineLabel, tabLabel, paneLabelOf, paneSecondary, place, openView,
+  chordLabel, isBookmarked, toggleBookmark, machineLabel, machineOf, tabLabel, paneLabelOf, paneSecondary, place, openView,
   mKeyOf, normHidden, isMachineHidden, isSpaceHidden, isTabHidden, patchHidden, getHidden, updateHidden,
   hasMod,
   paneAttention, tabAttention, spaceAttention, getDismissed, terminalsByAddress,
@@ -39,6 +39,26 @@ const SORTS = [
 const PALETTE = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
 const SUB_KINDS = new Set(["run", "agent", "child"]);
 const mkey = (m) => `m:${m ?? "local"}`;
+const ABS_PATH = /^([A-Za-z]:[\\/]|\/|\\\\)/;
+const isAbsPath = (p) => typeof p === "string" && p.length > 0 && !/[\x00-\x1f\x7f]/.test(p) && ABS_PATH.test(p);
+
+// Native drag-to-terminal payload for space rows (s.folder) and pane rows (p.cwd) with absolute paths.
+export function dragSpec(n) {
+  if (!n) return null;
+  if (n.kind === "space") {
+    const path = n.space?.folder;
+    if (!isAbsPath(path)) return null;
+    const addr = n.reps?.terminal ?? n.pane?.terminal ?? null;
+    return { paths: [path], on: machineOf(addr) ?? n.space?.machine ?? null };
+  }
+  if (n.kind === "pane") {
+    const path = n.pane?.cwd;
+    if (!isAbsPath(path)) return null;
+    const addr = n.pane?.terminal ?? n.reps?.terminal ?? null;
+    return { paths: [path], on: machineOf(addr) ?? n.space?.machine ?? null };
+  }
+  return null;
+}
 
 function load(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) ?? d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage off */ } }
@@ -948,10 +968,12 @@ export default class Sessions extends View {
       o.right.push(statusMark(it.status, S.iconXs));
     }
     let el = treeRow(o);
+    const dragOut = dragSpec(n);
     // Drag to reorder: spaces within their machine, tabs within their space (manual sort, no filter).
     const drag = !q && this.sort === "manual" && (n.kind === "space" || n.kind === "tab");
     const group = n.kind === "space" ? mkey(n.space.machine) : n.kind === "tab" ? n.space.id : null;
     el = el
+      .when(Boolean(dragOut), (e) => e.drag_paths(dragOut.paths, { on: dragOut.on }))
       .on_hover((on, cx) => { const v = on ? r.key : this.hover === r.key ? null : this.hover; if (v !== this.hover) { this.hover = v; cx.notify(); } })
       .on_mouse_down("left", (e, cx) => {
         this.pressed = { key: r.key, kind: n.kind, group, drag };
@@ -1084,8 +1106,10 @@ export default class Sessions extends View {
         if (n.kind !== "space") continue;
         const on = sel && n.reps.space === focused()?.space;
         const sst = spaceAttention(n.space, ps, this.tmap, this.dis);
+        const dragOut = dragSpec(n);
         cells.push(h_flex().id(`rail-${n.key}`).relative().h(28).w_full().flex_none().justify_center().items_center().rounded(S.radius)
           .when(on, (e) => e.bg(t.selected)).when(!on, (e) => e.hover((s) => s.bg(t.hover))).cursor_pointer()
+          .when(Boolean(dragOut), (e) => e.drag_paths(dragOut.paths, { on: dragOut.on }))
           .tooltip(n.label).on_click(() => run("space.select", { id: n.reps.space }))
           .child(programIcon(leadProgram(n.space, n.tab, n.pane, ps), 16, on ? t.foreground : t.muted))
           .when(["blocked", "done", "working"].includes(sst), (e) => e.child(div().absolute().right(6).bottom(3).child(statusMark(sst, 8)))));
@@ -1158,6 +1182,7 @@ export default class Sessions extends View {
     } else {
       body = div().relative().flex_1().min_h(0)
         .child(v_flex().id("list").size_full().px(4).pb(12).overflow_y_scroll().track_scroll(this.scroll)
+          .on_hover((on, cx) => { if (!on && this.pressed) { this.pressed = null; this.over = null; cx.notify(); } })
           .on_mouse_up("left", (_e, cx) => { if (this.pressed) { this.pressed = null; this.over = null; cx.notify(); } })
           .children(rows.map((r) => (r.node ? (r.node.kind === "machine" ? this.machineRow(r, t, sel) : this.nodeRow(r, t, sel, now)) : this.pseudoRow(r, t)))))
         .child(Scrollbar.vertical("list").absolute().inset_0());

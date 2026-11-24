@@ -270,5 +270,213 @@ class WorktreeModGate(unittest.TestCase):
         self.assertIn('Remove worktree…', block)
 
 
+
+@unittest.skipUnless(NODE, "node is not installed")
+class SessionsDragPaths(unittest.TestCase):
+    """Native drag_paths on space rows (s.folder) and pane rows (p.cwd), preserving clicks, right-clicks, and tab reorder."""
+
+    def _run_sessions(self, script_body):
+        with tempfile.TemporaryDirectory(prefix="ob-sessions-drag-") as folder:
+            mod_dir = Path(folder)
+            src = MAIN.read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            (mod_dir / "main.js").write_text(src, encoding="utf-8")
+            shutil.copy(MATCH, mod_dir / "match.js")
+            shutil.copy(Path(ROOT, "kit", "fuzzy.js"), mod_dir / "fuzzy.js")
+            (mod_dir / "git.js").write_text(
+                "export class Git { due() { return new Set(); } of() { return null; } refresh() {} }\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            (mod_dir / "gpui-kit.js").write_text(
+                "export class View {}\n"
+                "export const elements = new Map();\n"
+                "export function makeEl() {\n"
+                "  const rec = { id: null, drag: null, down: {}, up: {}, move: [], hover: [], click: [] };\n"
+                "  const p = new Proxy(() => p, {\n"
+                "    get(_t, prop) {\n"
+                "      if (prop === '__rec') return rec;\n"
+                "      if (prop === 'id') return (v) => { rec.id = v; elements.set(v, rec); return p; };\n"
+                "      if (prop === 'when') return (c, fn) => { if (c) fn(p); return p; };\n"
+                "      if (prop === 'drag_paths') return (paths, opts) => { rec.drag = { paths, opts }; return p; };\n"
+                "      if (prop === 'on_mouse_down') return (btn, fn) => { (rec.down[btn] ??= []).push(fn); return p; };\n"
+                "      if (prop === 'on_mouse_up') return (btn, fn) => { (rec.up[btn] ??= []).push(fn); return p; };\n"
+                "      if (prop === 'on_mouse_move') return (fn) => { rec.move.push(fn); return p; };\n"
+                "      if (prop === 'on_hover') return (fn) => { rec.hover.push(fn); return p; };\n"
+                "      if (prop === 'on_click') return (fn) => { rec.click.push(fn); return p; };\n"
+                "      return () => p;\n"
+                "    },\n"
+                "  });\n"
+                "  return p;\n"
+                "}\n"
+                "export const div = () => makeEl();\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "gpui-base.js").write_text(
+                'import { makeEl } from "./gpui-kit.js";\n'
+                "export const h_flex = () => makeEl(), v_flex = () => makeEl();\n"
+                "export const Input = { new: () => makeEl() };\n"
+                "export const InputState = { new: () => ({ on() {}, value: () => '', set_value() {}, focus() {} }) };\n"
+                "export const ScrollHandle = { new: () => ({ scroll_to_item() {} }) };\n"
+                "export const Scrollbar = { vertical: () => makeEl() };\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "herdr.js").write_text(
+                "export const state = { spaces: [], machines: [], panes: [], terminals: [], focused: null, agents: [], runs: [], menus: [], shared: {} };\n"
+                "export const spaces = () => state.spaces;\n"
+                "export const machines = () => state.machines;\n"
+                "export const panes = () => state.panes;\n"
+                "export const terminals = () => state.terminals;\n"
+                "export const focused = () => state.focused;\n"
+                "export const agents = () => state.agents;\n"
+                "export const run = (cmd, args) => state.runs.push([cmd, args]);\n"
+                "export const hc = async () => ({ code: 1, stdout: '', stderr: '' });\n"
+                "export const theme = () => ({ chrome: '#111', hover: '#222', selected: '#333', accent: '#444', foreground: '#fff', muted: '#aaa', dim: '#777', border: '#222', raised: '#181818', ansi2: '#0f0', ansi1: '#f00', ansi5: '#a0f', blocked: '#f80' });\n"
+                "export const shared = (k) => state.shared[k];\n"
+                "export const setShared = (k, v) => { state.shared[k] = v; };\n"
+                "export const props = () => ({ slot: 'ob-sessions' });\n"
+                "export const nextCommand = () => new Promise(() => {});\n"
+                "export const settings = () => ({ zoom: 1 });\n"
+                "export const window = () => ({ active: true, platform: 'linux' });\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "kit.js").write_text(
+                'import { makeEl } from "./gpui-kit.js";\n'
+                'import { state } from "./herdr.js";\n'
+                "export const S = { pad: 8, toolbar: 32, row: 26, rowSm: 22, iconSm: 14, iconXs: 12, text: 13, textSm: 12, textXs: 11, radius: 4 };\n"
+                "export const RANK = { blocked: 5, done: 3, working: 2, idle: 1 };\n"
+                "export const alpha = () => '#000';\n"
+                "export const icon = () => makeEl();\n"
+                "export const programIcon = () => makeEl();\n"
+                "export const normStatus = (s) => s ?? null;\n"
+                "export const statusMark = () => makeEl();\n"
+                "export const needsYou = () => makeEl();\n"
+                "export const iconButton = () => makeEl();\n"
+                "export const badge = () => makeEl();\n"
+                "export const treeRow = (o) => {\n"
+                "  const el = makeEl().id(o.id);\n"
+                "  if (o.onRight) el.on_mouse_down('right', (e, cx) => o.onRight(e, cx));\n"
+                "  return el;\n"
+                "};\n"
+                "export const avatar = () => makeEl();\n"
+                "export const emptyState = () => makeEl();\n"
+                "export const inputFrame = () => makeEl();\n"
+                "export const openMenu = (items, opts) => state.menus.push({ items, opts });\n"
+                "export const ago = () => '1m';\n"
+                "export const dur = () => '1s';\n"
+                "export const tilde = (p) => p ?? '';\n"
+                "export const highlight = () => makeEl();\n"
+                "export const takeFocus = () => {};\n"
+                "export const bindingFor = () => null;\n"
+                "export const chordLabel = (k) => k;\n"
+                "export const isBookmarked = () => false;\n"
+                "export const toggleBookmark = () => {};\n"
+                "export const machineLabel = (m) => m ?? 'This computer';\n"
+                "export const machineOf = (addr) => (String(addr ?? '').includes('/') ? String(addr).split('/')[0] : null);\n"
+                "export const tabLabel = (t) => t?.name ?? 'tab';\n"
+                "export const paneLabelOf = (p) => p?.title || p?.pane || 'pane';\n"
+                "export const paneSecondary = () => null;\n"
+                "export const place = (s) => s?.folder ?? '';\n"
+                "export const openView = () => {};\n"
+                "export const mKeyOf = (m) => m || 'local';\n"
+                "export const normHidden = () => ({ machines: new Set(), spaces: new Set(), tabs: new Set() });\n"
+                "export const isMachineHidden = () => false;\n"
+                "export const isSpaceHidden = () => false;\n"
+                "export const isTabHidden = () => false;\n"
+                "export const patchHidden = (c) => c;\n"
+                "export const getHidden = () => ({ machines: [], spaces: [], tabs: [] });\n"
+                "export const updateHidden = () => {};\n"
+                "export const hasMod = async () => false;\n"
+                "export const paneAttention = () => null;\n"
+                "export const tabAttention = () => null;\n"
+                "export const spaceAttention = () => null;\n"
+                "export const getDismissed = () => ({});\n"
+                "export const terminalsByAddress = () => new Map();\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import Sessions, {{ dragSpec }} from "{(mod_dir / "main.js").as_uri()}";\n'
+                f'import {{ elements }} from "{(mod_dir / "gpui-kit.js").as_uri()}";\n'
+                f'import {{ state }} from "{(mod_dir / "herdr.js").as_uri()}";\n'
+                "globalThis.localStorage = { getItem: () => null, setItem() {} };\n"
+                "const cx = { focus_handle: () => ({ focus() {} }), spawn: () => {}, timer: { every: () => {}, after: () => {} }, notify: () => {}, stop_propagation: () => {} };\n"
+                + script_body
+            )
+            res = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return json.loads(res.stdout)
+
+    def test_dragSpec_handles_space_pane_remote_local_and_non_absolute(self):
+        got = self._run_sessions("""
+            console.log(JSON.stringify({
+              localSpace: dragSpec({ kind: 'space', space: { id: 's1', folder: '/srv/repo', machine: null }, reps: { terminal: 't1' } }),
+              remoteSpace: dragSpec({ kind: 'space', space: { id: 's2', folder: '/srv/repo', machine: 'devbox' }, reps: {} }),
+              relSpace: dragSpec({ kind: 'space', space: { id: 's3', folder: '~/repo', machine: null }, reps: {} }),
+              remotePaneByAddr: dragSpec({ kind: 'pane', space: { id: 's1', machine: null }, pane: { pane: 'p1', cwd: '/srv/pkg', terminal: 'devbox/t9' }, reps: {} }),
+              remotePaneBySpace: dragSpec({ kind: 'pane', space: { id: 's2', machine: 'devbox' }, pane: { pane: 'p2', cwd: '/srv/pkg', terminal: 't9' }, reps: {} }),
+              localPane: dragSpec({ kind: 'pane', space: { id: 's1', machine: null }, pane: { pane: 'p3', cwd: '/srv/local', terminal: 't3' }, reps: {} }),
+              badPane: dragSpec({ kind: 'pane', space: { id: 's1', machine: null }, pane: { pane: 'p4', cwd: '/srv/bad\\npath', terminal: 't4' }, reps: {} }),
+              tabNode: dragSpec({ kind: 'tab', space: { id: 's1', folder: '/srv/repo' }, tab: { id: 'tb1' }, reps: {} }),
+            }));
+        """)
+        self.assertEqual(got["localSpace"], {"paths": ["/srv/repo"], "on": None})
+        self.assertEqual(got["remoteSpace"], {"paths": ["/srv/repo"], "on": "devbox"})
+        self.assertIsNone(got["relSpace"])
+        self.assertEqual(got["remotePaneByAddr"], {"paths": ["/srv/pkg"], "on": "devbox"})
+        self.assertEqual(got["remotePaneBySpace"], {"paths": ["/srv/pkg"], "on": "devbox"})
+        self.assertEqual(got["localPane"], {"paths": ["/srv/local"], "on": None})
+        self.assertIsNone(got["badPane"])
+        self.assertIsNone(got["tabNode"])
+
+    def test_render_wires_drag_paths_and_preserves_click_right_click_and_tab_reorder(self):
+        got = self._run_sessions("""
+            state.spaces = [
+              { id: 'sp1', name: 'Repo', folder: '/srv/repo', machine: 'devbox', active: true, tabs: [
+                { id: 'tb1', name: 'One', active: true, index: 0 },
+                { id: 'tb2', name: 'Two', active: false, index: 1 },
+              ] },
+            ];
+            state.panes = [
+              { pane: 'p1', tab: 'tb1', cwd: '/srv/repo/src', terminal: 'devbox/t1', title: 'sh' },
+              { pane: 'p2', tab: 'tb1', cwd: 'relative', terminal: 'devbox/t2', title: 'sh2' },
+              { pane: 'p3', tab: 'tb2', cwd: '/srv/repo/doc', terminal: 'devbox/t3', title: 'doc' },
+            ];
+            const view = new Sessions();
+            view.init({}, cx);
+            view.render(cx);
+            const dragMap = {
+              space: elements.get('row-s:sp1')?.drag ?? null,
+              tab1: elements.get('row-t:tb1')?.drag ?? null,
+              tab2: elements.get('row-t:tb2')?.drag ?? null,
+              pane1: elements.get('row-p:p1')?.drag ?? null,
+              pane2: elements.get('row-p:p2')?.drag ?? null,
+            };
+            // Click pane1 -> space.select + tab.select + pane.focus.
+            for (const fn of elements.get('row-p:p1').down.left) fn({ click_count: 1 }, cx);
+            for (const fn of elements.get('row-p:p1').up.left) fn({ click_count: 1 }, cx);
+            const afterClick = [...state.runs];
+            state.runs.length = 0;
+            // Right-click space -> opens menu.
+            for (const fn of elements.get('row-s:sp1').down.right) fn({}, cx);
+            const menuCount = state.menus.length;
+            // Drag tab1 onto tab2 -> tab.move.
+            for (const fn of elements.get('row-t:tb1').down.left) fn({ click_count: 1 }, cx);
+            for (const fn of elements.get('row-t:tb2').move) fn({}, cx);
+            for (const fn of elements.get('row-t:tb2').up.left) fn({ click_count: 1 }, cx);
+            const afterReorder = [...state.runs];
+            console.log(JSON.stringify({ dragMap, afterClick, menuCount, afterReorder }));
+        """)
+        self.assertEqual(got["dragMap"]["space"], {"paths": ["/srv/repo"], "opts": {"on": "devbox"}})
+        self.assertIsNone(got["dragMap"]["tab1"])
+        self.assertIsNone(got["dragMap"]["tab2"])
+        self.assertEqual(got["dragMap"]["pane1"], {"paths": ["/srv/repo/src"], "opts": {"on": "devbox"}})
+        self.assertIsNone(got["dragMap"]["pane2"])
+        self.assertEqual(got["afterClick"][-1], ["pane.focus", {"pane": "p1"}])
+        self.assertEqual(got["menuCount"], 1)
+        self.assertEqual(got["afterReorder"], [["tab.move", {"id": "tb1", "index": 2}]])
+
 if __name__ == "__main__":
     unittest.main()
