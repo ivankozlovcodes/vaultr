@@ -313,6 +313,22 @@ class OpenPlan(unittest.TestCase):
         self.assertIn("closeOverlay(this.switcherOverlayId)", body)
         self.assertIn("this.switcherOverlayId = openOverlay(", body)
 
+    def test_open_and_toggle_unhide_a_closed_stack_child_panel(self):
+        root = sample_layout()
+        def mark_hidden(n, nid):
+            if n.get("id") == nid:
+                n["hidden"] = True
+            for c in n.get("children") or []:
+                mark_hidden(c, nid)
+        mark_hidden(root, "ob-search")
+        opened = self.plan(root=root, verb="open", child="ob-search", now=7000)
+        self.assertIn("ob-search", opened["show"])
+        self.assertEqual(opened["select"], {"stack": "ob-lt-stack", "child": "ob-search"})
+        toggled = self.plan(root=root, verb="toggle", child="ob-search", now=7001)
+        self.assertIn("ob-search", toggled["show"])
+        self.assertEqual(toggled["hide"], [])
+        self.assertEqual(toggled["select"], {"stack": "ob-lt-stack", "child": "ob-search"})
+
 
 if __name__ == "__main__":
     unittest.main()

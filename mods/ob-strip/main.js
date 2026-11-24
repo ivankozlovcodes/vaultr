@@ -5,7 +5,7 @@
 // its strip too, so the bottom strip of that side then draws the top strip's window buttons or sidebar toggle.
 // props: { stack, side: "left"|"right", place: "top"|"bottom", windowButtons?: bool }
 // Commands (ob-strip.<cmd>, every shown copy gets them; each acts only on its own stack):
-//   select:<child>   move:<child>@<targetStack>   reorder:<from>@<to>   hide-group:<stack>   show-group:<stack>   overflow:<stack>
+//   select:<child>   move:<child>@<targetStack>[@<before>]   reorder:<from>@<to>   close:<child>   show:<child>   hide-group:<stack>   show-group:<stack>   overflow:<stack>
 
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
@@ -16,7 +16,7 @@ import {
 } from "./kit.js";
 import { HALVES, halfAction, standInFor } from "./halves.js";
 import { stripView } from "./strip_view.js";
-import { reorderStack, moveBetweenStacks, activeStripDrag } from "./reorder.js";
+import { reorderStack, moveBetweenStacks, activeStripDrag, nextVisibleAfterHide } from "./reorder.js";
 
 // Append the live chord from keys.json (e.g. "(Ctrl+B)" or "(⌘B)" on macOS) to a tooltip title.
 const tip = (title, action) => { const k = bindingFor(action); return k ? `${title} (${chordLabel(k)})` : title; };
@@ -76,6 +76,21 @@ export default class Strip extends View {
 
   mine() { return props()?.stack; }
 
+  closePanel(stack, childId) {
+    if (!stack?.children?.some((ch) => ch.id === childId)) return;
+    const visible = stack.children.filter((c) => !c.hidden);
+    const active = stack.active ?? visible[0]?.id;
+    const next = active === childId ? nextVisibleAfterHide(stack.children, childId) : null;
+    run("layout.hide", { id: childId });
+    if (next) run("layout.select", { stack: stack.id, child: next });
+  }
+
+  showPanel(stack, childId) {
+    if (!stack?.children?.some((ch) => ch.id === childId)) return;
+    run("layout.show", { id: childId });
+    run("layout.select", { stack: stack.id, child: childId });
+  }
+
   async command(c, cx) {
     const [verb, arg = ""] = splitCmd(c);
     const root = layout();
@@ -89,6 +104,10 @@ export default class Strip extends View {
     } else if (verb === "reorder") {
       const [fromId, toId] = arg.split("@");
       if (fromId && toId) reorderInStack(stack.id, fromId, toId);
+    } else if (verb === "close") {
+      this.closePanel(stack, arg);
+    } else if (verb === "show") {
+      this.showPanel(stack, arg);
     } else if (verb === "hide-group" && arg === stack.id) {
       run("layout.hide", { id: groupNode(stack.id) });
     } else if (verb === "show-group" && arg === siblingGroup(stack.id)) {
@@ -108,6 +127,16 @@ export default class Strip extends View {
       for (const [sid, , title] of GROUPS) {
         if (sid === stack.id || !findNode(root, sid)) continue;
         items.push({ label: `Move to ${title.toLowerCase()}`, icon: "move", command: `ob-strip.move:${child.id}@${sid}` });
+      }
+      items.push({ label: "Close panel", icon: "x", command: `ob-strip.close:${child.id}` });
+      items.push({ separator: true });
+    }
+    const hiddenKids = (stack.children ?? []).filter((c) => c.hidden);
+    if (hiddenKids.length) {
+      items.push({ header: "Closed panels" });
+      for (const hc of hiddenKids) {
+        const info = viewInfo(hc);
+        items.push({ label: `Show ${info.title}`, icon: info.icon, command: `ob-strip.show:${hc.id}` });
       }
       items.push({ separator: true });
     }
@@ -249,6 +278,10 @@ export default class Strip extends View {
               if (this.pressed === c.id && stack) this.publishDrag(stack.id, c.id);
               if (this.over === c.id) { this.over = null; cx.notify(); }
             }
+          })
+          .on_mouse_down("middle", (_e, cx) => {
+            cx.stop_propagation();
+            this.closePanel(stack, c.id);
           })
           .on_mouse_down("left", (e, cx) => {
             cx.stop_propagation();

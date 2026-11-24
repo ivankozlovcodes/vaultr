@@ -88,3 +88,18 @@ export function moveBetweenStacks(tree, childId, targetStackId, beforeChildId = 
   to.active = childId;
   return copy;
 }
+
+// Next visible child id to activate when `childId` is hidden/closed in a stack (prefers the next visible
+// sibling after `childId`, else the nearest previous visible sibling, else null).
+export function nextVisibleAfterHide(children, childId) {
+  if (!Array.isArray(children) || !childId) return null;
+  const idx = children.findIndex((c) => c?.id === childId);
+  if (idx < 0) return null;
+  for (let i = idx + 1; i < children.length; i++) {
+    if (children[i]?.id && !children[i].hidden) return children[i].id;
+  }
+  for (let i = idx - 1; i >= 0; i--) {
+    if (children[i]?.id && !children[i].hidden) return children[i].id;
+  }
+  return null;
+}

@@ -275,9 +275,11 @@ export default class Switcher extends View {
     // Sidebar views of this layout.
     const root = layout();
     for (const [id, v] of Object.entries(VIEWS)) {
-      if (!findNode(root, id)) continue;
+      const node = findNode(root, id);
+      if (!node) continue;
       items.push({
         key: `view:${id}`, kind: "view", route: `ob-tabs.open:${id}`, label: `View: ${v.title}`, context: "sidebar", words: "view panel sidebar",
+        hidden: Boolean(node.hidden),
         lead: () => icon(v.icon, S.icon), go: () => run(`ob-tabs.open:${id}`),
       });
     }

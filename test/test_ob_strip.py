@@ -587,6 +587,40 @@ class StripDragWiring(unittest.TestCase):
         self.assertEqual(got["cancelRuns"], [])
         self.assertIsNone(got["cancelDrag"])
 
+    def test_close_and_show_panel_via_command_middle_click_and_menu(self):
+        got = self._run_strip("""
+            const find = (n, id) => { if (!n) return null; if (n.id === id) return n; for (const c of n.children ?? []) { const h = find(c, id); if (h) return h; } return null; };
+            state.props = { stack: 'ob-rt-stack', side: 'right', place: 'top' };
+            s.render();
+            // 1) Close an inactive panel (ob-files): only hides it, does not switch active (ob-quotas).
+            await s.command('close:ob-files', cx);
+            const inactiveRuns = [...state.runs];
+            state.runs.length = 0;
+
+            // 2) Middle-click active panel (ob-quotas): hides it and advances active to next visible sibling.
+            fire('tab-ob-quotas', 'down', 'middle');
+            const activeRuns = [...state.runs];
+            state.runs.length = 0;
+
+            // 3) Show a hidden panel: unhides and selects it.
+            find(state.layout, 'ob-files').hidden = true;
+            await s.command('show:ob-files', cx);
+            const showRuns = [...state.runs];
+            console.log(JSON.stringify({ inactiveRuns, activeRuns, showRuns }));
+        """)
+        self.assertEqual(got["inactiveRuns"], [["layout.hide", {"id": "ob-files"}]])
+        self.assertEqual(got["activeRuns"][0], ["layout.hide", {"id": "ob-quotas"}])
+        self.assertEqual(got["activeRuns"][1][0], "layout.select")
+        self.assertEqual(got["activeRuns"][1][1]["stack"], "ob-rt-stack")
+        self.assertNotEqual(got["activeRuns"][1][1]["child"], "ob-quotas")
+        self.assertEqual(
+            got["showRuns"],
+            [
+                ["layout.show", {"id": "ob-files"}],
+                ["layout.select", {"stack": "ob-rt-stack", "child": "ob-files"}],
+            ],
+        )
+
     def test_real_strip_tab_skips_left_click_handlers_when_onClick_omitted(self):
         import tempfile
         from pathlib import Path

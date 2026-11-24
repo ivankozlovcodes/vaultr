@@ -60,7 +60,7 @@ export function openPlan({ root, verb, child, intent = null, zen = null, now = D
   }
 
   show.push(side.id);
-  for (const anc of path.slice(2, -1)) {
+  for (const anc of path.slice(2)) {
     if (anc.hidden && !show.includes(anc.id)) show.push(anc.id);
   }
   if (intent && intent.startsWith("term:") && intent.length > 5) {
