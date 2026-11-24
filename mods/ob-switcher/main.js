@@ -1,12 +1,12 @@
 // ob-switcher: Obsidian's quick switcher for Herdr (a popup at the top, 660 x 0.72, `popover`).
-// Type to find a tab, space, agent, sub-agent, bookmark or sidebar view; Enter goes there.
-// Empty query: Recent visits, then Bookmarks, then every other tab. No match: create a tab or a
-// space with that name. Modes (modes.js is the rule set): Everything (default), Views (sidebar views
-// only), Commands (Vaultr and Herdr commands; ctrl-shift-p, or ">" typed in any mode), and Move (ctrl-shift-m:
-// move the active tab; Herdr can only reorder within a space). Tab cycles Everything, Views, Commands.
+// Type to find a session tab or space (fuzzy matching); Enter goes there, or hand off to Full Search
+// (terminal screens, history & transcripts) via the Full Search row or Cmd/Ctrl+Enter.
+// Empty query: Recent visits, then Bookmarks, then every other tab. Modes (modes.js is the rule set):
+// Sessions (default), Views (sidebar views only), Commands (Vaultr and Herdr commands; ctrl-shift-p,
+// or ">" typed in any mode), and Move (ctrl-shift-m: move the active tab). Tab cycles Sessions, Views, Commands.
 //
 // Keys: ↑/↓ (PgUp/PgDn) move, Enter open, Shift+Enter create a tab named like the query,
-// Ctrl+Enter open to the right (agents and sub-agent terminals: kept as a pane on the right),
+// Ctrl/Cmd+Enter run Full Search for the query in ob-search (or open to the right for terminal rows),
 // Tab cycles the modes (Shift+Tab backwards), Esc closes.
 // Commands (ob-switcher.<cmd>, the test path; no keyboard in tests):
 //   mode:<go|views|commands|move>  query:<text>  down  up  enter  close
@@ -19,11 +19,12 @@ import {
   window as appWindow,
 } from "herdr";
 import {
-  S, tc, alpha, icon, programIcon, avatar, statusMark, fuzzy, highlight, machineLabel, tabLabel, paneLabelOf,
+  S, tc, alpha, icon, programIcon, avatar, statusMark, highlight, machineLabel, tabLabel, paneLabelOf,
   provider, bookmarks, VIEWS, findNode, current, chordParts, kbd,
   normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden, parentAddrOf,
 } from "./kit.js";
 import { commandRows, VAULTR_COMMANDS } from "./commands.js";
+import { switcherFuzzy } from "./fuzzy_match.js";
 import { sessionTitles, bestTitle } from "./titles.js";
 import { MODES, nextMode, placeholder, headerLabel, tabHint, modeForQuery, queryForMode, bodyOf, allowsRow } from "./modes.js";
 
@@ -177,9 +178,8 @@ export default class Switcher extends View {
     for (const p of ps) if (p.terminal && tabById.has(p.tab)) where.set(p.terminal, tabById.get(p.tab));
     const tabText = (tb) => tabLabel(tb, ps);
     const ctxOf = (s) => (s ? `${machineLabel(s.machine)} / ${s.name}` : "");
-    // The session titles each tab holds (its agents' and terminals' titles, the provider session names): a tab is
-    // found by them too, so "herdr-trials" finds the tab whose session has that title.
-    const titles = sessionTitles(new Map([...where].map(([addr, w]) => [addr, w.tab.id])), { agents: ag, terminals: terms, sessions: provider.sessions() });
+    // The session titles each tab holds (its panes', agents' and terminals' titles, plus provider session names).
+    const titles = sessionTitles(new Map([...where].map(([addr, w]) => [addr, w.tab.id])), { agents: ag, terminals: terms, sessions: provider.sessions(), panes: ps });
     const h = normHidden(shared("ob.hidden") ?? getHidden());
     const items = [];
 
@@ -319,7 +319,7 @@ export default class Switcher extends View {
       const platform = appWindow()?.platform ?? "linux";
       const curLayout = shared("layout") || "vaultr";
       const scored = commandRows({
-        vaultr, herdr: commands(), keys: keys(), query: cmdText, layout: curLayout, platform, layouts: layouts(), match: fuzzy,
+        vaultr, herdr: commands(), keys: keys(), query: cmdText, layout: curLayout, platform, layouts: layouts(), match: switcherFuzzy,
       })
         .map((r) => ({
           ...r,
@@ -334,10 +334,10 @@ export default class Switcher extends View {
     const pool = items.filter((it) => allowsRow(this.mode, it));
     if (!query) {
       if (this.mode === "views") { for (const it of pool) out.push({ item: it }); return out; }
-      const recent = this.recentItems(byKey, cur);
+      const recent = this.recentItems(byKey, cur).filter((it) => allowsRow(this.mode, it));
       const used = new Set();
       if (recent.length) { out.push({ head: "Recent" }); for (const it of recent) { out.push({ item: it }); used.add(it.key); } }
-      const bm = bmItems.filter((it) => !used.has(it.key));
+      const bm = bmItems.filter((it) => allowsRow(this.mode, it) && !used.has(it.key));
       if (bm.length) { out.push({ head: "Bookmarks" }); for (const it of bm) { out.push({ item: it }); used.add(it.key); } }
       const tabs = items.filter((it) => it.kind === "tab" && !used.has(it.key) && !it.here);
       if (tabs.length) { out.push({ head: "Tabs" }); for (const it of tabs) out.push({ item: it }); }
@@ -346,10 +346,10 @@ export default class Switcher extends View {
     const rank = this.recencyRank(byKey, cur);
     const scored = [];
     for (const it of pool) {
-      const title = fuzzy(query, it.label);
+      const title = switcherFuzzy(query, it.label);
       // A session title the tab holds: the row shows that title as its context.
-      const via = title || !it.titles?.length ? null : bestTitle(query, it.titles, fuzzy);
-      const more = title || via ? null : fuzzy(query, `${it.label} ${it.context ?? ""} ${it.words ?? ""}`);
+      const via = title || !it.titles?.length ? null : bestTitle(query, it.titles, switcherFuzzy);
+      const more = title || via ? null : switcherFuzzy(query, `${it.label} ${it.context ?? ""} ${it.words ?? ""}`);
       let best = title;
       if (!best && via) best = { score: via.score - 4, hits: [] };
       if (!best && more) best = { score: more.score - 4, hits: [] };
@@ -363,8 +363,15 @@ export default class Switcher extends View {
     for (const s of scored) out.push(s);
     if (this.mode === "go") {
       const m = cur.space;
-      if (!scored.length) out.push({ head: "No matches" });
-      else out.push({ head: "Create" });
+      const fullSearch = {
+        key: "search:full", kind: "search", label: `Search terminal contents for ${q(query)}`,
+        context: "Full search · screens, history & transcripts",
+        lead: () => icon("search", S.icon),
+        go: () => run(`ob-tabs.open:ob-search@q:${query}`),
+      };
+      out.push({ head: scored.length ? "Full search" : "No session matches" });
+      out.push({ item: fullSearch });
+      out.push({ head: "Create" });
       out.push({ item: { key: "create:tab", kind: "create", label: `Create tab ${q(query)} here`, context: m ? `in ${m.name}` : "", lead: () => icon("plus", S.icon), go: () => run("tab.new", { name: query, ...(m ? { space: m.id } : {}) }), create: "tab" } });
       out.push({ item: { key: "create:space", kind: "create", label: `Create space ${q(query)}`, context: machineLabel(m?.machine ?? null), lead: () => icon("folder-plus", S.icon), go: () => run("space.new", { name: query, machine: m?.machine ?? "" }), create: "space" } });
     }
@@ -414,7 +421,7 @@ export default class Switcher extends View {
     }));
     const match = (it) => {
       if (!query) return { item: it, hits: [] };
-      const f = fuzzy(query, it.label);
+      const f = switcherFuzzy(query, it.label);
       return f ? { item: it, hits: f.hits, score: f.score } : null;
     };
     const a = here.map(match).filter(Boolean);
@@ -446,10 +453,16 @@ export default class Switcher extends View {
   accept(cx, how) {
     const rows = this.rows();
     const picks = this.picks(rows);
+    const qText = this.query.trim();
     let it = rows[picks[Math.min(this.at, picks.length - 1)]]?.item;
-    if (how === "create" && this.mode === "go" && this.query.trim()) it = rows.find((r) => r.item?.create === "tab")?.item ?? it;
+    if (how === "create" && this.mode === "go" && qText) it = rows.find((r) => r.item?.create === "tab")?.item ?? it;
+    if (how === "right" && this.mode === "go" && !it?.terminal) {
+      this.close();
+      run(qText ? `ob-tabs.open:ob-search@q:${qText}` : "ob-tabs.open:ob-search");
+      return;
+    }
     if (!it || it.disabled || !it.go) return;
-    if (!it.create && it.kind !== "move") {
+    if (!it.create && it.kind !== "move" && it.kind !== "search") {
       this.recent = [it.key, ...this.recent.filter((k) => k !== it.key)].slice(0, 30);
       lsSet("recent", this.recent);
     }
@@ -583,12 +596,12 @@ export default class Switcher extends View {
     const key = (k) => h_flex().flex_none().h(16).min_w(16).px(4).rounded(3).items_center().justify_center()
       .border_1().border_color(t.input).bg(t.raised).text_size(10).font_medium().text_color(t.muted).child(k);
     const hint = (keysList, text) => h_flex().flex_none().gap(4).items_center().child(h_flex().gap(2).children(keysList.map(key))).child(div().text_color(t.dim).child(text));
-    const ctrl = chordParts("ctrl")[0] ?? "Ctrl";
+    const mod = appWindow()?.platform === "macos" ? (chordParts("cmd")[0] ?? "⌘") : (chordParts("ctrl")[0] ?? "Ctrl");
     const items = this.mode === "move"
       ? [hint(["↑", "↓"], "to navigate"), hint(["↵"], "to move"), hint(["esc"], "to dismiss")]
       : [
         hint(["↑", "↓"], "to navigate"), hint(["↵"], this.mode === "commands" ? "to run" : "to open"),
-        ...(this.mode === "go" ? [hint(["⇧", "↵"], "to create"), hint([ctrl, "↵"], "to the right")] : []),
+        ...(this.mode === "go" ? [hint([mod, "↵"], "full search"), hint(["⇧", "↵"], "to create")] : []),
         hint(["tab"], tabHint(this.mode)), hint(["esc"], "to dismiss"),
       ];
     return h_flex().h(40).flex_none().px(16).gap(14).items_center().border_t(1).border_color(t.border).text_size(S.textXs)

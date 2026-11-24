@@ -1,14 +1,14 @@
 // The quick switcher's modes, as pure functions (no Herdr or gpui imports; test/test_ob_switcher.py runs them under
-// node). One mode system: Everything ("go"), Views ("views") and Commands ("commands").
+// node). One mode system: Sessions ("go"), Views ("views") and Commands ("commands").
 //
-// - Tab cycles Everything -> Views -> Commands -> Everything (Shift+Tab backwards). Move is its own entry point.
+// - Tab cycles Sessions -> Views -> Commands -> Sessions (Shift+Tab backwards). Move is its own entry point.
 // - Typing ">" as the first character, in any mode, enters Commands; deleting it returns to the mode you came from.
 // - The header names the current mode, the footer says where Tab goes next, and the placeholder says what to type.
 
 export const MODES = ["go", "views", "commands"];
-export const LABEL = { go: "Everything", views: "Views", commands: "Commands", move: "Move" };
+export const LABEL = { go: "Sessions", views: "Views", commands: "Commands", move: "Move" };
 export const PLACEHOLDER = {
-  go: "Go to a tab, space or view…",
+  go: "Go to a session tab…",
   views: "Find a view…",
   commands: "Run a command…",
   move: "Find a space or a position…",
@@ -52,11 +52,13 @@ export function placeholder(mode) { return PLACEHOLDER[mode] ?? PLACEHOLDER.go; 
 // The footer hint after the tab key: where Tab goes next.
 export function tabHint(mode) { return `→ ${LABEL[nextMode(mode)]}`; }
 
-// Whether a row of the ranked list belongs to a mode. Commands has no sidebar-view rows (Views is its own mode).
+// Whether a row of the ranked list belongs to a mode. Sessions focuses on session tabs & spaces only
+// (Views and Commands have their own modes).
 export function allowsRow(mode, item) {
   const kind = item?.kind;
   if (mode === "views") return kind === "view";
   if (mode === "commands") return kind !== "view";
+  if (mode === "go") return kind === "tab" || kind === "space";
   return true;
 }
 

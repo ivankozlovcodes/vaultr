@@ -283,15 +283,15 @@ class OneModeSystem(unittest.TestCase):
 
     def test_header_names_the_current_mode(self):
         self.assertEqual(run_modes('return [M.headerLabel("go"), M.headerLabel("views"), M.headerLabel("commands")];'),
-                         ["Everything", "Views", "Commands"])
+                         ["Sessions", "Views", "Commands"])
 
     def test_footer_says_where_tab_goes_next(self):
         self.assertEqual(run_modes('return [M.tabHint("go"), M.tabHint("views"), M.tabHint("commands")];'),
-                         ["→ Views", "→ Commands", "→ Everything"])
+                         ["→ Views", "→ Commands", "→ Sessions"])
 
     def test_placeholder_per_mode(self):
         self.assertEqual(run_modes('return [M.placeholder("go"), M.placeholder("views"), M.placeholder("commands")];'),
-                         ["Go to a tab, space or view…", "Find a view…", "Run a command…"])
+                         ["Go to a session tab…", "Find a view…", "Run a command…"])
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -304,8 +304,10 @@ class ModeRowFilter(unittest.TestCase):
         self.assertTrue(run_modes('return M.allowsRow("views", {kind: "view"});'))
         self.assertFalse(run_modes('return M.allowsRow("views", {kind: "tab"});'))
 
-    def test_everything_takes_every_kind(self):
-        self.assertTrue(run_modes('return M.allowsRow("go", {kind: "view"}) && M.allowsRow("go", {kind: "tab"});'))
+    def test_sessions_mode_focuses_on_session_tabs_and_spaces_only(self):
+        self.assertTrue(run_modes('return M.allowsRow("go", {kind: "tab"}) && M.allowsRow("go", {kind: "space"});'))
+        for noisy in ("view", "command", "agent", "child", "run"):
+            self.assertFalse(run_modes(f'return M.allowsRow("go", {{kind: {json.dumps(noisy)}}});'), noisy)
 
     def test_disabled_rows_sink_to_the_end_in_order(self):
         out = run_modes('const r = [{item: {label: "a", disabled: true}}, {item: {label: "b"}}, '
@@ -442,7 +444,7 @@ class OverlayKeyContext(unittest.TestCase):
 
     def test_ob_switcher_binds_overlay_keys_and_cycles_mode_and_rebinds_on_keys_reload(self):
         with tempfile.TemporaryDirectory(prefix="ob-switcher-keys-") as folder:
-            for f in ("main.js", "commands.js", "titles.js", "modes.js", "names.js"):
+            for f in ("main.js", "commands.js", "titles.js", "modes.js", "names.js", "fuzzy_match.js"):
                 shutil.copy(os.path.join(ROOT, "mods", "ob-switcher", f), os.path.join(folder, f))
             src = Path(folder, "main.js").read_text(encoding="utf-8")
             src = (src
@@ -647,6 +649,211 @@ class SwitcherDedupeAndNaming(unittest.TestCase):
         self.assertIn('if (verb === "dedupe") { if (arg && arg !== props()?.overlay) this.close(); return; }', src)
         self.assertIn("run(`ob-switcher.dedupe:${myOverlay}`)", src)
         self.assertIn("const agentLabel = paneLabelOf(w?.pane ?? a);", src)
+
+
+FUZZY_MODULE = os.path.join(ROOT, "mods", "ob-switcher", "fuzzy_match.js")
+
+
+def run_fuzzy(body):
+    src = (f'import * as F from "{Path(FUZZY_MODULE).as_uri()}";\n'
+           f'console.log(JSON.stringify((() => {{ {body} }})()));')
+    out = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.strip() or "node failed")
+    return json.loads(out.stdout)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class SwitcherFuzzy(unittest.TestCase):
+    """Fzf-style fuzzy matching for the quick switcher: handles missing spaces/separators, acronyms, and
+    abbreviations while still ranking contiguous and word-start matches ahead of looser subsequences."""
+
+    def test_matches_across_spaces_and_hyphens_with_highlights(self):
+        r1 = run_fuzzy('return F.switcherFuzzy("llmwiki", "llm wiki");')
+        self.assertIsNotNone(r1)
+        self.assertEqual(r1["hits"], [0, 1, 2, 4, 5, 6, 7])
+        r2 = run_fuzzy('return F.switcherFuzzy("llmwiki", "llm: LLM-Wiki Resources GitHub Repo");')
+        self.assertIsNotNone(r2)
+        self.assertEqual(len(r2["hits"]), 7)
+        # Prefers the contiguous word-boundary pair "LLM-Wiki" over scattering from the earlier "llm".
+        self.assertEqual(r2["hits"], [5, 6, 7, 9, 10, 11, 12])
+
+    def test_matches_acronyms_abbreviations_and_multi_term_queries(self):
+        self.assertIsNotNone(run_fuzzy('return F.switcherFuzzy("lw", "llm wiki");'))
+        self.assertIsNotNone(run_fuzzy('return F.switcherFuzzy("vlt", "vaultr");'))
+        self.assertIsNotNone(run_fuzzy('return F.switcherFuzzy("swv", "Switch views");'))
+        self.assertIsNotNone(run_fuzzy('return F.switcherFuzzy("tzen", "Toggle Zen mode");'))
+        r = run_fuzzy('return F.switcherFuzzy("llm repo", "LLM-Wiki Resources GitHub Repo");')
+        self.assertIsNotNone(r)
+        self.assertIsNone(run_fuzzy('return F.switcherFuzzy("llm zebra", "LLM-Wiki Resources GitHub Repo");'))
+
+    def test_contiguous_beats_subsequence_and_rejects_noise(self):
+        exact = run_fuzzy('return F.switcherFuzzy("llm wiki", "llm wiki").score;')
+        tight = run_fuzzy('return F.switcherFuzzy("llmwiki", "llm wiki").score;')
+        loose = run_fuzzy('return F.switcherFuzzy("llmwiki", "llm resources for wiki").score;')
+        self.assertGreater(exact, tight)
+        self.assertGreater(tight, loose)
+        self.assertIsNone(run_fuzzy('return F.switcherFuzzy("sample-session", "The two panels code merges into Outline");'))
+        self.assertIsNone(run_fuzzy('return F.switcherFuzzy("   ", "llm wiki");'))
+        self.assertIsNone(run_fuzzy('return F.switcherFuzzy("zzzz", "llm wiki");'))
+
+    def test_command_rows_find_fuzzy_abbreviations(self):
+        src = (
+            f'import * as C from "{Path(MODULE).as_uri()}";\n'
+            f'import * as F from "{Path(FUZZY_MODULE).as_uri()}";\n'
+            'const run = (q) => C.commandRows({ vaultr: C.VAULTR_COMMANDS, query: q, match: F.switcherFuzzy }).map((r) => r.item.route);\n'
+            'console.log(JSON.stringify({ tzen: run("tzen"), swv: run("swv") }));'
+        )
+        out = subprocess.run([NODE, "--input-type=module", "-e", src], capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        got = json.loads(out.stdout)
+        self.assertIn("ob-tabs.zen", got["tzen"])
+        self.assertIn("ob-tabs.switcher:views", got["swv"])
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class SessionsModeAndFullSearch(unittest.TestCase):
+    """Default Cmd+P focuses on session tabs & spaces with fzf-style fuzzy matching and offers an explicit
+    handoff to full terminal-content search (ob-search)."""
+
+    def _run_switcher(self, script):
+        with tempfile.TemporaryDirectory(prefix="ob-switcher-sessions-") as folder:
+            for f in ("main.js", "commands.js", "titles.js", "modes.js", "names.js", "fuzzy_match.js"):
+                src_path = os.path.join(ROOT, "mods", "ob-switcher", f)
+                if os.path.exists(src_path):
+                    shutil.copy(src_path, os.path.join(folder, f))
+            src = Path(folder, "main.js").read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            Path(folder, "main.js").write_text(src, encoding="utf-8")
+            Path(folder, "gpui-kit.js").write_text(
+                el_stub_js() + "export class View {}\nexport const div = () => proxyEl();\n",
+                encoding="utf-8",
+            )
+            Path(folder, "gpui-base.js").write_text(
+                el_stub_js()
+                + "export const v_flex = () => proxyEl();\n"
+                + "export const h_flex = () => proxyEl();\n"
+                + "export const ScrollHandle = { new: () => ({ scroll_to_item() {} }) };\n"
+                + "export const Scrollbar = { vertical: () => proxyEl() };\n"
+                + "export const Input = { new: () => proxyEl() };\n"
+                + "export const InputState = { new: () => { let val = ''; return { on() {}, value() { return val; }, set_value(v) { val = v; }, focus() {} }; } };\n",
+                encoding="utf-8",
+            )
+            Path(folder, "herdr.js").write_text(
+                "export const state = { ran: [], closed: [] };\n"
+                "export const props = () => ({ mode: 'go', overlay: 'sw-ov' });\n"
+                "export const run = (a, b) => state.ran.push([a, b]);\n"
+                "export const closeOverlay = (ov) => state.closed.push(ov);\n"
+                "export const nextCommand = () => new Promise(() => {});\n"
+                "export const shared = () => null;\n"
+                "export const spaces = () => [\n"
+                "  { id: 'sp-llm', name: 'llm wiki', machine: null, tabs: [\n"
+                "    { id: 'tab-wiki', name: 'llm: LLM-Wiki Resources GitHub Repo', status: 'idle' },\n"
+                "    { id: 'tab-code', name: 'llm: Notes', status: 'idle' },\n"
+                "  ] },\n"
+                "  { id: 'sp-dev', name: 'workspace', machine: null, tabs: [\n"
+                "    { id: 'tab-main', name: 'main', status: 'working' },\n"
+                "  ] },\n"
+                "];\n"
+                "export const panes = () => [\n"
+                "  { pane: 'p1', tab: 'tab-wiki', terminal: 't1', name: 'LLM-Wiki Resources' },\n"
+                "  { pane: 'p2', tab: 'tab-code', terminal: 't2' },\n"
+                "  { pane: 'p3', tab: 'tab-main', terminal: 't3', focused: true },\n"
+                "];\n"
+                "export const agents = () => [{ address: 't1', title: 'LLM-Wiki Resources', status: 'idle', program: { name: 'Agent' } }];\n"
+                "export const terminals = () => [{ address: 't1', title: 'LLM-Wiki Resources', state: 'live' }];\n"
+                "export const layout = () => ({ id: 'root', children: [{ id: 'ob-search', type: 'block' }, { id: 'ob-sessions', type: 'block' }] });\n"
+                "export const layouts = () => ['vaultr'];\n"
+                "export const settings = () => ({ zoom: 1 });\n"
+                "export const commands = () => [];\n"
+                "export const keys = () => [];\n"
+                "export const window = () => ({ platform: 'macos' });\n",
+                encoding="utf-8",
+            )
+            kit_fns = [
+                "tc", "alpha", "icon", "programIcon", "avatar", "statusMark", "fuzzy", "highlight",
+                "machineLabel", "tabLabel", "paneLabelOf", "feed", "bookmarks", "findNode", "current", "chordParts",
+                "kbd", "sessionTitleOf", "normHidden", "isSpaceHidden", "isTabHidden", "patchHidden",
+                "updateHidden", "getHidden", "parentAddrOf",
+            ]
+            Path(folder, "kit.js").write_text(
+                el_stub_js()
+                + "export const S = { icon: 16, iconSm: 14, iconXs: 12, radius: 4, radiusLg: 6, text: 13, textSm: 12, textXs: 11, textLg: 15 };\n"
+                + "export const VIEWS = { 'ob-search': { title: 'Search', icon: 'search' }, 'ob-sessions': { title: 'Sessions', icon: 'sessions' } };\n"
+                + "export const tc = () => ({});\n"
+                + "export const bookmarks = () => [{ kind: 'terminal', id: 't1', label: 'Agent BM' }, { kind: 'tab', id: 'tab-wiki', label: 'Wiki Tab' }];\n"
+                + "export const current = () => ({ space: { id: 'sp-dev', name: 'workspace', machine: null }, tab: { id: 'tab-main', name: 'main' } });\n"
+                + "export const chordParts = (k) => (k === 'cmd' ? ['⌘'] : ['Ctrl']);\n"
+                + "export const machineLabel = () => 'Local';\n"
+                + "export const tabLabel = (tb) => tb.name;\n"
+                + "export const paneLabelOf = (p) => p?.name || p?.title || 'Terminal';\n"
+                + "export const findNode = (root, id) => (root?.children ?? []).find((c) => c.id === id) ?? null;\n"
+                + "export const normHidden = () => ({});\n"
+                + "export const isSpaceHidden = () => false;\n"
+                + "export const isTabHidden = () => false;\n"
+                + "export const provider = { sessions: () => [], subagents: () => [], of: () => null, session: () => null };\n"
+                + "".join(f"export const {n} = () => null;\n" for n in kit_fns if n not in (
+                    "tc", "bookmarks", "current", "chordParts", "machineLabel", "tabLabel",
+                    "paneLabelOf", "findNode", "normHidden", "isSpaceHidden", "isTabHidden")),
+                encoding="utf-8",
+            )
+            code = (
+                f'import Switcher from "{Path(folder, "main.js").as_uri()}";\n'
+                f'import {{ state }} from "{Path(folder, "herdr.js").as_uri()}";\n'
+                "const cx = { focus_handle: () => ({ focus() {} }), timer: { after: () => {} }, spawn: () => {}, notify: () => {} };\n"
+                "const sw = new Switcher();\n"
+                "sw.init({}, cx);\n"
+                "state.ran.length = 0;\n"
+                + script
+            )
+            res = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return json.loads(res.stdout)
+
+    def test_fuzzy_query_finds_llm_wiki_tab_and_space_without_noisy_views_or_agents(self):
+        got = self._run_switcher(
+            "sw.command('query:llmwiki', cx);\n"
+            "const rs = sw.rows();\n"
+            "console.log(JSON.stringify(rs.map((r) => r.head ? { head: r.head } : { key: r.item.key, kind: r.item.kind, label: r.item.label })));\n"
+        )
+        items = [r for r in got if "key" in r]
+        keys = [r["key"] for r in items]
+        self.assertIn("tab:tab-wiki", keys)
+        self.assertIn("space:sp-llm", keys)
+        self.assertIn("search:full", keys)
+        for noisy in ("agent", "view", "command", "child", "run"):
+            self.assertFalse(any(r["kind"] == noisy for r in items), noisy)
+
+    def test_no_session_match_puts_full_search_first_and_runs_ob_search_with_query(self):
+        got = self._run_switcher(
+            "sw.command('query:econnrefused', cx);\n"
+            "const rs = sw.rows();\n"
+            "const firstItem = rs.find((r) => r.item)?.item;\n"
+            "sw.command('enter', cx);\n"
+            "console.log(JSON.stringify({ firstKey: firstItem?.key, firstLabel: firstItem?.label, ran: state.ran }));\n"
+        )
+        self.assertEqual(got["firstKey"], "search:full")
+        self.assertIn("econnrefused", got["firstLabel"])
+        self.assertEqual(got["ran"], [["ob-tabs.open:ob-search@q:econnrefused", None]])
+
+    def test_cmd_or_ctrl_enter_launches_full_search_even_when_sessions_match(self):
+        got = self._run_switcher(
+            "sw.command('query:llmwiki', cx);\n"
+            "sw.command('open-right', cx);\n"
+            "console.log(JSON.stringify({ ran: state.ran }));\n"
+        )
+        self.assertEqual(got["ran"], [["ob-tabs.open:ob-search@q:llmwiki", None]])
+
+    def test_empty_query_bookmarks_keep_session_tabs_and_drop_agent_bookmarks(self):
+        got = self._run_switcher(
+            "const rs = sw.rows();\n"
+            "console.log(JSON.stringify(rs.filter((r) => r.item).map((r) => r.item.key)));\n"
+        )
+        self.assertIn("tab:tab-wiki", got)
+        self.assertNotIn("agent:t1", got)
 
 
 if __name__ == "__main__":
