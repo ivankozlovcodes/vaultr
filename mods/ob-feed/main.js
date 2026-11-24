@@ -155,26 +155,30 @@ export default class Feed extends View {
     this.busy.add(k);
     const opts = m === null && this.fixture ? { ...OPT, extraRoots: [this.fixture] } : OPT;
     cx.spawn(async (cx) => {
-      const r = await provider.scan(m, opts);
-      if (!r.ok && r.reason === "missing") {
-        this.scriptError = r.error ?? "scanner is missing";
+      try {
+        const r = await provider.scan(m, opts);
+        if (!r.ok && r.reason === "missing") {
+          this.scriptError = r.error ?? "scanner is missing";
+          cx.notify();
+          return;
+        }
+        this.ready = true;
+        if (r.ok) {
+          this.scriptError = null;
+          if (r.providers) this.providers = r.providers;
+          const data = r.data;
+          const hasLive = (data?.runs ?? []).some((x) => x?.live);
+          this.res[k] = { ok: true, at: Date.now(), ms: r.ms ?? 0, error: data.errors?.length ? str(String(data.errors[0]), 200) : null, data, hasLive, stale: false };
+        } else {
+          this.res[k] = { ok: false, at: Date.now(), ms: r.ms ?? 0, error: str(String(r.error ?? "scan failed"), 200), data: this.res[k]?.data ?? null, hasLive: false, stale: false };
+        }
+        try { this.publish(cx); } catch (e) { console.log(`ob-feed: publish failed: ${e}`); }
+      } catch (e) {
+        this.res[k] = { ok: false, at: Date.now(), ms: 0, error: str(String(e?.message ?? e), 200), data: this.res[k]?.data ?? null, hasLive: false, stale: false };
+      } finally {
         this.busy.delete(k);
         cx.notify();
-        return;
       }
-      this.ready = true;
-      if (r.ok) {
-        this.scriptError = null;
-        if (r.providers) this.providers = r.providers;
-        const data = r.data;
-        const hasLive = (data?.runs ?? []).some((x) => x?.live);
-        this.res[k] = { ok: true, at: Date.now(), ms: r.ms ?? 0, error: data.errors?.length ? str(String(data.errors[0]), 200) : null, data, hasLive, stale: false };
-      } else {
-        this.res[k] = { ok: false, at: Date.now(), ms: r.ms ?? 0, error: str(String(r.error ?? "scan failed"), 200), data: this.res[k]?.data ?? null, hasLive: false, stale: false };
-      }
-      this.busy.delete(k);
-      try { this.publish(cx); } catch (e) { console.log(`ob-feed: publish failed: ${e}`); }
-      cx.notify();
     });
   }
 
