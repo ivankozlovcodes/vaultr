@@ -23,6 +23,13 @@ import { MONO, splitCmd, sessionOf, inspected, inspect, revealTerminal, allSubag
 const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* keep in memory */ } };
 const WORD = { working: "Working", blocked: "Needs you", done: "Finished", idle: "Idle" };
+const ABS_PATH = /^([A-Za-z]:[\\/]|\/|\\\\)/;
+
+// Native drag-to-terminal payload for an absolute path on `machine`, else null.
+export function propsDragSpec(path, machine = null) {
+  if (typeof path !== "string" || !path || /[\x00-\x1f\x7f]/.test(path) || !ABS_PATH.test(path)) return null;
+  return { paths: [path], on: machine ?? null };
+}
 
 export default class Props extends View {
   init(_p, cx) {
@@ -135,14 +142,16 @@ export default class Props extends View {
     if (open) for (const r of body.filter(Boolean)) rows.push(r);
   }
 
-  // A key/value row. opts: { copy: field name or text, mono, color, lead, after, onClick, tip }
+  // A key/value row. opts: { copy: field name or text, mono, color, lead, after, onClick, tip, dragPath, dragOn }
   kv(t, id, key, value, opts = {}) {
     const hover = this.hover === id;
     const copyText = opts.copy ? (this.field(opts.copy) ?? opts.copy) : null;
+    const drag = opts.dragPath ? propsDragSpec(opts.dragPath, opts.dragOn) : null;
     const keyW = this.w > 0 && this.w < 230 ? 72 : 96;
     return h_flex().id(`kv-${id}`).h(S.row).flex_none().px(S.pad).mx(4).gap(8).items_center().rounded(S.radius)
       .on_hover((h, cx) => { if (h) this.hover = id; else if (this.hover === id) this.hover = null; cx.notify(); })
       .when(Boolean(opts.onClick), (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((ev, cx) => opts.onClick(ev, cx)))
+      .when(Boolean(drag), (e) => e.drag_paths(drag.paths, { on: drag.on }))
       .when(Boolean(opts.tip), (e) => e.tooltip(opts.tip))
       .child(div().w(keyW).flex_none().truncate().text_size(S.textSm).text_color(t.dim).child(key))
       .child(h_flex().flex_1().min_w(0).gap(6).items_center()
@@ -189,7 +198,7 @@ export default class Props extends View {
         this.kv(t, "mod", "Mod", p.mod ?? p.program?.name ?? "—", { mono: true }),
         this.kv(t, "title", "Title", p.title || "—"),
         this.kv(t, "pane", "Pane id", p.pane, { mono: true, copy: p.pane }),
-        this.kv(t, "space", "Space", space?.name ?? "—"),
+        this.kv(t, "space", "Space", space?.name ?? "—", { dragPath: space?.folder ?? null, dragOn: space?.machine ?? null }),
         this.kv(t, "tab", "Tab", tab?.name ?? "—"),
         this.kv(t, "machine", "Machine", machineLabel(space?.machine ?? null)),
       ]);
@@ -211,12 +220,14 @@ export default class Props extends View {
       term.turn != null || x.turn != null ? this.kv(t, "turn", "Turn", String(term.turn ?? x.turn)) : null,
       rep?.msg ? this.kv(t, "msg", "Message", rep.msg) : null,
     ]);
+    const machine = s.machine ?? s.space?.machine ?? null;
+    const cwd = s.pane?.cwd ?? term.cwd ?? x.cwd ?? null;
     this.section(t, rows, "location", "LOCATION", null, [
       this.kv(t, "machine", "Machine", machineLabel(s.machine), { lead: icon(s.machine ? "server" : "monitor", S.iconSm, t.muted) }),
-      this.kv(t, "space", "Space", s.space?.name ?? "—", { onClick: s.space ? () => run("space.select", { id: s.space.id }) : null, copy: s.space ? "space" : null }),
+      this.kv(t, "space", "Space", s.space?.name ?? "—", { onClick: s.space ? () => run("space.select", { id: s.space.id }) : null, copy: s.space ? "space" : null, dragPath: s.space?.folder ?? null, dragOn: machine }),
       this.kv(t, "tab", "Tab", s.tab ? s.label.split(" / ").slice(1).join(" / ") : "—", { onClick: s.tab ? () => { run("space.select", { id: s.space.id }); run("tab.select", { id: s.tab.id }); } : null }),
       this.kv(t, "pane", "Pane", s.pane?.pane ?? "no pane", { mono: Boolean(s.pane), copy: s.pane ? "pane" : null, color: s.pane ? null : t.dim }),
-      this.kv(t, "cwd", "Folder", tilde(s.pane?.cwd ?? term.cwd ?? x.cwd) || "—", { copy: "cwd", tip: s.pane?.cwd ?? term.cwd ?? x.cwd ?? undefined }),
+      this.kv(t, "cwd", "Folder", tilde(cwd) || "—", { copy: "cwd", tip: cwd ?? undefined, dragPath: cwd, dragOn: machine }),
       s.pane?.branch ? this.kv(t, "branch", "Branch", s.pane.branch, { lead: icon("git-branch", S.iconSm, t.muted), copy: "branch" }) : null,
     ]);
     const fg = term.foreground ?? x.foreground;
@@ -287,7 +298,7 @@ export default class Props extends View {
       this.section(t, rows, "file", "SESSION FILE", null, [
         fterm.session && fterm.session !== path ? this.kv(t, "sid", "Session id", fterm.session, { mono: true, copy: fterm.session }) : null,
         fterm.name ? this.kv(t, "sname", "Name", fterm.name) : null,
-        path ? this.kv(t, "path", "File", path.split("/").pop(), { mono: true, copy: path, tip: path, after: [fterm.sessionGuess ? badge("guessed", "working") : null] }) : this.kv(t, "path", "File", "Not found", { color: t.dim }),
+        path ? this.kv(t, "path", "File", path.split("/").pop(), { mono: true, copy: path, tip: path, dragPath: path, dragOn: machine, after: [fterm.sessionGuess ? badge("guessed", "working") : null] }) : this.kv(t, "path", "File", "Not found", { color: t.dim }),
         path ? h_flex().id("file-actions").flex_none().px(S.pad + 4).py(4).gap(6)
           .child(this.button(t, "open-tx", "file-text", "Open transcript", () => this.openTranscript()))
           .child(this.button(t, "copy-path", "copy", "Copy path", (_e, cx) => copied(cx, "path", path))) : null,

@@ -339,5 +339,162 @@ class UsageScript(unittest.TestCase):
         self.assertNotIn("exec(", body)
 
 
+
+@unittest.skipUnless(NODE, "node is not installed")
+class PropsDragPaths(unittest.TestCase):
+    """ob-props attaches drag_paths({ on: machine }) to working directory, space folder, and transcript file rows."""
+
+    def _run_props(self, script_body):
+        with tempfile.TemporaryDirectory(prefix="ob-props-drag-") as folder:
+            mod_dir = Path(folder)
+            src = (MOD / "main.js").read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            (mod_dir / "main.js").write_text(src, encoding="utf-8")
+            shutil.copy(USAGE_JS, mod_dir / "usage.js")
+            (mod_dir / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            (mod_dir / "gpui-kit.js").write_text(
+                "export class View {}\n"
+                "export const elements = new Map();\n"
+                "export function makeEl() {\n"
+                "  const rec = { id: null, drag: null };\n"
+                "  const p = new Proxy(() => p, {\n"
+                "    get(_t, prop) {\n"
+                "      if (prop === '__rec') return rec;\n"
+                "      if (prop === 'id') return (v) => { rec.id = v; elements.set(v, rec); return p; };\n"
+                "      if (prop === 'when') return (c, fn) => { if (c) fn(p); return p; };\n"
+                "      if (prop === 'drag_paths') return (paths, opts) => { rec.drag = { paths, opts }; return p; };\n"
+                "      return () => p;\n"
+                "    },\n"
+                "  });\n"
+                "  return p;\n"
+                "}\n"
+                "export const div = () => makeEl();\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "gpui-base.js").write_text(
+                'import { makeEl } from "./gpui-kit.js";\n'
+                "export const h_flex = () => makeEl(), v_flex = () => makeEl();\n"
+                "export const ScrollHandle = { new: () => ({}) };\n"
+                "export const Scrollbar = { vertical: () => makeEl() };\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "herdr.js").write_text(
+                "export const state = { inspected: { address: null, pinned: false }, session: null, providerSession: null, panes: [], spaces: [], focused: null };\n"
+                "export const props = () => ({ slot: 'ob-props' });\n"
+                "export const run = () => {};\n"
+                "export const nextCommand = () => new Promise(() => {});\n"
+                "export const settings = () => ({ zoom: 1 });\n"
+                "export const hc = async () => ({ code: 1, stdout: '', stderr: '' });\n"
+                "export const layout = () => ({});\n"
+                "export const focused = () => state.focused;\n"
+                "export const panes = () => state.panes;\n"
+                "export const spaces = () => state.spaces;\n"
+                "export const shared = () => ({});\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "kit.js").write_text(
+                'import { makeEl } from "./gpui-kit.js";\n'
+                'import { state } from "./herdr.js";\n'
+                "export const S = { row: 26, pad: 8, radius: 4, text: 13, textSm: 12, textXs: 11, icon: 16, iconSm: 14, iconXs: 12 };\n"
+                "export const tc = () => ({ chrome: '#111', foreground: '#fff', dim: '#777', muted: '#aaa', hover: '#222', border: '#222', raised: '#181818', accent: '#444', blocked: '#f00', input: '#333' });\n"
+                "export const alpha = () => '#000';\n"
+                "export const icon = () => makeEl();\n"
+                "export const iconButton = () => makeEl();\n"
+                "export const badge = () => makeEl();\n"
+                "export const statusMark = () => makeEl();\n"
+                "export const normStatus = (s) => s ?? null;\n"
+                "export const sectionHeader = () => makeEl();\n"
+                "export const emptyState = () => makeEl();\n"
+                "export const programIcon = () => makeEl();\n"
+                "export const feed = () => null;\n"
+                "export const provider = { session: () => state.providerSession, list: () => [], usage: async () => ({ ok: false }) };\n"
+                "export const machineLabel = (m) => m ?? 'This computer';\n"
+                "export const machineOf = (a) => (String(a ?? '').includes('/') ? String(a).split('/')[0] : null);\n"
+                "export const ago = () => '1m';\n"
+                "export const dur = () => '1s';\n"
+                "export const tilde = (p) => p ?? '';\n"
+                "export const takeFocus = () => {};\n"
+                "export const isShown = () => true;\n"
+                "export const openView = () => {};\n"
+                "export const subagentCounts = () => ({ live: 0, total: 0 });\n"
+                "export const feedLine = () => null;\n"
+                "export const parentAddrOf = () => null;\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "obc.js").write_text(
+                'import { state } from "./herdr.js";\n'
+                "export const MONO = 'mono';\n"
+                "export const splitCmd = (c) => [c, ''];\n"
+                "export const sessionOf = () => state.session;\n"
+                "export const inspected = () => state.inspected;\n"
+                "export const inspect = () => {};\n"
+                "export const revealTerminal = () => {};\n"
+                "export const allSubagents = () => ({ runs: [], agents: [] });\n"
+                "export const hcChildren = () => [];\n"
+                "export const openViewer = () => {};\n"
+                "export const copied = () => {};\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import Props, {{ propsDragSpec }} from "{(mod_dir / "main.js").as_uri()}";\n'
+                f'import {{ elements }} from "{(mod_dir / "gpui-kit.js").as_uri()}";\n'
+                f'import {{ state }} from "{(mod_dir / "herdr.js").as_uri()}";\n'
+                "globalThis.localStorage = { getItem: () => null, setItem() {} };\n"
+                "const cx = { focus_handle: () => ({ focus() {} }), spawn: () => {}, timer: { every: () => {}, after: () => {} }, notify: () => {} };\n"
+                + script_body
+            )
+            res = subprocess.run([NODE, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return json.loads(res.stdout)
+
+    def test_propsDragSpec_validates_absolute_paths(self):
+        got = self._run_props("""
+            console.log(JSON.stringify({
+              unixLocal: propsDragSpec('/srv/work', null),
+              unixRemote: propsDragSpec('/srv/work', 'devbox'),
+              win: propsDragSpec('C:\\\\work', null),
+              rel: propsDragSpec('relative/dir', 'devbox'),
+              ctrl: propsDragSpec('/srv/bad\\npath', null),
+              empty: propsDragSpec('', null),
+            }));
+        """)
+        self.assertEqual(got["unixLocal"], {"paths": ["/srv/work"], "on": None})
+        self.assertEqual(got["unixRemote"], {"paths": ["/srv/work"], "on": "devbox"})
+        self.assertEqual(got["win"], {"paths": ["C:\\work"], "on": None})
+        self.assertIsNone(got["rel"])
+        self.assertIsNone(got["ctrl"])
+        self.assertIsNone(got["empty"])
+
+    def test_render_attaches_drag_paths_to_cwd_space_and_transcript_rows(self):
+        got = self._run_props("""
+            state.inspected = { address: 'devbox/t5', pinned: false };
+            state.session = {
+              address: 'devbox/t5', machine: 'devbox', label: 'Repo / shell', status: 'idle',
+              space: { id: 'sp1', name: 'Repo', folder: '/srv/repo', machine: 'devbox' },
+              tab: { id: 'tb1', name: 'shell' },
+              pane: { pane: 'p1', cwd: '/srv/repo/src', branch: 'main' },
+              term: { cwd: '/srv/repo/src' },
+            };
+            state.providerSession = { transcript: '/srv/logs/t5.jsonl', session: 's5' };
+            const view = new Props();
+            view.init({}, cx);
+            view.render(cx);
+            console.log(JSON.stringify({
+              cwd: elements.get('kv-cwd')?.drag ?? null,
+              space: elements.get('kv-space')?.drag ?? null,
+              file: elements.get('kv-path')?.drag ?? null,
+              machine: elements.get('kv-machine')?.drag ?? null,
+              branch: elements.get('kv-branch')?.drag ?? null,
+            }));
+        """)
+        self.assertEqual(got["cwd"], {"paths": ["/srv/repo/src"], "opts": {"on": "devbox"}})
+        self.assertEqual(got["space"], {"paths": ["/srv/repo"], "opts": {"on": "devbox"}})
+        self.assertEqual(got["file"], {"paths": ["/srv/logs/t5.jsonl"], "opts": {"on": "devbox"}})
+        self.assertIsNone(got["machine"])
+        self.assertIsNone(got["branch"])
+
 if __name__ == "__main__":
     unittest.main()
