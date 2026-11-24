@@ -292,8 +292,9 @@ export function stripTab(o) {
     .when(Boolean(o.active), (e) => e.bg(t.selected))
     .when(!o.active, (e) => e.hover((s) => s.bg(t.hover).text_color(t.muted)))
     .tooltip(o.title)
-    .on_mouse_down("left", stop)
-    .on_click((e, cx) => { cx.stop_propagation(); o.onClick?.(e, cx); })
+    .when(Boolean(o.onClick), (e) => e
+      .on_mouse_down("left", stop)
+      .on_click((ev, cx) => { cx.stop_propagation(); o.onClick(ev, cx); }))
     .when(Boolean(o.onRight), (e) => e.on_mouse_down("right", (ev, cx) => { cx.stop_propagation(); o.onRight(ev, cx); }))
     .child(icon(o.icon, S.icon))
     .when(o.badge != null && o.badge !== 0 && o.badge !== "", (e) => e.child(
