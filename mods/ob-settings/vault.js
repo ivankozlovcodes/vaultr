@@ -24,6 +24,10 @@ const INTRO = "Set your vault folder once. Daily notes follow Obsidian's own dai
 const shown = (v) => (typeof v === "string" ? v : "");
 const isSet = (v) => shown(v).trim() !== "";
 const platformOf = () => appWindow()?.platform ?? "macos";
+const shortPath = (p) => {
+  const h = home();
+  return h ? tilde(p) : p;
+};
 
 // Whether a folder exists. Asks the system: the app has no stat call.
 async function isDir(path) {
@@ -109,6 +113,19 @@ function save(host, cx) {
   queue(host, cx, parsed.value);
 }
 
+// A folder dropped from Finder populates the input and saves through the same checks.
+function dropFolder(host, paths, cx) {
+  const raw = Array.isArray(paths) ? paths.find((p) => typeof p === "string" && p.trim()) : null;
+  if (!raw) return;
+  const st = host.state.vault;
+  const abs = expandPath(raw, home());
+  const val = shortPath(abs ?? raw.trim());
+  st.input.set_value(val);
+  const parsed = parseVault(val, home());
+  if (parsed.error) { st.notice = { level: "error", text: parsed.error }; return cx.notify(); }
+  queue(host, cx, parsed.value);
+}
+
 export function init(host, cx) {
   const st = { own: {}, effective: {}, error: null, notice: null, chain: Promise.resolve() };
   st.input = InputState.new({ placeholder: FIELD.placeholder, value: "" });
@@ -150,6 +167,7 @@ function row(host, t) {
       : el.border_1().border_color(t.input).text_color(t.foreground).hover((s) => s.bg(t.hover)).child(text);
   };
   return v_flex().id(`vt-${KEY}`).w_full().gap(6).py(14).border_b(1).border_color(t.border)
+    .on_drop((e, cx) => dropFolder(host, e?.paths, cx))
     .child(div().text_size(S.text + 1).text_color(t.foreground).child(FIELD.label))
     .child(div().text_size(S.textSm).text_color(t.dim).child(FIELD.about))
     .child(h_flex().w_full().gap(8).items_center()

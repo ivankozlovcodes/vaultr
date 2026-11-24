@@ -821,3 +821,204 @@ class FeedbackTabWiring(unittest.TestCase):
             self.assertEqual(res2.returncode, 0, res2.stderr)
             self.assertEqual(json.loads(res2.stdout)["level"], "ok")
             self.assertFalse(Path(app_dir, "feedback.json").exists())
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class FolderDrop(unittest.TestCase):
+    """Dropping a folder from Finder onto the Vault or Feedback folder card populates and saves it."""
+
+    def test_vault_tab_drop_populates_and_saves_folder_and_rejects_invalid(self):
+        node = shutil.which("node")
+        with tempfile.TemporaryDirectory(prefix="ob-vault-drop-") as tmp:
+            home_dir = Path(tmp, "userdir")
+            app_dir = Path(tmp, "app")
+            in_home = Path(home_dir, "MyVault")
+            outside = Path(tmp, "outside-vault")
+            missing = Path(tmp, "no-such-vault")
+            in_home.mkdir(parents=True)
+            outside.mkdir(parents=True)
+            app_dir.mkdir(parents=True)
+            mod_dir = Path(tmp, "mod")
+            mod_dir.mkdir()
+            shutil.copy(RULES, mod_dir / "vault_rules.js")
+            src = Path(ROOT, "mods", "ob-settings", "vault.js").read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "fs/promises"', 'from "node:fs/promises"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            (mod_dir / "vault.js").write_text(src, encoding="utf-8")
+            (mod_dir / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            (mod_dir / "gpui-kit.js").write_text(
+                "export const drops = new Map();\n"
+                "export function makeEl() {\n"
+                "  let id = null;\n"
+                "  const p = new Proxy(() => p, {\n"
+                "    get(_t, prop) {\n"
+                "      if (prop === 'id') return (v) => { id = v; return p; };\n"
+                "      if (prop === 'on_drop') return (fn) => { drops.set(id, fn); return p; };\n"
+                "      return () => p;\n"
+                "    },\n"
+                "  });\n"
+                "  return p;\n"
+                "}\n"
+                "export const div = () => makeEl();\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "gpui-base.js").write_text(
+                'import { makeEl } from "./gpui-kit.js";\n'
+                "export const h_flex = () => makeEl(), v_flex = () => makeEl(), Input = { new: () => makeEl() };\n"
+                "export const InputState = { new: (o = {}) => { let val = o.value || ''; return { on() {}, value: () => val, set_value: (v) => { val = v; } }; } };\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "kit.js").write_text(
+                "export const S = { text: 13, textSm: 12, textXs: 11, radius: 4, radiusLg: 6 };\n"
+                "export const alpha = () => '#000';\n"
+                f"export const tilde = (p) => p.startsWith({json.dumps(str(home_dir))} + '/') ? '~' + p.slice({len(str(home_dir))}) : p;\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "herdr.js").write_text(
+                'import * as fs from "node:fs/promises";\n'
+                'import * as fsSync from "node:fs";\n'
+                'import * as nodePath from "node:path";\n'
+                f"export const home = () => {json.dumps(str(home_dir))};\n"
+                f"export const appHome = () => {json.dumps(str(app_dir))};\n"
+                "export const window = () => ({ platform: 'linux' });\n"
+                "export async function exec(cmd, args = []) {\n"
+                "  if (cmd === 'test' && args[0] === '-d' && args[1]) return { code: fsSync.existsSync(args[1]) && fsSync.statSync(args[1]).isDirectory() ? 0 : 1, stdout: '', stderr: '' };\n"
+                "  return { code: 1, stdout: '', stderr: '' };\n"
+                "}\n"
+                "export const readTextFile = async (p) => { try { return await fs.readFile(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };\n"
+                "export const writeTextFile = async (p, text, expected) => { await fs.mkdir(nodePath.dirname(p), { recursive: true }); const cur = await readTextFile(p); if (cur !== expected) throw new Error('stale'); await fs.writeFile(p, text, 'utf8'); return null; };\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import * as vt from "{(mod_dir / "vault.js").as_uri()}";\n'
+                f'import {{ drops }} from "{(mod_dir / "gpui-kit.js").as_uri()}";\n'
+                "const tasks = [];\n"
+                "const cx = { spawn: (fn) => { const p = fn(cx); tasks.push(p); return p; }, notify: () => {} };\n"
+                "const host = { state: {} };\n"
+                "vt.init(host, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "vt.render(host, {});\n"
+                "const onDrop = drops.get('vt-vault');\n"
+                "if (!onDrop) throw new Error('missing on_drop on vt-vault');\n"
+                f"onDrop({{ paths: [{json.dumps(str(in_home) + '/')}] }}, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "const afterHome = { val: host.state.vault.input.value(), own: host.state.vault.own, notice: host.state.vault.notice };\n"
+                f"onDrop({{ paths: [{json.dumps(str(outside))}] }}, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "const afterOutside = { val: host.state.vault.input.value(), own: host.state.vault.own, notice: host.state.vault.notice };\n"
+                f"onDrop({{ paths: [{json.dumps(str(missing))}] }}, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "const afterMissing = { own: host.state.vault.own, notice: host.state.vault.notice };\n"
+                "onDrop({ paths: ['relative/bad'] }, cx);\n"
+                "const afterRel = { own: host.state.vault.own, notice: host.state.vault.notice };\n"
+                "console.log(JSON.stringify({ afterHome, afterOutside, afterMissing, afterRel }));\n"
+            )
+            res = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            got = json.loads(res.stdout)
+            self.assertEqual(got["afterHome"]["val"], "~/MyVault")
+            self.assertEqual(got["afterHome"]["own"], {"vault": "~/MyVault"})
+            self.assertEqual(got["afterHome"]["notice"]["level"], "ok")
+            self.assertEqual(got["afterOutside"]["val"], str(outside))
+            self.assertEqual(got["afterOutside"]["own"], {"vault": str(outside)})
+            self.assertEqual(got["afterMissing"]["notice"]["level"], "error")
+            self.assertEqual(got["afterMissing"]["own"], {"vault": str(outside)})
+            self.assertEqual(got["afterRel"]["notice"]["level"], "error")
+            self.assertEqual(got["afterRel"]["own"], {"vault": str(outside)})
+
+    def test_feedback_tab_drop_populates_and_saves_folder_and_rejects_relative(self):
+        node = shutil.which("node")
+        with tempfile.TemporaryDirectory(prefix="ob-fb-drop-") as tmp:
+            home_dir = Path(tmp, "userdir")
+            app_dir = Path(tmp, "app")
+            dropped_dir = Path(home_dir, "Feedback", "dropped")
+            home_dir.mkdir(parents=True)
+            app_dir.mkdir(parents=True)
+            Path(app_dir, "feedback.json").write_text('{"keep": true}\n', encoding="utf-8")
+            mod_dir = Path(tmp, "mod")
+            mod_dir.mkdir()
+            shutil.copy(FEEDBACK_RULES, mod_dir / "feedback_rules.js")
+            shutil.copy(Path(FEEDBACK_RULES).parent / "feedback_bundle.js", mod_dir / "feedback_bundle.js")
+            src = Path(FEEDBACK_TAB).read_text(encoding="utf-8")
+            src = (src
+                   .replace('from "gpui-kit"', 'from "./gpui-kit.js"')
+                   .replace('from "gpui-base"', 'from "./gpui-base.js"')
+                   .replace('from "fs/promises"', 'from "node:fs/promises"')
+                   .replace('from "herdr"', 'from "./herdr.js"'))
+            (mod_dir / "feedback.js").write_text(src, encoding="utf-8")
+            (mod_dir / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            (mod_dir / "gpui-kit.js").write_text(
+                "export const drops = new Map();\n"
+                "export function makeEl() {\n"
+                "  let id = null;\n"
+                "  const p = new Proxy(() => p, {\n"
+                "    get(_t, prop) {\n"
+                "      if (prop === 'id') return (v) => { id = v; return p; };\n"
+                "      if (prop === 'on_drop') return (fn) => { drops.set(id, fn); return p; };\n"
+                "      return () => p;\n"
+                "    },\n"
+                "  });\n"
+                "  return p;\n"
+                "}\n"
+                "export const div = () => makeEl();\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "gpui-base.js").write_text(
+                'import { makeEl } from "./gpui-kit.js";\n'
+                "export const h_flex = () => makeEl(), v_flex = () => makeEl(), Input = { new: () => makeEl() };\n"
+                "export const InputState = { new: (o = {}) => { let val = o.value || ''; return { on() {}, value: () => val, set_value: (v) => { val = v; }, focus() {} }; } };\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "kit.js").write_text(
+                "export const S = { text: 13, textSm: 12, textXs: 11, radius: 4, radiusLg: 6 };\n"
+                "export const alpha = () => '#000';\n"
+                f"export const tilde = (p) => p.startsWith({json.dumps(str(home_dir))} + '/') ? '~' + p.slice({len(str(home_dir))}) : p;\n",
+                encoding="utf-8",
+            )
+            (mod_dir / "herdr.js").write_text(
+                'import * as fs from "node:fs/promises";\n'
+                'import * as fsSync from "node:fs";\n'
+                'import * as nodePath from "node:path";\n'
+                f"export const home = () => {json.dumps(str(home_dir))};\n"
+                f"export const appHome = () => {json.dumps(str(app_dir))};\n"
+                "export const checking = () => false;\n"
+                "export const window = () => ({ platform: 'linux' });\n"
+                "export const pickFolder = async () => null;\n"
+                "export async function exec(cmd, args = []) {\n"
+                "  if (cmd === 'mkdir' && args[0] === '-p' && args[1]) { fsSync.mkdirSync(args[1], { recursive: true }); return { code: 0, stdout: '', stderr: '' }; }\n"
+                "  return { code: 1, stdout: '', stderr: '' };\n"
+                "}\n"
+                "export const readTextFile = async (p) => { try { return await fs.readFile(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };\n"
+                "export const writeTextFile = async (p, text, expected) => { await fs.mkdir(nodePath.dirname(p), { recursive: true }); const cur = await readTextFile(p); if (cur !== expected) throw new Error('stale'); await fs.writeFile(p, text, 'utf8'); return null; };\n",
+                encoding="utf-8",
+            )
+            code = (
+                f'import * as fb from "{(mod_dir / "feedback.js").as_uri()}";\n'
+                f'import {{ drops }} from "{(mod_dir / "gpui-kit.js").as_uri()}";\n'
+                "const tasks = [];\n"
+                "const cx = { spawn: (fn) => { const p = fn(cx); tasks.push(p); return p; }, notify: () => {} };\n"
+                "const host = { state: {} };\n"
+                "fb.init(host, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "fb.render(host, {});\n"
+                "const onDrop = drops.get('fb-folder');\n"
+                "if (!onDrop) throw new Error('missing on_drop on fb-folder');\n"
+                f"onDrop({{ paths: [{json.dumps(str(dropped_dir) + '/')}] }}, cx);\n"
+                "await Promise.all(tasks.splice(0));\n"
+                "const afterDrop = { val: host.state.feedback.input.value(), root: host.state.feedback.root, notice: host.state.feedback.notice };\n"
+                "onDrop({ paths: ['rel/bad'] }, cx);\n"
+                "const afterRel = { root: host.state.feedback.root, notice: host.state.feedback.notice };\n"
+                "console.log(JSON.stringify({ afterDrop, afterRel }));\n"
+            )
+            res = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            got = json.loads(res.stdout)
+            self.assertEqual(got["afterDrop"]["val"], "~/Feedback/dropped")
+            self.assertEqual(got["afterDrop"]["root"], str(dropped_dir))
+            self.assertEqual(got["afterDrop"]["notice"]["level"], "ok")
+            self.assertTrue(dropped_dir.is_dir())
+            self.assertEqual(json.loads(Path(app_dir, "feedback.json").read_text(encoding="utf-8")), {"keep": True, "folder": "~/Feedback/dropped"})
+            self.assertEqual(got["afterRel"]["notice"]["level"], "error")
+            self.assertEqual(got["afterRel"]["root"], str(dropped_dir))

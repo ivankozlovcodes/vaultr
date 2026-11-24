@@ -126,6 +126,23 @@ function save(host, cx) {
   queue(host, cx, parsed.value);
 }
 
+// A folder dropped from Finder populates the input and saves through the same checks.
+function dropFolder(host, paths, cx) {
+  const raw = Array.isArray(paths) ? paths.find((p) => typeof p === "string" && p.trim()) : null;
+  if (!raw) return;
+  const st = host.state.feedback;
+  const abs = expandFeedbackPath(raw, home());
+  const val = shortPath(abs ?? raw.trim());
+  st.input.set_value(val);
+  const parsed = parseFeedbackFolder(val, home());
+  if (parsed.error) {
+    st.notice = { level: "error", text: parsed.error };
+    cx.notify();
+    return;
+  }
+  queue(host, cx, parsed.value);
+}
+
 function browse(host, cx) {
   const st = host.state.feedback;
   cx.spawn(async (cx) => {
@@ -204,6 +221,7 @@ function row(host, t) {
       : el.border_1().border_color(t.input).text_color(t.foreground).hover((s) => s.bg(t.hover)).child(text);
   };
   return v_flex().id("fb-folder").w_full().gap(6).py(14).border_b(1).border_color(t.border)
+    .on_drop((e, cx) => dropFolder(host, e?.paths, cx))
     .child(div().text_size(S.text + 1).text_color(t.foreground).child(FIELD.label))
     .child(div().text_size(S.textSm).text_color(t.dim).child(FIELD.about))
     .child(h_flex().w_full().gap(8).items_center()
