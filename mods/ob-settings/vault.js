@@ -156,7 +156,7 @@ function row(host, t) {
   const set = isSet(st.own[KEY]);
   const eff = st.effective[KEY] ?? "";
   const status = !set ? "Not set: the Notes panel and daily notes are off until you set it."
-    : st.root ? `Set in obsidian.json. Clear it to use: ${eff}`
+    : st.root ? "Set in obsidian.json. Clear it to disable Notes and daily notes."
     : "Set in obsidian.json, but not a full path (~/... or /...): the Notes panel and daily notes are off until you fix it.";
   const btn = (id, text, primary, onClick) => {
     const el = h_flex().id(id).h(26).px(10).rounded(S.radius).items_center().text_size(S.textSm).font_medium();
