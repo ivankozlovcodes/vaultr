@@ -305,8 +305,8 @@ export default class Sessions extends View {
     this.dis = getDismissed(); // marks and pills are attention: a dismissed "Needs you" report shows as idle
     const byKey = new Map();
     const add = (n, parent) => { n.parent = parent ?? null; n.children ??= []; byKey.set(n.key, n); if (parent) parent.children.push(n); return n; };
-    const paneNode = (w, tab, p, parent) => {
-      const name = paneLabelOf(p, tab ? tabLabel(tab, ps) : "");
+    const paneNode = (w, tab, p, parent, tabShown = true) => {
+      const name = paneLabelOf(p, tabShown && tab?.named ? tabLabel(tab, ps) : "");
       const n = add({ key: `p:${p.pane}`, kind: "pane", label: name, text: name, space: w, tab, pane: p,
         reps: { machine: w.machine ?? null, space: w.id, tab: tab?.id ?? null, pane: p.pane, terminal: p.terminal ?? null } }, parent);
       n.defaultOpen = false;
@@ -317,12 +317,12 @@ export default class Sessions extends View {
       const label = tabLabel(tab, ps);
       const n = add({ key: `t:${tab.id}`, kind: "tab", label, text: label, space: w, tab, reps: { machine: w.machine ?? null, space: w.id, tab: tab.id } }, parent);
       if (mine.length > 1) {
-        for (const p of mine) paneNode(w, tab, p, n);
+        for (const p of mine) paneNode(w, tab, p, n, true);
       } else if (mine.length === 1) {
         Object.assign(n.reps, { pane: mine[0].pane, terminal: mine[0].terminal ?? null });
         n.pane = mine[0];
         // The tab row stands for its one pane: the pane's label shows under the tab's name when they differ.
-        n.secondary = paneSecondary(label, paneLabelOf(mine[0], label));
+        n.secondary = paneSecondary(label, paneLabelOf(mine[0], tab.named ? label : ""));
       }
       n.defaultOpen = Boolean(w.active && tab.active);
       return n;
@@ -332,17 +332,19 @@ export default class Sessions extends View {
       const n = add({ key: `s:${w.id}`, kind: "space", label: w.name, text: w.name, space: w, worktree, git: this.git.of(w, ps),
         reps: { machine: w.machine ?? null, space: w.id } }, parent);
       const tabs = this.sortTabs((w.tabs ?? []).filter((tab) => !isTabHidden(h, tab, w)), ps);
-      if (tabs.length > 1) {
+      const namedSingle = tabs.length === 1 && Boolean(tabs[0].named) && Boolean(tabs[0].name?.trim()) && tabs[0].name.trim() !== w.name;
+      if (tabs.length > 1 || namedSingle) {
         for (const tab of tabs) tabNode(w, tab, n);
       } else if (tabs.length === 1) {
         const tab = tabs[0];
         n.tab = tab; n.reps.tab = tab.id;
         const mine = ps.filter((p) => p.tab === tab.id);
         if (mine.length > 1) {
-          for (const p of mine) paneNode(w, tab, p, n);
+          for (const p of mine) paneNode(w, tab, p, n, false);
         } else if (mine.length === 1) {
           Object.assign(n.reps, { pane: mine[0].pane, terminal: mine[0].terminal ?? null });
           n.pane = mine[0];
+          if (mine[0].name?.trim() && mine[0].name.trim() !== w.name) paneNode(w, tab, mine[0], n, false);
         }
       }
       n.defaultOpen = Boolean(w.active);

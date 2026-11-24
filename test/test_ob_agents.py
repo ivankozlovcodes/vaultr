@@ -130,10 +130,12 @@ def run_main(body, titles=None):
                      "getDismissed", "setDismissed", "pruneDismissedNow", "terminalsByAddress", "hasMod",
                      "dismissedSet", "needsYouShown", "dismissNeedsYou", "restoreNeedsYou", "pruneDismissed"]
         Path(folder, "kit.js").write_text(
-            'export { cleanTitle } from "./names.js";\n'
+            'import { paneLabel } from "./names.js";\n'
+            'export { cleanTitle, tabDisplayName } from "./names.js";\n'
             + "".join(f"export const {n} = () => null;\n" for n in kit_stubs)
             + f"const TITLES = {json.dumps(titles or {})};\n"
-            + "export const sessionTitleOf = (addr) => TITLES[addr] ?? null;\n",
+            + "export const sessionTitleOf = (addr) => TITLES[addr] ?? null;\n"
+            + "export const paneLabelOf = (p, tabName = '') => paneLabel(p, { sessionTitle: p?.terminal ? sessionTitleOf(p.terminal) : null, folder: p?.cwd, tabName });\n",
             encoding="utf-8",
         )
         code = (f'import * as M from "{Path(folder, "main.js").as_uri()}";\n'
@@ -171,6 +173,18 @@ class LeadPaneSessionTitles(unittest.TestCase):
         kit_imports = src.split('from "./kit.js"')[0]
         self.assertIn("cleanTitle", kit_imports)
         self.assertIn("sessionTitleOf", kit_imports)
+        self.assertIn("tabDisplayName", kit_imports)
+
+    def test_manual_pane_name_wins_in_agents_title(self):
+        got = run_main(
+            'const renamed = { name: "build-bot", terminal: "t9", title: "✦ · Draft notes", program: { name: "Claude Code", key: "claude", agent: true } };'
+            'return ['
+            '  M.title({ named: false, name: "1" }, renamed),'
+            '  M.title({ named: true, name: "tester" }, renamed),'
+            '];',
+            {"t9": "Feed Title"},
+        )
+        self.assertEqual(got, ["build-bot", "build-bot"])
 
 
 if __name__ == "__main__":

@@ -209,7 +209,7 @@ export default class PaneHeader extends View {
     const h = shared("ob.history");
     const canBack = Boolean(h && h.index > 0);
     const canFwd = Boolean(h && Array.isArray(h.entries) && h.index < h.entries.length - 1);
-    const raw = paneLabelOf(p, tab ? tabLabel(tab, ps) : "");
+    const raw = paneLabelOf(p, tab?.named ? tabLabel(tab, ps) : "");
     const name = p.mod && raw === p.mod ? raw.charAt(0).toUpperCase() + raw.slice(1) : raw;
 
     // Right side.
@@ -309,8 +309,9 @@ export default class PaneHeader extends View {
     const crumbs = [];
     if (addr) {
       // Nearest first (tab, space, machine), each only while it fits whole.
+      const showTabCrumb = Boolean(tab && (tab.named || mine.length > 1));
       const parts = [
-        tab ? ["tab", tabLabel(tab, ps), "tab"] : null,
+        showTabCrumb ? ["tab", tabLabel(tab, ps), "tab"] : null,
         space ? ["space", space.name || "space", "space"] : null,
         ["machine", machineLabel(space?.machine ?? null), "machine"],
       ].filter(Boolean);

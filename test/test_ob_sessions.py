@@ -21,7 +21,7 @@ class PaneNames(unittest.TestCase):
         self.src = MAIN.read_text(encoding="utf-8")
 
     def test_a_pane_row_is_named_by_the_kit_rule_with_its_tab_name_passed_in(self):
-        self.assertIn('paneLabelOf(p, tab ? tabLabel(tab, ps) : "")', self.src)
+        self.assertIn('paneLabelOf(p, tabShown && tab?.named ? tabLabel(tab, ps) : "")', self.src)
 
     def test_the_old_pane_name_is_no_longer_used_for_rows(self):
         self.assertNotIn("paneName(p)", self.src)
@@ -30,7 +30,7 @@ class PaneNames(unittest.TestCase):
         self.assertRegex(self.src, r'kind: "tab", label, text: label')
 
     def test_a_single_pane_tab_row_gets_the_pane_label_as_secondary_text_when_it_differs(self):
-        self.assertIn("paneSecondary(label, paneLabelOf(mine[0], label))", self.src)
+        self.assertIn('paneSecondary(label, paneLabelOf(mine[0], tab.named ? label : ""))', self.src)
 
     def test_the_secondary_text_is_drawn_in_the_tab_row(self):
         self.assertRegex(self.src, r"n\.secondary[\s\S]{0,200}text_color\(t\.dim\)")

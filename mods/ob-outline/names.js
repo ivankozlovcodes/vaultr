@@ -18,6 +18,19 @@ export function cleanTitle(s) {
   return String(s ?? "").trim().replace(/^[^\p{L}\p{N}~/]+/u, "").trim();
 }
 
+// Meaningful terminal title: non-empty, not a bare path, not user@host, and not just the program's own name/key.
+export function tellingTitle(title, program) {
+  const raw = String(title ?? "").trim().replace(/^[^\p{L}\p{N}~/]+/u, "");
+  const live = cleanTitle(title);
+  if (!live) return "";
+  const prog = String(program?.name ?? "").trim();
+  const key = String(program?.key ?? "").trim().toLowerCase();
+  if (/^[~/]|^[A-Za-z]:\\/.test(raw) || live.includes("@")) return "";
+  if (prog && live === prog) return "";
+  if (key && live.toLowerCase() === key) return "";
+  return live;
+}
+
 // The folder as people write it: home as "~", and a long path cut to its last two parts ("…/2 Projects/vaultr").
 export function shortFolder(folder, home) {
   let s = String(folder ?? "").trim();
@@ -51,11 +64,15 @@ function kindOf(pane, ctx) {
 export function paneLabel(pane = {}, ctx = {}) {
   const p = pane ?? {};
   const c = ctx ?? {};
+  // An explicit manual pane rename (pane.rename) always wins.
+  const manual = typeof p.name === "string" ? p.name.trim() : "";
+  if (manual) return manual;
   const prog = p.program?.name ?? "";
   const folder = shortFolder(c.folder ?? p.cwd, c.home);
+  const live = tellingTitle(p.title, p.program);
   let candidates;
   switch (kindOf(p, c)) {
-    case "agent": candidates = [cleanTitle(c.sessionTitle), prog, folder]; break;
+    case "agent": candidates = [cleanTitle(c.sessionTitle), live, prog, folder]; break;
     case "shell": candidates = [folder, cleanTitle(p.title), prog]; break;
     case "mod": candidates = [c.panelName, p.mod, cleanTitle(p.title)]; break;
     default: candidates = [prog, cleanTitle(p.title)];
@@ -64,4 +81,18 @@ export function paneLabel(pane = {}, ctx = {}) {
   if (!texts.length) return "Terminal";
   const tab = typeof c.tabName === "string" ? c.tabName.trim() : "";
   return texts.find((t) => t !== tab) ?? texts[0];
+}
+
+// One naming rule for tabs (and single-agent sessions): respect manual tab rename (unless auto-named after the
+// lead program), otherwise derive from the lead pane via paneLabel (manual pane.name -> sessionTitle -> live title -> program -> folder).
+export function tabDisplayName(tab, lead, ctx = {}) {
+  const t = tab ?? {};
+  const manual = t.named && typeof t.name === "string" ? t.name.trim() : "";
+  const prog = String(lead?.program?.name ?? "").trim();
+  if (manual && manual !== prog) return manual;
+  if (lead) {
+    const pName = paneLabel(lead, ctx);
+    if (pName && pName !== "Terminal") return pName;
+  }
+  return manual || String(t.name ?? "").trim();
 }

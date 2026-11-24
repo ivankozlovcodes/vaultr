@@ -19,7 +19,7 @@ import {
 import {
   S, icon, programIcon, iconButton, treeRow, sectionHeader, emptyState, openMenu, statusMark,
   needsYou, normStatus, takeFocus, machineOf, isBookmarked, toggleBookmark, mainAgents, placedTerminals,
-  cleanTitle, sessionTitleOf,
+  cleanTitle, sessionTitleOf, tabDisplayName, paneLabelOf,
   normHidden, isMachineHidden, isSpaceHidden, isTabHidden, getHidden,
   agentAttention, effectiveStatus, attentionRank, attentionCounts, isNeedsYou, isDismissed, dismissStamp, getDismissed, setDismissed,
   pruneDismissedNow, terminalsByAddress,
@@ -52,15 +52,12 @@ function leadPanes(all) {
   }
   return leads;
 }
-// A tab's name, or the agent's live title when the tab is unnamed and the title says something.
+// One shared naming rule (kit/names.js): manual pane.name -> manual tab rename -> sessionTitle -> telling live title -> program.
 function title(tab, l) {
-  const sess = l?.terminal || l?.address ? sessionTitleOf(l.terminal ?? l.address) : null;
-  if ((!tab.named || tab.name === l?.program?.name) && sess) return clean(sess);
-  const prog = l?.program?.name;
-  const live = clean(l?.title);
-  const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));
-  const telling = live && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
-  return (tab.name === prog || !tab.named) && telling ? live : tab.name;
+  if (typeof l?.name === "string" && l.name.trim()) return l.name.trim();
+  const addr = l?.terminal ?? l?.address ?? null;
+  const sess = addr ? sessionTitleOf(addr) : null;
+  return tabDisplayName(tab, l, { sessionTitle: sess, folder: l?.cwd });
 }
 
 export default class Agents extends View {
@@ -213,7 +210,9 @@ export default class Agents extends View {
     list = [...pinned, ...rest];
     setAgentOrder(list.map((a) => a.address));
 
-    // Labels: "space · detail", where detail is a named tab or the agent's own title.
+    // Labels: "space · detail", where detail uses the shared kit rule (manual pane.name -> manual tab rename -> session/live title -> program).
+    const paneById = new Map(ps.map((p) => [p.pane, p]));
+    const paneByTerm = new Map(ps.filter((p) => p.terminal).map((p) => [p.terminal, p]));
     const leads = leadPanes(ps);
     const tabs = new Map(spaces().flatMap((s) => s.tabs ?? []).map((tab) => [tab.id, tab]));
     const tabCounts = new Map();
@@ -221,7 +220,9 @@ export default class Agents extends View {
     const label = (a) => {
       const tab = tabs.get(a.tab);
       const many = tabCounts.get(a.tab) > 1;
-      return tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab)) : a.title || a.program?.name || "";
+      const pane = paneById.get(a.pane) ?? paneByTerm.get(a.address) ?? null;
+      const target = many ? (pane ?? a) : (pane ?? leads.get(a.tab) ?? a);
+      return tab ? title(many ? { ...tab, named: false } : tab, target) : paneLabelOf(target);
     };
 
     // Groups: pinned, then priority sections or spaces (neighbours in agents() share a space).

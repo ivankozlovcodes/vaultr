@@ -221,5 +221,58 @@ class CleanTitleAndWrappedAgent(unittest.TestCase):
         self.assertNotIn("paneName(", src)
 
 
+@unittest.skipUnless(NODE, "node is not installed")
+class ManualRenameAndLiveTitles(unittest.TestCase):
+    def test_manual_pane_name_wins_over_session_title_live_title_program_and_tab_name(self):
+        self.assertEqual(
+            label(
+                {"name": "worker-1", "title": "🛠️ Refactor Engine", "program": CLAUDE},
+                {"sessionTitle": "sample-session", "tabName": "worker-1"},
+            ),
+            "worker-1",
+        )
+        self.assertEqual(
+            label({"name": "  scratch  ", "program": SHELL, "cwd": "/fixture/user/git/vaultr"}, {"home": "/fixture/user"}),
+            "scratch",
+        )
+
+    def test_agent_uses_cleaned_live_terminal_title_before_program_fallback(self):
+        self.assertEqual(
+            label({"title": "🛠️ MAIN · vaultr", "program": CLAUDE}),
+            "MAIN · vaultr",
+        )
+        # Provider sessionTitle still beats live terminal title when both exist.
+        self.assertEqual(
+            label({"title": "🛠️ live task", "program": CLAUDE}, {"sessionTitle": "session-title"}),
+            "session-title",
+        )
+
+    def test_agent_ignores_non_telling_terminal_titles_and_falls_back_to_program(self):
+        for raw in ("~/git/vaultr", "/tmp/work", "user@box: ~", "Claude Code", "claude", "🟢 "):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    label({"title": raw, "program": {"name": "Claude Code", "key": "claude", "agent": True}}),
+                    "Claude Code",
+                )
+
+    def test_tab_display_name_respects_manual_tab_rename_and_falls_back_to_lead_pane_title(self):
+        got = run_node("""
+            const agent = { title: "🛠️ Execute Migration", program: { name: "Claude Code", key: "claude", agent: true } };
+            const renamedPane = { name: "custom-pane", title: "🛠️ Execute Migration", program: { name: "Claude Code", key: "claude", agent: true } };
+            return [
+                N.tabDisplayName({ named: true, name: "tester" }, agent, {}),
+                N.tabDisplayName({ named: false, name: "1" }, agent, {}),
+                N.tabDisplayName({ named: true, name: "Claude Code" }, agent, {}),
+                N.tabDisplayName({ named: false, name: "1" }, renamedPane, {}),
+                N.tabDisplayName({ named: true, name: "tester" }, renamedPane, {}),
+                N.tabDisplayName({ named: false, name: "1" }, agent, { sessionTitle: "✦ Feed Title" }),
+            ];
+        """)
+        self.assertEqual(
+            got,
+            ["tester", "Execute Migration", "Execute Migration", "custom-pane", "tester", "Feed Title"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

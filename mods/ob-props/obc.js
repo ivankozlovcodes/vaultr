@@ -29,7 +29,11 @@ export function sessionOf(address, ps = panes(), sp = spaces(), ts = terminals()
   if (tabId) for (const s of sp) { const x = s.tabs.find((y) => y.id === tabId); if (x) { tab = x; space = s; break; } }
   if (!space && agent?.space) space = sp.find((s) => s.id === agent.space) ?? null;
   const program = pane?.program ?? agent?.program ?? term?.program ?? null;
-  const label = space ? `${space.name} / ${tab ? tabLabel(tab, ps) : "?"}` : term?.name || term?.title || program?.name || address;
+  const paneTitle = pane ? paneName(pane) : null;
+  const tabTitle = tab ? tabLabel(tab, ps) : null;
+  const multiPane = Boolean(pane && tab && ps.filter((p) => p.tab === tab.id).length > 1);
+  const part = pane?.name?.trim() || multiPane ? (paneTitle ?? tabTitle) : (tabTitle ?? paneTitle);
+  const label = space ? `${space.name} / ${part || "?"}` : term?.name || term?.title || program?.name || address;
   const status = agent?.status ?? (typeof term?.status === "string" ? term.status : term?.status?.state) ?? null;
   return { address, machine: machineOf(address), term, agent, pane, tab, space, label, program, status, live: term ? term.state === "live" : Boolean(pane) };
 }

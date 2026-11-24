@@ -15,7 +15,7 @@ import { props, run, nextCommand, settings, hc, layout, focused, panes, spaces, 
 import {
   S, tc, alpha, icon, iconButton, badge, statusMark, normStatus, sectionHeader, emptyState, programIcon, feed,
   provider, machineLabel, machineOf, ago, dur, tilde, takeFocus, isShown, openView, subagentCounts,
-  feedLine, parentAddrOf,
+  feedLine, parentAddrOf, tabLabel,
 } from "./kit.js";
 import { summarize, usageLines, subagentsLine } from "./usage.js";
 import { MONO, splitCmd, sessionOf, inspected, inspect, revealTerminal, allSubagents, hcChildren, openViewer, copied } from "./obc.js";
@@ -225,7 +225,7 @@ export default class Props extends View {
     this.section(t, rows, "location", "LOCATION", null, [
       this.kv(t, "machine", "Machine", machineLabel(s.machine), { lead: icon(s.machine ? "server" : "monitor", S.iconSm, t.muted) }),
       this.kv(t, "space", "Space", s.space?.name ?? "—", { onClick: s.space ? () => run("space.select", { id: s.space.id }) : null, copy: s.space ? "space" : null, dragPath: s.space?.folder ?? null, dragOn: machine }),
-      this.kv(t, "tab", "Tab", s.tab ? s.label.split(" / ").slice(1).join(" / ") : "—", { onClick: s.tab ? () => { run("space.select", { id: s.space.id }); run("tab.select", { id: s.tab.id }); } : null }),
+      this.kv(t, "tab", "Tab", s.tab ? tabLabel(s.tab, panes()) : "—", { onClick: s.tab ? () => { run("space.select", { id: s.space.id }); run("tab.select", { id: s.tab.id }); } : null }),
       this.kv(t, "pane", "Pane", s.pane?.pane ?? "no pane", { mono: Boolean(s.pane), copy: s.pane ? "pane" : null, color: s.pane ? null : t.dim }),
       this.kv(t, "cwd", "Folder", tilde(cwd) || "—", { copy: "cwd", tip: cwd ?? undefined, dragPath: cwd, dragOn: machine }),
       s.pane?.branch ? this.kv(t, "branch", "Branch", s.pane.branch, { lead: icon("git-branch", S.iconSm, t.muted), copy: "branch" }) : null,

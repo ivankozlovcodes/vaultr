@@ -671,7 +671,7 @@ class PaneNames(unittest.TestCase):
         self.assertIn("paneLabelOf(p, tabName)", self.src)
 
     def test_the_tab_name_is_passed_to_each_pane_row(self):
-        self.assertIn("this.paneRow(t, p, Boolean(pinned) && pinnedAddr === addr && addr != null, tabLabel(curTab, ps))", self.src)
+        self.assertIn('this.paneRow(t, p, Boolean(pinned) && pinnedAddr === addr && addr != null, curTab.named ? tabLabel(curTab, ps) : "")', self.src)
 
     def test_the_old_pane_name_is_no_longer_used_for_rows(self):
         self.assertNotIn("paneName(p) || p.title", self.src)

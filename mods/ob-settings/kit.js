@@ -16,9 +16,9 @@ export const LAYOUT = "vaultr";
 // Pure agent helpers (kit/agents.js): which agents are main agents, the ones placed in a pane of a tab.
 export { placedTerminals, mainAgents } from "./agents.js";
 
-// Pure pane naming (kit/names.js): paneLabel(pane, ctx), shortFolder(folder, home). paneLabel is also used here.
-import { paneLabel, cleanTitle } from "./names.js";
-export { paneLabel, shortFolder, paneSecondary, cleanTitle } from "./names.js";
+// Pure pane naming (kit/names.js): paneLabel(pane, ctx), shortFolder(folder, home), tabDisplayName(tab, lead, ctx).
+import { paneLabel, cleanTitle, tabDisplayName } from "./names.js";
+export { paneLabel, shortFolder, paneSecondary, cleanTitle, tellingTitle, tabDisplayName } from "./names.js";
 
 // The one fuzzy matcher (kit/fuzzy.js, fzf-style): fuzzy(q, text) -> { score, hits } | null, matchQuery for spans.
 export { fuzzy, matchQuery } from "./fuzzy.js";
@@ -610,24 +610,23 @@ export function place(space, ps) {
   const tabs = new Set((space?.tabs ?? []).map((c) => c.id));
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || space?.folder || "";
 }
-// A pane's name: an agent by its session title or program name, a shell by its clean title or folder, a mod by its view title.
+// A pane's name: one rule (kit/names.js paneLabel) via paneLabelOf.
 export function paneName(p) {
   if (!p) return "";
-  if (p.mod) return VIEWS[p.mod]?.title || cleanTitle(p.title) || p.mod;
-  const sess = p.terminal ? sessionTitleOf(p.terminal) : null;
-  if (sess) return cleanTitle(sess);
-  if (p.program?.agent) return p.program.name;
-  const t = cleanTitle(p.title);
-  if (p.program?.shell) return t || (p.cwd ? base(p.cwd) : p.program.name);
-  return p.program?.name || t || "terminal";
+  return paneLabelOf(p);
 }
-// A tab's display name: its name if named, else "<n> · <lead pane name>".
+// A tab's display name: manual tab rename if named (and not just the program name), else its lead pane's name.
 export function tabLabel(tab, ps) {
   if (!tab) return "";
-  if (tab.named) return tab.name;
   const mine = ps.filter((p) => p.tab === tab.id);
   const lead = mine.find((p) => p.program?.agent) ?? mine.find((p) => p.focused) ?? mine[0];
-  return lead ? paneName(lead) : tab.name;
+  if (!lead) return tab.name ?? "";
+  return tabDisplayName(tab, lead, {
+    sessionTitle: lead.terminal ? sessionTitleOf(lead.terminal) : null,
+    folder: lead.cwd,
+    home: home(),
+    panelName: lead.mod ? VIEWS[lead.mod]?.title ?? null : null,
+  });
 }
 // An agent's session title: the feed's name for its session, else none. The
 // agent's terminal title is left out: it is a task line that changes ("bash in src"), not the session.

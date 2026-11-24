@@ -159,9 +159,12 @@ export default class Graph extends View {
       edges.push([mk, sk, "contain"]);
       for (const tab of visibleTabs) {
         // No tab node: each pane is a node under its space, and the panes of one tab are joined by sibling links (shape.js).
+        // Respect manual pane.name first; for a single-pane tab, respect manual tab rename via tabLabel; otherwise use paneLabelOf without tabName suppression.
         const mine = ps.filter((x) => x.tab === tab.id);
-        const tabName = tabLabel(tab, ps);
-        const shape = paneShape(tab.id, mine.map((p) => ({ pane: p.pane, label: paneLabelOf(p, tabName) })));
+        const shape = paneShape(tab.id, mine.map((p) => ({
+          pane: p.pane,
+          label: p.name?.trim() ? paneLabelOf(p) : (mine.length === 1 ? tabLabel(tab, ps) : paneLabelOf(p)),
+        })));
         for (const sn of shape.nodes) {
           const p = mine.find((x) => x.pane === sn.pane);
           // A foreground pane takes its agent's status (the one the Agents panel shows); other panes keep the pane's.

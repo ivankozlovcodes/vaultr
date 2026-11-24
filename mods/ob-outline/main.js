@@ -639,7 +639,7 @@ class Panel {
       const g = tree.groups[i];
       const addr = p.terminal ?? null;
       live += liveCount(g, (k) => this.kidActive(k));
-      rows.push([`pane:${p.pane}`, this.paneRow(t, p, Boolean(pinned) && pinnedAddr === addr && addr != null, tabLabel(curTab, ps))]);
+      rows.push([`pane:${p.pane}`, this.paneRow(t, p, Boolean(pinned) && pinnedAddr === addr && addr != null, curTab.named ? tabLabel(curTab, ps) : "")]);
       this.items(t, rows, g.runs, g.agents, g.kids, 1);
     });
     return { live };

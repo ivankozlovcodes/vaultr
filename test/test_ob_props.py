@@ -421,7 +421,8 @@ class PropsDragPaths(unittest.TestCase):
                 "export const openView = () => {};\n"
                 "export const subagentCounts = () => ({ live: 0, total: 0 });\n"
                 "export const feedLine = () => null;\n"
-                "export const parentAddrOf = () => null;\n",
+                "export const parentAddrOf = () => null;\n"
+                "export const tabLabel = (tab) => tab?.name ?? '';\n",
                 encoding="utf-8",
             )
             (mod_dir / "obc.js").write_text(
@@ -495,6 +496,11 @@ class PropsDragPaths(unittest.TestCase):
         self.assertEqual(got["file"], {"paths": ["/srv/logs/t5.jsonl"], "opts": {"on": "devbox"}})
         self.assertIsNone(got["machine"])
         self.assertIsNone(got["branch"])
+
+    def test_location_tab_row_uses_tabLabel_not_session_label_slice(self):
+        src = Path(ROOT, "mods", "ob-props", "main.js").read_text(encoding="utf-8")
+        self.assertIn('this.kv(t, "tab", "Tab", s.tab ? tabLabel(s.tab, panes()) : "—"', src)
+        self.assertNotIn('s.label.split(" / ").slice(1)', src)
 
 if __name__ == "__main__":
     unittest.main()
