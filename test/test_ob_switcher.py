@@ -490,6 +490,7 @@ class OverlayKeyContext(unittest.TestCase):
                 "machineLabel", "tabLabel", "paneLabelOf", "feed", "bookmarks", "findNode", "current", "chordParts",
                 "kbd", "sessionTitleOf", "normHidden", "isSpaceHidden", "isTabHidden", "patchHidden",
                 "updateHidden", "getHidden", "parentAddrOf",
+                "terminalsByAddress", "tabAttention", "spaceAttention", "getDismissed",
             ]
             Path(folder, "kit.js").write_text(
                 el_stub_js()
@@ -778,6 +779,7 @@ class SessionsModeAndFullSearch(unittest.TestCase):
                 "machineLabel", "tabLabel", "paneLabelOf", "feed", "bookmarks", "findNode", "current", "chordParts",
                 "kbd", "sessionTitleOf", "normHidden", "isSpaceHidden", "isTabHidden", "patchHidden",
                 "updateHidden", "getHidden", "parentAddrOf",
+                "terminalsByAddress", "tabAttention", "spaceAttention", "getDismissed",
             ]
             Path(folder, "kit.js").write_text(
                 el_stub_js()

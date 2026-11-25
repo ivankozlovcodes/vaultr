@@ -250,6 +250,11 @@ class OtherPanelsWiring(unittest.TestCase):
         src = read("mods", "ob-tabs", "main.js")
         self.assertIn("tabAttention(", src)
 
+    def test_switcher_uses_tab_and_space_attention(self):
+        src = read("mods", "ob-switcher", "main.js")
+        self.assertIn("tabAttention(", src)
+        self.assertIn("spaceAttention(", src)
+
     def test_truth_panels_keep_the_reported_status(self):
         # The pane header, Properties and Outline say what the terminal reports.
         for mod in ("ob-pane", "ob-props", "ob-outline"):

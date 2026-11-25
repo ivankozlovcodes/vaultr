@@ -22,6 +22,7 @@ import {
   S, tc, alpha, icon, programIcon, avatar, statusMark, highlight, machineLabel, tabLabel, paneLabelOf,
   provider, bookmarks, VIEWS, findNode, current, chordParts, kbd,
   normHidden, isSpaceHidden, isTabHidden, patchHidden, updateHidden, getHidden, parentAddrOf,
+  terminalsByAddress, tabAttention, spaceAttention, getDismissed,
 } from "./kit.js";
 import { commandRows, VAULTR_COMMANDS } from "./commands.js";
 import { switcherFuzzy } from "./fuzzy_match.js";
@@ -181,6 +182,8 @@ export default class Switcher extends View {
     // The session titles each tab holds (its panes', agents' and terminals' titles, plus provider session names).
     const titles = sessionTitles(new Map([...where].map(([addr, w]) => [addr, w.tab.id])), { agents: ag, terminals: terms, sessions: provider.sessions(), panes: ps });
     const h = normHidden(shared("ob.hidden") ?? getHidden());
+    const tmap = terminalsByAddress(terms);
+    const dis = getDismissed();
     const items = [];
 
     for (const s of sp) {
@@ -191,7 +194,7 @@ export default class Switcher extends View {
         const hidden = isTabHidden(h, tb, s);
         items.push({
           key: `tab:${tb.id}`, kind: "tab", label: tabText(tb), context: ctxOf(s), words: progs.join(" "), titles: titles.get(tb.id) ?? [],
-          status: tb.status, here: tb.id === cur.tab?.id, bookmarked: isBm("tab", tb.id), hidden, settled: hidden,
+          status: tabAttention(tb, ps, tmap, dis), here: tb.id === cur.tab?.id, bookmarked: isBm("tab", tb.id), hidden, settled: hidden,
           lead: () => (lead?.program ? programIcon(lead.program, S.icon) : icon("tab", S.icon)),
           go: () => {
             if (hidden) {
@@ -210,7 +213,7 @@ export default class Switcher extends View {
       const spaceHidden = isSpaceHidden(h, s);
       items.push({
         key: `space:${s.id}`, kind: "space", label: s.name, context: `${machineLabel(s.machine)} · space · ${(s.tabs ?? []).length} tab${(s.tabs ?? []).length === 1 ? "" : "s"}`,
-        words: "space", status: s.status, here: s.id === cur.space?.id, bookmarked: isBm("space", s.id), hidden: spaceHidden,
+        words: "space", status: spaceAttention(s, ps, tmap, dis), here: s.id === cur.space?.id, bookmarked: isBm("space", s.id), hidden: spaceHidden,
         lead: () => avatar(s, 16),
         go: () => {
           if (spaceHidden) {
