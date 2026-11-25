@@ -255,6 +255,11 @@ class OtherPanelsWiring(unittest.TestCase):
         self.assertIn("tabAttention(", src)
         self.assertIn("spaceAttention(", src)
 
+    def test_graph_uses_effective_status_and_space_attention(self):
+        src = read("mods", "ob-graph", "main.js")
+        self.assertIn("effectiveStatus(", src)
+        self.assertIn("spaceAttention(", src)
+
     def test_truth_panels_keep_the_reported_status(self):
         # The pane header, Properties and Outline say what the terminal reports.
         for mod in ("ob-pane", "ob-props", "ob-outline"):

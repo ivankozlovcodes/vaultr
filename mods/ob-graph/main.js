@@ -32,6 +32,7 @@ import {
   S, tc, alpha, icon, iconButton, feed, machineLabel, machineOf, tabLabel, paneLabelOf,
   takeFocus, openMenu, openView, reveal, isBookmarked, toggleBookmark, emptyState, placedTerminals, mainAgents,
   normHidden, isMachineHidden, isSpaceHidden, isTabHidden, getHidden,
+  terminalsByAddress, effectiveStatus, spaceAttention, getDismissed,
 } from "./kit.js";
 import { shownGraph, emptyCopy, activeState, activeOf, setActive, touchState, touchOn, setTouch } from "./filter.js";
 import { touchShape } from "./touch_shape.js";
@@ -139,6 +140,8 @@ export default class Graph extends View {
     const add = (n) => { nodes.set(n.key, n); return n; };
     const ps = panes(), sp = spaces();
     const h = normHidden(shared("ob.hidden") ?? getHidden());
+    const tmap = terminalsByAddress();
+    const dis = getDismissed();
     for (const m of machines()) {
       if (isMachineHidden(h, m.name ?? null)) continue;
       const k = `m:${m.name ?? "local"}`;
@@ -155,7 +158,7 @@ export default class Graph extends View {
       const mk = `m:${s.machine ?? "local"}`;
       if (!nodes.has(mk)) add({ key: mk, kind: "m", label: machineLabel(s.machine), machine: s.machine });
       const sk = `s:${s.id}`;
-      add({ key: sk, kind: "s", label: s.name, parent: mk, status: s.status, space: s });
+      add({ key: sk, kind: "s", label: s.name, parent: mk, status: spaceAttention(s, ps, tmap, dis), space: s });
       edges.push([mk, sk, "contain"]);
       for (const tab of visibleTabs) {
         // No tab node: each pane is a node under its space, and the panes of one tab are joined by sibling links (shape.js).
@@ -167,11 +170,13 @@ export default class Graph extends View {
         })));
         for (const sn of shape.nodes) {
           const p = mine.find((x) => x.pane === sn.pane);
-          // A foreground pane takes its agent's status (the one the Agents panel shows); other panes keep the pane's.
+          // A foreground pane takes its agent's status rolled up with any live sub-agents/child terminals.
           const agent = p?.terminal ? main.get(p.terminal) : undefined;
+          const rawStatus = agent ? agent.status : p.status;
+          const status = p?.terminal ? effectiveStatus(rawStatus, p.terminal, tmap) : rawStatus;
           add({
             key: sn.key, kind: "p", label: sn.label, parent: sk,
-            status: agent ? agent.status : p.status, space: s, tab, pane: p, program: p.program, address: p.terminal,
+            status, space: s, tab, pane: p, program: p.program, address: p.terminal,
             foreground: Boolean(agent),
           });
           if (p.terminal) paneOf.set(p.terminal, sn.key);
