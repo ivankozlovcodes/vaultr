@@ -21,7 +21,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import {
-  spaces, panes, run, layout, nextCommand, setShared, shared as _shared, focused, settings, openOverlay, closeOverlay, notify,
+  spaces, panes, terminals, run, layout, nextCommand, setShared, shared as _shared, focused, settings, openOverlay, closeOverlay, notify,
   readTextFile, writeTextFile, exec, home, appHome, window as appWindow,
 } from "herdr";
 import { vaultFor } from "./vault_rules.js";
@@ -31,9 +31,10 @@ import { isSettingsOpen } from "./settings_open.js";
 import { detachItem } from "./detach.js";
 import { captureFeedbackState } from "./feedback_capture.js";
 import {
-  S, NODE, tc, alpha, icon, iconButton, statusMark, tabLabel, findNode, programIcon,
+  S, NODE, tc, alpha, icon, iconButton, statusMark, normStatus, tabLabel, findNode, programIcon,
   openMenu, copyText, ago, current, place, toggleBookmark, isBookmarked, chordLabel, bindingFor, stop,
   normHidden, isTabHidden, isSpaceHidden, patchHidden, updateHidden, lightsLeftPad,
+  terminalsByAddress, tabAttention, getDismissed,
 } from "./kit.js";
 
 const shared = (k) => (k ? _shared(k) : { "ob.zen": _shared("ob.zen") });
@@ -291,14 +292,17 @@ export default class Tabs extends View {
   tabList() {
     const c0 = current();
     const ps = panes();
+    const tmap = terminalsByAddress(terminals());
+    const dis = getDismissed();
     const items = [];
     const tabs = c0.space?.tabs ?? [];
     const h = normHidden(shared("ob.hidden"));
     if (tabs.length) items.push({ header: c0.space.name || "Tabs" });
     for (const tab of tabs) {
+      const st = tabAttention(tab, ps, tmap, dis);
       items.push({
         label: tabLabel(tab, ps), icon: "tab", checked: tab.active,
-        hint: isTabHidden(h, tab, c0.space) ? "hidden" : tab.status && tab.status !== "idle" ? tab.status : undefined,
+        hint: isTabHidden(h, tab, c0.space) ? "hidden" : st && st !== "idle" ? st : undefined,
         command: "tab.select", args: { id: tab.id },
       });
     }
@@ -392,6 +396,8 @@ export default class Tabs extends View {
     const c0 = current();
     const space = c0.space;
     const ps = panes();
+    const tmap = terminalsByAddress(terminals());
+    const dis = getDismissed();
     const leftNode = findNode(root, NODE.left);
     const leftHidden = Boolean(leftNode?.hidden);
     const rightHidden = Boolean(findNode(root, NODE.right)?.hidden);
@@ -404,7 +410,7 @@ export default class Tabs extends View {
     const h = normHidden(shared("ob.hidden"));
     // Hidden tabs live in Sessions; the active one always shows (selecting a hidden tab brings it back).
     const tabs = all.filter((x) => !isTabHidden(h, x, space) || x.active);
-    this.anyWorking = tabs.some((x) => x.status === "working");
+    this.anyWorking = tabs.some((x) => normStatus(tabAttention(x, ps, tmap, dis)) === "working");
 
     // Room for tabs: the bar minus its buttons and a strip of drag space.
     const fixed = leftPad + 6 + (leftHidden ? 30 : 0) + 30 /* + */ + 48 /* drag */ + 30 /* list */ + 30 /* right */ + (winButtons ? 90 : 0);
@@ -438,7 +444,8 @@ export default class Tabs extends View {
       const label = tabLabel(tab, ps);
       const next = shown[k + 1];
       const sep = !active && !hovered && next && !next.active && this.hovered !== next.id;
-      const working = tab.status === "working" && tab.working_since && Date.now() - tab.working_since > 60000;
+      const st = tabAttention(tab, ps, tmap, dis);
+      const working = normStatus(st) === "working" && tab.working_since && Date.now() - tab.working_since > 60000;
       const showClose = (active || hovered) && tabW >= 110;
       const dragging = this.pressed === tab.id && this.over && this.over !== tab.id;
       const dropHere = this.pressed && this.over === tab.id && this.pressed !== tab.id;
@@ -470,7 +477,7 @@ export default class Tabs extends View {
         .child(div().flex_1().min_w(0).truncate().child(label))
         .when(Boolean(tab.zoomed), (e) => e.child(icon("maximize", S.iconXs, t.dim)))
         .when(Boolean(working) && tabW >= 130, (e) => e.child(div().flex_none().text_size(S.textXs).text_color(t.dim).child(ago(tab.working_since))))
-        .when(tab.status != null && !(tab.status === "idle" && showClose), (e) => e.child(statusMark(tab.status)))
+        .when(st != null && !(st === "idle" && showClose), (e) => e.child(statusMark(st)))
         .when(showClose, (e) => e.child(h_flex().id(`close-${tab.id}`).size(18).flex_none().items_center().justify_center().rounded(S.radius)
           .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
           .tooltip(tip("Close tab", "tab.close"))
