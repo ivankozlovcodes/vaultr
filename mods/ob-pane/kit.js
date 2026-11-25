@@ -193,11 +193,36 @@ export function worst(list) { return list.reduce((m, s) => ((RANK[normStatus(s)]
 // The status for attention (sections, counts, badges, pills): the agent's or pane's own status, idle while its
 // current report is dismissed. tmap: terminalsByAddress(); dis: getDismissed(). The pane header, Properties and
 // Outline keep reading a.status / p.status.
-// Effective status before dismissal: raises an idle/done/ok terminal to "working"/"blocked" when a live record says so.
+// Live hc child/descendant terminals spawned from `addr` (breadth-first, cycle-safe).
+function liveDescendants(addr, map) {
+  if (!addr || !map?.size) return null;
+  const out = [];
+  const seen = new Set([addr]);
+  const queue = [addr];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const t of map.values()) {
+      if (!t?.address || seen.has(t.address)) continue;
+      if (t.state && t.state !== "live") continue;
+      if (parentAddrOf(t) === cur) {
+        seen.add(t.address);
+        out.push(t);
+        queue.push(t.address);
+      }
+    }
+  }
+  return out.length ? out : null;
+}
+
+// Effective status before dismissal: raises an idle/done/ok terminal to "working"/"blocked" when a live record,
+// live provider sub-agent, or live hc child terminal says so.
 export function effectiveStatus(raw, addr, tmap = null) {
-  const term = addr ? tmap?.get(addr) : null;
-  const subs = term?.records ? provider.subagents({ parent: addr }) : null;
-  return effectiveTermStatus(raw ?? null, term, subs, normStatus);
+  if (!addr) return raw ?? null;
+  const map = tmap ?? terminalsByAddress();
+  const term = map.get(addr) ?? null;
+  const subs = provider.subagents({ parent: addr });
+  const kids = liveDescendants(addr, map);
+  return effectiveTermStatus(raw ?? null, term, subs, normStatus, kids);
 }
 export function agentAttention(a, tmap = null, dis = null) {
   if (!a) return null;

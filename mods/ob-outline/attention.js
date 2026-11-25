@@ -102,22 +102,45 @@ export function isRecordLive(address, id, rec, subagents = null, normFn = attent
 
 const EFF_RANK = { blocked: 4, failed: 3, working: 2, done: 1, idle: 0, ok: 0, stopped: -1 };
 
-// Effective status of a terminal/agent when its sub-agent records are still live: raises an idle/done/ok/null parent
-// to "working" or "blocked" while keeping "blocked"/"failed" on top.
-export function effectiveTermStatus(rawStatus, term, subagents = null, normFn = attentionWord) {
-  const recs = term?.records;
-  if (!recs || typeof recs !== "object") return rawStatus ?? null;
-  const termLive = !term.state || term.state === "live";
-  if (!termLive) return rawStatus ?? null;
+const rawStatusWord = (s) => (typeof s === "string" ? s : s?.state ?? null);
+
+// Effective status of a terminal/agent when its sub-agent records, provider sub-agents, or live hc child terminals
+// are still active: raises an idle/done/ok/null parent to "working" or "blocked" while keeping "blocked"/"failed" on top.
+export function effectiveTermStatus(rawStatus, term, subagents = null, normFn = attentionWord, childTerms = null) {
   const base = rawStatus ?? null;
+  const termLive = !term || !term.state || term.state === "live";
+  if (!termLive) return base;
   const baseWord = base == null ? null : normFn(base);
   let best = base;
   let bestRank = baseWord == null ? -2 : (EFF_RANK[baseWord] ?? 0);
-  for (const [id, rec] of Object.entries(recs)) {
-    if (!isRecordLive(term.address, id, rec, subagents, normFn, termLive)) continue;
-    const st = normFn(rec.state);
+  const bump = (st) => {
+    if (st !== "working" && st !== "blocked") return;
     const r = EFF_RANK[st] ?? -2;
     if (r > bestRank) { bestRank = r; best = st; }
+  };
+  const recs = term?.records;
+  if (recs && typeof recs === "object") {
+    for (const [id, rec] of Object.entries(recs)) {
+      if (!isRecordLive(term.address, id, rec, subagents, normFn, termLive)) continue;
+      bump(normFn(rec.state));
+    }
+  }
+  if (Array.isArray(subagents)) {
+    for (const sub of subagents) {
+      if (!sub || sub.live !== true || sub.ended === true) continue;
+      if (term?.address && sub.parent && sub.parent !== term.address) continue;
+      bump(normFn(sub.state) === "blocked" ? "blocked" : "working");
+    }
+  }
+  if (Array.isArray(childTerms)) {
+    for (const child of childTerms) {
+      if (!child || (child.state && child.state !== "live")) continue;
+      const childRaw = rawStatusWord(child.status);
+      const childEff = child.records && typeof child.records === "object"
+        ? effectiveTermStatus(childRaw, child, null, normFn, null)
+        : childRaw;
+      bump(normFn(childEff));
+    }
   }
   return best;
 }

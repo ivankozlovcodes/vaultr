@@ -417,6 +417,90 @@ class WorkingSubagentRecordRollup(unittest.TestCase):
             "countDead": None,
         })
 
+    def test_live_child_terminals_and_provider_subagents_raise_parent_attention(self):
+        pure = att("""(() => {
+            const liveWork = [{ address: "t1z", parent: "t1n", state: "live", status: "working" }];
+            const liveBlk = [{ address: "t1z", parent: "t1n", state: "live", status: "blocked" }];
+            const liveIdle = [{ address: "t1z", parent: "t1n", state: "live", status: "idle" }];
+            const exitedWork = [{ address: "t1z", parent: "t1n", state: "exited", status: "working" }];
+            const liveSub = [{ parent: "t1n", id: "s1", live: true, ended: false, state: "working" }];
+            const blkSub = [{ parent: "t1n", id: "s1", live: true, ended: false, state: "blocked" }];
+            const parent = { address: "t1n", state: "live" };
+            return {
+                childWorkRaisesIdle: A.effectiveTermStatus("idle", parent, null, A.attentionWord, liveWork),
+                childWorkRaisesDone: A.effectiveTermStatus("done", parent, null, A.attentionWord, liveWork),
+                childBlkRaisesWork: A.effectiveTermStatus("working", parent, null, A.attentionWord, liveBlk),
+                childIdleNoRaise: A.effectiveTermStatus("idle", parent, null, A.attentionWord, liveIdle),
+                childExitedNoRaise: A.effectiveTermStatus("idle", parent, null, A.attentionWord, exitedWork),
+                liveSubNoRecsRaises: A.effectiveTermStatus("idle", parent, liveSub, A.attentionWord, null),
+                blkSubNoRecsRaises: A.effectiveTermStatus("idle", parent, blkSub, A.attentionWord, null),
+            };
+        })()""")
+        self.assertEqual(pure, {
+            "childWorkRaisesIdle": "working",
+            "childWorkRaisesDone": "working",
+            "childBlkRaisesWork": "blocked",
+            "childIdleNoRaise": "idle",
+            "childExitedNoRaise": "idle",
+            "liveSubNoRecsRaises": "working",
+            "blkSubNoRecsRaises": "blocked",
+        })
+
+        state = {
+            "terminals": [
+                {"address": "t_parent", "parent": None, "state": "live", "status": "idle"},
+                {"address": "t_child", "parent": "t_parent", "state": "live", "status": "working"},
+                {"address": "t_grand_root", "parent": None, "state": "live", "status": "idle"},
+                {"address": "t_mid", "parent": "t_grand_root", "state": "live", "status": "idle"},
+                {"address": "t_leaf", "parent": "t_mid", "state": "live", "status": "working"},
+                {"address": "t_done_parent", "parent": None, "state": "live", "status": "idle"},
+                {"address": "t_done_child", "parent": "t_done_parent", "state": "live", "status": "done"},
+                {"address": "t_sub_parent", "parent": None, "state": "live", "status": "idle"},
+            ],
+            "shared": {
+                "ob.subagents": {
+                    "v": 2,
+                    "providers": {"alpha": {"id": "alpha", "name": "Alpha", "noun": "Alpha agent", "caps": ["subagents"]}},
+                    "terms": {},
+                    "subagents": [
+                        {"key": "local:s1", "machine": None, "parent": "t_sub_parent", "provider": "alpha", "id": "s1", "live": True, "ended": False},
+                    ],
+                    "runs": [],
+                },
+            },
+        }
+        got = run_kit("""
+            const tmap = K.terminalsByAddress();
+            const ps = [
+                { pane: "p1", tab: "tb1", terminal: "t_parent", status: "idle" },
+                { pane: "p2", tab: "tb2", terminal: "t_grand_root", status: "idle" },
+                { pane: "p3", tab: "tb3", terminal: "t_done_parent", status: "idle" },
+                { pane: "p4", tab: "tb4", terminal: "t_sub_parent", status: "idle" },
+            ];
+            const sp1 = { id: "sp1", status: "idle", tabs: [{ id: "tb1", status: "idle" }] };
+            const sp2 = { id: "sp2", status: "idle", tabs: [{ id: "tb2", status: "idle" }] };
+            const sp3 = { id: "sp3", status: "idle", tabs: [{ id: "tb3", status: "idle" }] };
+            const sp4 = { id: "sp4", status: "idle", tabs: [{ id: "tb4", status: "idle" }] };
+            return {
+                agChild: K.agentAttention({ address: "t_parent", status: "idle" }, tmap, {}),
+                tabChild: K.tabAttention(sp1.tabs[0], ps, tmap, {}),
+                spaceChild: K.spaceAttention(sp1, ps, tmap, {}),
+                tabGrand: K.tabAttention(sp2.tabs[0], ps, tmap, {}),
+                tabDoneChild: K.tabAttention(sp3.tabs[0], ps, tmap, {}),
+                tabLiveSub: K.tabAttention(sp4.tabs[0], ps, tmap, {}),
+                spaceLiveSub: K.spaceAttention(sp4, ps, tmap, {}),
+            };
+        """, state)
+        self.assertEqual(got, {
+            "agChild": "working",
+            "tabChild": "working",
+            "spaceChild": "working",
+            "tabGrand": "working",
+            "tabDoneChild": "idle",
+            "tabLiveSub": "working",
+            "spaceLiveSub": "working",
+        })
+
 
 if __name__ == "__main__":
     unittest.main()
